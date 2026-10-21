@@ -1,0 +1,185 @@
+//! Opening the stores' own shops. Purchases always happen inside the official
+//! client (or website): GameMode never touches accounts or payments.
+
+use anyhow::Result;
+use serde::Serialize;
+use tauri::AppHandle;
+use tauri_plugin_opener::OpenerExt;
+
+use crate::model::{Game, Store};
+use crate::window;
+
+struct Shop {
+    store: Store,
+    /// URI scheme of the store client, used to tell whether it is installed.
+    scheme: Option<&'static str>,
+    /// Shop front inside the client, when the client has a URI for it.
+    client_home: Option<&'static str>,
+    web_home: &'static str,
+}
+
+const SHOPS: &[Shop] = &[
+    Shop {
+        store: Store::Steam,
+        scheme: Some("steam"),
+        client_home: Some("steam://store"),
+        web_home: "https://store.steampowered.com/",
+    },
+    Shop {
+        store: Store::Xbox,
+        scheme: Some("ms-windows-store"),
+        client_home: Some("ms-windows-store://home"),
+        web_home: "https://www.xbox.com/it-IT/games/all-games/pc",
+    },
+    Shop {
+        store: Store::Epic,
+        scheme: Some("com.epicgames.launcher"),
+        client_home: Some("com.epicgames.launcher://store"),
+        web_home: "https://store.epicgames.com/it/",
+    },
+    Shop {
+        store: Store::Gog,
+        scheme: Some("goggalaxy"),
+        client_home: None,
+        web_home: "https://www.gog.com/it/games",
+    },
+    Shop {
+        store: Store::Ubisoft,
+        scheme: Some("uplay"),
+        client_home: None,
+        web_home: "https://store.ubisoft.com/it/home",
+    },
+    Shop {
+        store: Store::Ea,
+        scheme: Some("origin2"),
+        client_home: None,
+        web_home: "https://www.ea.com/it-it/games",
+    },
+];
+
+#[derive(Serialize, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum OpensIn {
+    Client,
+    Browser,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Storefront {
+    pub store: Store,
+    pub opens_in: OpensIn,
+    pub client_installed: bool,
+}
+
+pub fn list() -> Vec<Storefront> {
+    SHOPS
+        .iter()
+        .map(|shop| {
+            let installed = client_installed(shop);
+            let opens_in = if installed && shop.client_home.is_some() { OpensIn::Client } else { OpensIn::Browser };
+            Storefront { store: shop.store, opens_in, client_installed: installed }
+        })
+        .collect()
+}
+
+/// Opens the shop for `store`, or the store page of `game` when the client
+/// supports deep links, then steps aside so the shop gets the screen.
+pub fn open(app: &AppHandle, store: Store, game: Option<&Game>) -> Result<OpensIn> {
+    let Some(shop) = SHOPS.iter().find(|s| s.store == store) else {
+        anyhow::bail!("Nessun negozio per questo store");
+    };
+    let (target, opens_in) = resolve(shop, game, client_installed(shop));
+    app.opener().open_url(&target, None::<&str>)?;
+    window::minimize(app);
+    Ok(opens_in)
+}
+
+fn resolve(shop: &Shop, game: Option<&Game>, installed: bool) -> (String, OpensIn) {
+    if installed {
+        if let Some(uri) = game.and_then(|g| game_uri(shop.store, g)) {
+            return (uri, OpensIn::Client);
+        }
+        if let Some(home) = shop.client_home {
+            return (home.to_string(), OpensIn::Client);
+        }
+    }
+    let web = game.and_then(|g| game_web(shop.store, g)).unwrap_or_else(|| shop.web_home.to_string());
+    (web, OpensIn::Browser)
+}
+
+/// Native id of a game (the part after `store:`).
+fn native_id(game: &Game) -> &str {
+    game.id.split_once(':').map_or(game.id.as_str(), |(_, id)| id)
+}
+
+fn game_uri(store: Store, game: &Game) -> Option<String> {
+    match store {
+        Store::Steam => game.steam_appid.map(|id| format!("steam://store/{id}")),
+        Store::Xbox => Some(format!("ms-windows-store://pdp/?PFN={}", native_id(game))),
+        Store::Gog => Some(format!("goggalaxy://openGameView/{}", native_id(game))),
+        _ => None,
+    }
+}
+
+fn game_web(store: Store, game: &Game) -> Option<String> {
+    match store {
+        Store::Steam => game.steam_appid.map(|id| format!("https://store.steampowered.com/app/{id}/")),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn client_installed(shop: &Shop) -> bool {
+    use winreg::enums::HKEY_CLASSES_ROOT;
+    let Some(scheme) = shop.scheme else { return false };
+    winreg::RegKey::predef(HKEY_CLASSES_ROOT)
+        .open_subkey(scheme)
+        .and_then(|k| k.get_value::<String, _>("URL Protocol"))
+        .is_ok()
+}
+
+#[cfg(not(windows))]
+fn client_installed(shop: &Shop) -> bool {
+    // Only Steam has a macOS/Linux client worth deep-linking into.
+    shop.scheme == Some("steam") && crate::library::steam::find_steam_root().is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::LaunchSpec;
+
+    fn shop(store: Store) -> &'static Shop {
+        SHOPS.iter().find(|s| s.store == store).unwrap()
+    }
+
+    fn game(store: Store, id: &str, appid: Option<u32>) -> Game {
+        let mut g = Game::new(store, id, "Gioco", LaunchSpec::Uri { uri: String::new() });
+        g.steam_appid = appid;
+        g
+    }
+
+    #[test]
+    fn deep_links_into_installed_clients() {
+        let hades = game(Store::Steam, "1145360", Some(1145360));
+        assert_eq!(resolve(shop(Store::Steam), Some(&hades), true), ("steam://store/1145360".into(), OpensIn::Client));
+        let forza = game(Store::Xbox, "Microsoft.624F8B84B80_8wekyb3d8bbwe", None);
+        assert_eq!(
+            resolve(shop(Store::Xbox), Some(&forza), true).0,
+            "ms-windows-store://pdp/?PFN=Microsoft.624F8B84B80_8wekyb3d8bbwe"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_the_web_shop() {
+        let hades = game(Store::Steam, "1145360", Some(1145360));
+        assert_eq!(
+            resolve(shop(Store::Steam), Some(&hades), false),
+            ("https://store.steampowered.com/app/1145360/".into(), OpensIn::Browser)
+        );
+        // Ubisoft's client has no shop URI: always the website.
+        assert_eq!(resolve(shop(Store::Ubisoft), None, true).1, OpensIn::Browser);
+        assert_eq!(resolve(shop(Store::Epic), None, true), ("com.epicgames.launcher://store".into(), OpensIn::Client));
+    }
+}

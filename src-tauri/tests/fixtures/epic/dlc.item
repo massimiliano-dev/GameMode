@@ -1,0 +1,10 @@
+{
+	"bIsIncompleteInstall": false,
+	"DisplayName": "Some DLC",
+	"InstallLocation": "C:\\Games\\Base",
+	"AppName": "BaseDlc",
+	"CatalogNamespace": "ns",
+	"CatalogItemId": "bbbb",
+	"AppCategories": ["games", "addons"],
+	"MainGameAppName": "Base"
+}

@@ -1,0 +1,13 @@
+{
+	"FormatVersion": 0,
+	"bIsIncompleteInstall": false,
+	"LaunchCommand": "",
+	"LaunchExecutable": "FortniteGame/Binaries/Win64/FortniteLauncher.exe",
+	"DisplayName": "Fortnite",
+	"InstallLocation": "C:\\Program Files\\Epic Games\\Fortnite",
+	"AppName": "Fortnite",
+	"CatalogNamespace": "fn",
+	"CatalogItemId": "4fe75bbc5a674f4f9b356b5c90567da5",
+	"AppCategories": ["public", "games", "applications"],
+	"MainGameAppName": "Fortnite"
+}

@@ -1,0 +1,136 @@
+import { useCallback, useMemo, useRef, useState } from "react";
+
+import { GameCard } from "../components/GameCard";
+import { Glyph, useHints, useScreenFocus } from "../components/common";
+import { useAction } from "../input/dispatcher";
+import { ensureFocus, forgetGroup } from "../input/focus";
+import { STORE_LABEL, STORES } from "../lib/format";
+import type { Game, Store } from "../lib/types";
+import { useApp, visibleGames } from "../store/app";
+
+type Sort = "name" | "recent" | "playtime";
+const SORTS: { key: Sort; label: string }[] = [
+  { key: "name", label: "A–Z" },
+  { key: "recent", label: "Giocati di recente" },
+  { key: "playtime", label: "Più giocati" },
+];
+
+const SORTERS: Record<Sort, (a: Game, b: Game) => number> = {
+  name: (a, b) => a.name.localeCompare(b.name, "it"),
+  recent: (a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0) || a.name.localeCompare(b.name, "it"),
+  playtime: (a, b) => b.playtimeSecs - a.playtimeSecs || a.name.localeCompare(b.name, "it"),
+};
+
+export function Library({ focusId }: { focusId?: string }) {
+  const all = useApp((s) => s.games);
+  const open = useApp((s) => s.open);
+  const launch = useApp((s) => s.launch);
+  const toggleFavorite = useApp((s) => s.toggleFavorite);
+  const setBackdrop = useApp((s) => s.setBackdrop);
+  const sessionGame = useApp((s) => s.session?.gameId);
+  const [filter, setFilter] = useState<Store | "all">("all");
+  const [sort, setSort] = useState<Sort>("name");
+  const focused = useRef<Game | null>(null);
+
+  const games = useMemo(() => visibleGames(all), [all]);
+  const filters = useMemo(
+    () => ["all" as const, ...STORES.filter((s) => games.some((g) => g.store === s))],
+    [games],
+  );
+  const shown = useMemo(
+    () => games.filter((g) => filter === "all" || g.store === filter).sort(SORTERS[sort]),
+    [games, filter, sort],
+  );
+
+  useScreenFocus(focusId, shown.length > 0);
+  useHints([
+    { button: "A", label: "Dettagli" },
+    { button: "X", label: "Gioca" },
+    { button: "Y", label: "Ordina" },
+    { button: "LT", alt: "RT", label: "Filtro" },
+    { button: "view", label: "Preferito" },
+  ]);
+
+  const regroup = () => {
+    // The grid content changes: start again from its first card.
+    forgetGroup("grid");
+    requestAnimationFrame(() => {
+      const first = document.querySelector<HTMLElement>(".library-grid [data-nav]");
+      first?.focus({ preventScroll: true });
+      first?.scrollIntoView({ block: "nearest" });
+      ensureFocus();
+    });
+  };
+
+  useAction((action, repeat) => {
+    if (repeat) return;
+    if (action === "lt" || action === "rt") {
+      const i = filters.indexOf(filter);
+      const next = filters[(i + (action === "rt" ? 1 : filters.length - 1)) % filters.length];
+      setFilter(next);
+      regroup();
+      return true;
+    }
+    if (action === "y") {
+      setSort(SORTS[(SORTS.findIndex((s) => s.key === sort) + 1) % SORTS.length].key);
+      regroup();
+      return true;
+    }
+    if (action === "x" && focused.current) {
+      void launch(focused.current.id);
+      return true;
+    }
+    if (action === "view" && focused.current) {
+      void toggleFavorite(focused.current);
+      return true;
+    }
+  });
+
+  const onFocus = useCallback(
+    (g: Game) => {
+      focused.current = g;
+      setBackdrop(g.id);
+    },
+    [setBackdrop],
+  );
+  const onSelect = useCallback((g: Game) => open({ name: "detail", gameId: g.id }), [open]);
+
+  return (
+    <div className="screen library">
+      <header className="library-head">
+        <h1 className="screen-title">
+          Libreria <span className="row-count">{shown.length}</span>
+        </h1>
+        <div className="chips">
+          <Glyph button="LT" />
+          {filters.map((f) => (
+            <span key={f} className={`chip ${f === filter ? "is-active" : ""}`}>
+              {f === "all" ? "Tutti" : STORE_LABEL[f]}
+            </span>
+          ))}
+          <Glyph button="RT" />
+        </div>
+        <span className="sort-label">
+          <Glyph button="Y" /> {SORTS.find((s) => s.key === sort)!.label}
+        </span>
+      </header>
+      {shown.length === 0 ? (
+        <p className="empty-text library-empty">Nessun gioco in questa libreria.</p>
+      ) : (
+        <div className="library-grid" data-nav-group="grid">
+          {shown.map((g, i) => (
+            <GameCard
+              key={g.id}
+              game={g}
+              navId={`grid:${g.id}`}
+              onFocus={onFocus}
+              onSelect={onSelect}
+              playing={sessionGame === g.id}
+                  autofocus={i === 0}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

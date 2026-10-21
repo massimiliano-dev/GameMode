@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10">
+  <Identity Name="Microsoft.624F8B84B80" Publisher="CN=Microsoft Corporation" Version="3.1.0.0" ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>ms-resource:DisplayName</DisplayName>
+  </Properties>
+  <Applications>
+    <Application Id="ForzaHorizon5" Executable="ForzaHorizon5.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Forza Horizon 5" Description="Forza" />
+    </Application>
+  </Applications>
+</Package>

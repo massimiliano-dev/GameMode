@@ -1,0 +1,9 @@
+{
+	"bIsIncompleteInstall": false,
+	"DisplayName": "Unreal Engine",
+	"InstallLocation": "C:\\Program Files\\Epic Games\\UE_5.4",
+	"AppName": "UE_5.4",
+	"CatalogNamespace": "ue",
+	"CatalogItemId": "aaaa",
+	"AppCategories": ["public", "engines"]
+}

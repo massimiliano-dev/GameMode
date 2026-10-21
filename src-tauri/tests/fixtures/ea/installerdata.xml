@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<DiPManifest version="4.0">
+  <contentIDs>
+    <contentID>196716</contentID>
+    <contentID>1035052</contentID>
+  </contentIDs>
+  <gameTitles>
+    <gameTitle locale="it_IT">Apex Legends IT</gameTitle>
+    <gameTitle locale="en_US">Apex Legends</gameTitle>
+  </gameTitles>
+</DiPManifest>
