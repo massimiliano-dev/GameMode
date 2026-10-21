@@ -19,6 +19,8 @@ pub struct Data {
     pub manual_games: Vec<ManualGame>,
     pub sessions: Vec<Session>,
     pub settings: Settings,
+    /// `artwork::PIPELINE_VERSION` the stored artwork lookups were made with.
+    pub artwork_version: u32,
 }
 
 pub struct Db {
@@ -88,6 +90,19 @@ impl Data {
             })
             .collect();
         self.games.sort_by_key(|g| g.name.to_lowercase());
+    }
+
+    /// Clears the "already looked" marker of incomplete artwork, so a newer
+    /// pipeline gets a fresh attempt at it. Returns whether anything changed.
+    pub fn upgrade_artwork(&mut self, version: u32) -> bool {
+        if self.artwork_version >= version {
+            return false;
+        }
+        for game in self.games.iter_mut().filter(|g| !g.artwork.is_complete()) {
+            game.artwork_checked_at = None;
+        }
+        self.artwork_version = version;
+        true
     }
 
     pub fn record_session(&mut self, session: Session) {

@@ -1,5 +1,6 @@
 //! Cover / hero / logo images, cached on disk. Steam titles come from the
-//! local Steam cache or the Steam CDN; everything else from SteamGridDB.
+//! local Steam cache or the Steam CDN, Xbox titles from the Microsoft Store
+//! catalog, and everything else (or whatever is still missing) from SteamGridDB.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -12,13 +13,18 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Semaphore;
 
 use crate::library::steam;
-use crate::model::{now, Artwork, Game};
+use crate::model::{now, Artwork, Game, Store};
 use crate::AppState;
 
 const CONCURRENCY: usize = 4;
 /// Games without artwork are retried at most once a week.
 const RETRY_AFTER_SECS: i64 = 7 * 24 * 3600;
 const SGDB: &str = "https://www.steamgriddb.com/api/v2";
+/// Public Microsoft Store catalog, looked up by package family name.
+const MS_CATALOG: &str = "https://displaycatalog.mp.microsoft.com/v7.0/products/lookup";
+/// Bump when the pipeline gains new sources, so games that previously came
+/// up empty are retried right away instead of after `RETRY_AFTER_SECS`.
+pub const PIPELINE_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {
@@ -56,6 +62,16 @@ impl Kind {
             Kind::Cover => "grids/game/{id}?dimensions=600x900",
             Kind::Hero => "heroes/game/{id}",
             Kind::Logo => "logos/game/{id}",
+        }
+    }
+
+    /// Microsoft Store image purposes, best first, and the width to request.
+    fn ms_purposes(self) -> (&'static [&'static str], u32) {
+        match self {
+            Kind::Cover => (&["Poster", "BoxArt"], 600),
+            Kind::Hero => (&["SuperHeroArt", "TitledHeroArt"], 1920),
+            // The catalog has no transparent wordmark; the UI shows the title instead.
+            Kind::Logo => (&[], 0),
         }
     }
 
@@ -135,6 +151,7 @@ impl Fetcher {
         let dir = self.dir.join(safe_name(&game.id));
         let _ = tokio::fs::create_dir_all(&dir).await;
         let mut sgdb_id: Option<Option<u64>> = None;
+        let mut ms_images: Option<Vec<MsImage>> = None;
 
         for kind in Kind::ALL {
             if kind.slot(&mut art).as_ref().is_some_and(|p| Path::new(p).is_file()) {
@@ -143,6 +160,15 @@ impl Fetcher {
             let mut found = None;
             if let Some(appid) = game.steam_appid {
                 found = self.from_steam(appid, kind, &dir).await;
+            }
+            if found.is_none() && game.store == Store::Xbox {
+                let images = match &ms_images {
+                    Some(images) => images,
+                    None => ms_images.insert(self.ms_catalog_images(game).await.unwrap_or_default()),
+                };
+                if let Some(url) = pick_ms_image(images, kind) {
+                    found = self.download(&url, &dir, kind).await.ok();
+                }
             }
             if found.is_none() && self.sgdb_key.is_some() {
                 let id = match sgdb_id {
@@ -201,9 +227,23 @@ impl Fetcher {
                 return Ok(found.id);
             }
         }
-        let query = urlencode(&game.name);
+        let query = urlencode(&search_name(&game.name));
         let results: Vec<SgdbGame> = self.sgdb_get(&format!("search/autocomplete/{query}")).await?;
         results.first().map(|g| g.id).ok_or_else(|| anyhow::anyhow!("no SteamGridDB match"))
+    }
+
+    async fn ms_catalog_images(&self, game: &Game) -> Result<Vec<MsImage>> {
+        // Xbox game ids are `xbox:<PackageFamilyName>`.
+        let pfn = game.id.split_once(':').map_or(game.id.as_str(), |(_, id)| id);
+        let url = format!(
+            "{MS_CATALOG}?alternateId=PackageFamilyName&value={}&market=IT&languages=it-IT,en-US,neutral&fieldsTemplate=details",
+            urlencode(pfn)
+        );
+        let resp = self.client.get(url).send().await?;
+        if !resp.status().is_success() {
+            bail!("Microsoft Store catalog {}", resp.status());
+        }
+        Ok(parse_ms_catalog(&resp.bytes().await?))
     }
 
     async fn from_sgdb(&self, id: u64, kind: Kind, dir: &Path) -> Result<PathBuf> {
@@ -234,6 +274,64 @@ impl Fetcher {
         tokio::fs::write(&path, &bytes).await?;
         Ok(path)
     }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "PascalCase", default)]
+struct MsCatalog {
+    products: Vec<MsProduct>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "PascalCase", default)]
+struct MsProduct {
+    localized_properties: Vec<MsLocalized>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "PascalCase", default)]
+struct MsLocalized {
+    images: Vec<MsImage>,
+}
+
+#[derive(Deserialize, Default, Clone, Debug)]
+#[serde(rename_all = "PascalCase", default)]
+struct MsImage {
+    image_purpose: String,
+    uri: String,
+    width: u32,
+}
+
+fn parse_ms_catalog(body: &[u8]) -> Vec<MsImage> {
+    let catalog: MsCatalog = serde_json::from_slice(body).unwrap_or_default();
+    catalog
+        .products
+        .into_iter()
+        .next()
+        .and_then(|p| p.localized_properties.into_iter().next())
+        .map(|l| l.images)
+        .unwrap_or_default()
+}
+
+/// Best image for `kind`, as a URL asking the CDN for a sensible size.
+fn pick_ms_image(images: &[MsImage], kind: Kind) -> Option<String> {
+    let (purposes, width) = kind.ms_purposes();
+    let image = purposes
+        .iter()
+        .find_map(|purpose| images.iter().filter(|i| i.image_purpose == *purpose).max_by_key(|i| i.width))?;
+    let uri = if image.uri.starts_with("//") { format!("https:{}", image.uri) } else { image.uri.clone() };
+    Some(if image.width > width { format!("{uri}?w={width}") } else { uri })
+}
+
+/// Store titles carry marks and edition suffixes that spoil name searches.
+fn search_name(name: &str) -> String {
+    let mut s: String = name.chars().filter(|c| !matches!(c, '™' | '®' | '©')).collect();
+    for suffix in [" for Windows 10", " for Windows", " (PC)", " - Windows Edition", " Windows Edition", " PC"] {
+        if let Some(stripped) = s.strip_suffix(suffix) {
+            s = stripped.to_string();
+        }
+    }
+    s.trim().to_string()
 }
 
 #[derive(Deserialize)]
@@ -268,6 +366,23 @@ fn urlencode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picks_poster_and_hero_from_ms_catalog() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/xbox/catalog.json");
+        let images = parse_ms_catalog(&std::fs::read(path).unwrap());
+        let cover = pick_ms_image(&images, Kind::Cover).unwrap();
+        assert!(cover.starts_with("https://store-images.s-microsoft.com/") && cover.ends_with("?w=600"));
+        assert!(pick_ms_image(&images, Kind::Hero).unwrap().ends_with("?w=1920"));
+        assert!(pick_ms_image(&images, Kind::Logo).is_none());
+        assert!(parse_ms_catalog(b"not json").is_empty());
+    }
+
+    #[test]
+    fn cleans_names_for_search() {
+        assert_eq!(search_name("Microsoft Flight Simulator for Windows 10"), "Microsoft Flight Simulator");
+        assert_eq!(search_name("Call of Duty®: Black Ops 6™"), "Call of Duty: Black Ops 6");
+    }
 
     #[test]
     fn encodes_names_for_urls() {

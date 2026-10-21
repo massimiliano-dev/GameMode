@@ -244,6 +244,7 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let db = Db::open(&data_dir)?;
+            db.update(|d| d.upgrade_artwork(artwork::PIPELINE_VERSION))?;
             app.manage(AppState {
                 db,
                 launcher: Launcher::default(),

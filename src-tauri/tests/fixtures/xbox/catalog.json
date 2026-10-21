@@ -1,0 +1,50 @@
+{
+  "Products": [
+    {
+      "LocalizedProperties": [
+        {
+          "ProductTitle": "Forza Horizon 5",
+          "Images": [
+            {
+              "ImagePurpose": "BoxArt",
+              "Uri": "//store-images.s-microsoft.com/image/apps.28758.13734397844529069.202e3fc9-37d6-4853-a58b-fabe504b71e8.4335e940-f927-4be4-af08-8e689a17bd7a",
+              "Width": 2160,
+              "Height": 2160
+            },
+            {
+              "ImagePurpose": "SuperHeroArt",
+              "Uri": "//store-images.s-microsoft.com/image/apps.33953.13734397844529069.202e3fc9-37d6-4853-a58b-fabe504b71e8.f2095594-0eab-4b96-92fd-f01b9cf9346f",
+              "Width": 3840,
+              "Height": 2160
+            },
+            {
+              "ImagePurpose": "TitledHeroArt",
+              "Uri": "//store-images.s-microsoft.com/image/apps.39597.13734397844529069.202e3fc9-37d6-4853-a58b-fabe504b71e8.25ba4c68-e931-48ca-b376-4a72cf8858d6",
+              "Width": 1920,
+              "Height": 1080
+            },
+            {
+              "ImagePurpose": "Screenshot",
+              "Uri": "//store-images.s-microsoft.com/image/apps.12298.13734397844529069.cb22092f-c997-40f9-8554-70d6a55fabbf.ce47af40-8ba1-46f7-9e64-e63ef0e1ca0e",
+              "Width": 3840,
+              "Height": 2160
+            },
+            {
+              "ImagePurpose": "Screenshot",
+              "Uri": "//store-images.s-microsoft.com/image/apps.12298.13734397844529069.cb22092f-c997-40f9-8554-70d6a55fabbf.ce47af40-8ba1-46f7-9e64-e63ef0e1ca0e",
+              "Width": 3840,
+              "Height": 2160
+            },
+            {
+              "ImagePurpose": "Poster",
+              "Uri": "//store-images.s-microsoft.com/image/apps.56329.13734397844529069.202e3fc9-37d6-4853-a58b-fabe504b71e8.b2447b97-7903-48de-8a49-9669d0495c4f",
+              "Width": 1440,
+              "Height": 2160
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "TotalResultCount": 1
+}
