@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::model::{Game, ManualGame, Store};
+use crate::model::{Game, ManualGame, Settings, Store};
 
 pub mod ea;
+pub mod emulators;
 pub mod epic;
 pub mod gog;
 pub mod manual;
@@ -27,7 +28,7 @@ pub trait LibraryProvider: Send + Sync {
     fn scan(&self) -> Result<Vec<Game>>;
 }
 
-pub fn providers(manual: Vec<ManualGame>) -> Vec<Box<dyn LibraryProvider>> {
+pub fn providers(manual: Vec<ManualGame>, settings: &Settings) -> Vec<Box<dyn LibraryProvider>> {
     #[cfg_attr(windows, allow(unused_mut))]
     let mut list: Vec<Box<dyn LibraryProvider>> = vec![
         Box::new(steam::SteamProvider),
@@ -37,6 +38,10 @@ pub fn providers(manual: Vec<ManualGame>) -> Vec<Box<dyn LibraryProvider>> {
         Box::new(ea::EaProvider),
         Box::new(ubisoft::UbisoftProvider),
         Box::new(manual::ManualProvider(manual)),
+        Box::new(emulators::EmulatorProvider {
+            retroarch: settings.retroarch_path.clone(),
+            rom_dirs: settings.rom_dirs.clone(),
+        }),
     ];
     #[cfg(not(windows))]
     list.push(Box::new(mock::MockProvider));

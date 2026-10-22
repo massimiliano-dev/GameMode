@@ -1,12 +1,14 @@
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
+import { ActionSheet } from "../components/ActionSheet";
 import { Cover } from "../components/GameCard";
-import { useClock, useHints, useScreenFocus } from "../components/common";
+import { Avatar } from "../components/ProfileSettings";
+import { Glyph, useClock, useScreenFocus } from "../components/common";
 import { Priority, useAction } from "../input/dispatcher";
 import { api } from "../lib/api";
 import { formatClock, formatDate, formatPlaytime } from "../lib/format";
-import type { PowerAction, Volume } from "../lib/types";
+import type { AudioOutput, PowerAction, Volume } from "../lib/types";
 import { useApp } from "../store/app";
 
 const VOLUME_STEP = 0.05;
@@ -16,22 +18,20 @@ export function QuickMenu() {
   const session = useApp((s) => s.session);
   const game = useApp((s) => s.games.find((g) => g.id === s.session?.gameId));
   const rescan = useApp((s) => s.rescan);
+  const profiles = useApp((s) => s.profiles);
+  const activeProfile = useApp((s) => s.activeProfile);
+  const switchProfile = useApp((s) => s.switchProfile);
   const toast = useApp((s) => s.toast);
   const now = useClock(1000);
   const [volume, setVolume] = useState<Volume | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
-  const previousHints = useRef(useApp.getState().hints);
-
+  const [outputs, setOutputs] = useState<AudioOutput[] | null>(null);
+  const output = outputs?.find((o) => o.default);
+  // The screen below keeps the hint bar; the panel shows its own.
   useEffect(() => {
     void api.getVolume().then(setVolume).catch(() => setVolume(null));
-    const hints = previousHints.current;
-    return () => useApp.getState().setHints(hints);
   }, []);
   useScreenFocus();
-  useHints([
-    { button: "A", label: "Seleziona" },
-    { button: "B", label: "Chiudi" },
-  ]);
 
   // Modal: swallow everything but navigation so screens underneath stay still.
   useAction((action) => {
@@ -89,6 +89,23 @@ export function QuickMenu() {
           <span className="qm-date">{formatDate(now)}</span>
         </div>
 
+        {profiles.length > 1 && (
+          <div className="qm-profiles" data-nav-group="qm-profiles">
+            {profiles.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`qm-profile ${p.id === activeProfile ? "is-active" : ""}`}
+                data-nav
+                onClick={() => void switchProfile(p.id)}
+              >
+                <Avatar profile={p} />
+                <span>{p.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {session && game && (
           <div className="qm-game">
             <div className="qm-game-cover">
@@ -130,6 +147,24 @@ export function QuickMenu() {
         )}
 
         <div className="qm-list">
+          <QmButton
+            onClick={() =>
+              void api
+                .audioOutputs()
+                .then(setOutputs)
+                .catch((e) => toast(String(e), "error"))
+            }
+          >
+            Uscita audio
+          </QmButton>
+          <QmButton
+            onClick={() => {
+              close();
+              useApp.getState().open({ name: "connections" });
+            }}
+          >
+            Wi-Fi e Bluetooth
+          </QmButton>
           <QmButton autofocus={!session && !volume} onClick={() => { close(); void rescan(); }}>
             Cerca di nuovo i giochi
           </QmButton>
@@ -145,12 +180,34 @@ export function QuickMenu() {
             Chiudi GameMode
           </QmButton>
         </div>
+        <div className="qm-hints">
+          <span className="hint"><Glyph button="A" /> Seleziona</span>
+          <span className="hint"><Glyph button="B" /> Chiudi</span>
+        </div>
       </motion.aside>
+      <AnimatePresence>
+        {outputs && (
+          <ActionSheet
+            key="audio"
+            title={output ? `Uscita audio · ${output.name}` : "Uscita audio"}
+            onClose={() => setOutputs(null)}
+            actions={outputs.map((o) => ({
+              label: o.name,
+              hint: o.default ? "In uso" : undefined,
+              onSelect: () =>
+                void api
+                  .setAudioOutput(o.id)
+                  .then(() => toast(`Audio su ${o.name}`))
+                  .catch((e) => toast(String(e), "error")),
+            }))}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function QmButton(props: {
+export function QmButton(props: {
   children: React.ReactNode;
   onClick: () => void;
   autofocus?: boolean;
@@ -171,7 +228,7 @@ function QmButton(props: {
   );
 }
 
-function VolumeRow(props: {
+export function VolumeRow(props: {
   volume: Volume;
   autofocus?: boolean;
   onAdjust: (dir: number) => void;

@@ -1,12 +1,24 @@
 import { create } from "zustand";
 
 import { currentFocusId } from "../input/focus";
+import { setSoundsEnabled } from "../input/sfx";
 import { api, on } from "../lib/api";
 import { formatPlaytime } from "../lib/format";
-import type { Game, LibraryUpdate, ScanError, SessionState, Settings, Store } from "../lib/types";
+import type {
+  Collection,
+  Controller,
+  Game,
+  LibraryUpdate,
+  Profile,
+  ScanError,
+  SessionState,
+  Settings,
+  Store,
+  UpdateInfo,
+} from "../lib/types";
 
-export type Tab = "home" | "library" | "downloads" | "stores" | "settings";
-export type Screen = { name: Tab } | { name: "detail"; gameId: string };
+export type Tab = "home" | "library" | "downloads" | "stores" | "stats" | "settings";
+export type Screen = { name: Tab } | { name: "detail"; gameId: string } | { name: "search" } | { name: "connections" };
 
 interface Entry {
   screen: Screen;
@@ -44,6 +56,14 @@ interface AppState {
   toasts: Toast[];
   /** A shop was opened: rescan when the user comes back, new games may be installed. */
   rescanOnReturn: boolean;
+  /** Text field the on-screen keyboard is typing into. */
+  keyboardField: HTMLInputElement | null;
+  controllers: Controller[];
+  profiles: Profile[];
+  activeProfile: string;
+  /** A newer signed release, found at startup or from Settings. */
+  update: UpdateInfo | null;
+  collections: Collection[];
 
   init: () => Promise<void>;
   rescan: () => Promise<void>;
@@ -64,6 +84,12 @@ interface AppState {
   uninstall: (game: Game) => Promise<void>;
   returnedToApp: () => void;
   toast: (text: string, tone?: Toast["tone"]) => void;
+  setKeyboardField: (field: HTMLInputElement | null) => void;
+  switchProfile: (id: string) => Promise<void>;
+  setProfiles: (profiles: Profile[], active: string) => void;
+  createCollection: (name: string) => Promise<Collection | null>;
+  setInCollection: (collectionId: string, gameId: string, value: boolean) => Promise<void>;
+  removeCollection: (id: string) => Promise<void>;
 }
 
 let toastId = 0;
@@ -83,6 +109,12 @@ export const useApp = create<AppState>((set, get) => ({
   hints: [],
   toasts: [],
   rescanOnReturn: false,
+  keyboardField: null,
+  controllers: [],
+  profiles: [],
+  activeProfile: "",
+  update: null,
+  collections: [],
 
   init: async () => {
     if (initialized) return;
@@ -90,13 +122,30 @@ export const useApp = create<AppState>((set, get) => ({
     on<LibraryUpdate>("library://updated", (u) => set({ games: u.games, scanErrors: u.errors, loaded: true }));
     on<Game>("library://game", (g) => get().upsertGame(g));
     on<SessionState>("game://state", (s) => onSessionEvent(s, set, get));
+    on<Controller[]>("gamepad://controllers", (list) => onControllers(list, set, get));
+    void api.getControllers().then((controllers) => set({ controllers })).catch(() => {});
 
-    const [games, settings, session] = await Promise.all([
+    const [games, settings, session, profiles, collections] = await Promise.all([
       api.getLibrary(),
       api.getSettings(),
       api.getSession(),
+      api.getProfiles(),
+      api.getCollections(),
     ]);
+    set({ profiles: profiles.profiles, activeProfile: profiles.active, collections });
     // An empty saved library means first run: wait for the initial scan.
+    setSoundsEnabled(settings.uiSounds);
+    setTimeout(() => void announceDeals(get().toast), 10_000);
+    setTimeout(() => {
+      void api
+        .checkUpdate()
+        .then((update) => {
+          if (!update) return;
+          set({ update });
+          get().toast(`È disponibile GameMode ${update.version}: lo installi da Impostazioni → Aggiornamenti`);
+        })
+        .catch(() => {});
+    }, 20_000);
     set({ games, settings, session, loaded: games.length > 0 });
     if (games.length === 0) setTimeout(() => set({ loaded: true }), 8000);
   },
@@ -154,6 +203,7 @@ export const useApp = create<AppState>((set, get) => ({
 
   saveSettings: async (settings) => {
     const saved = await api.saveSettings(settings);
+    setSoundsEnabled(saved.uiSounds);
     set({ settings: saved });
   },
 
@@ -222,6 +272,43 @@ export const useApp = create<AppState>((set, get) => ({
     void get().rescan();
   },
 
+  setKeyboardField: (keyboardField) => set({ keyboardField }),
+
+  switchProfile: async (id) => {
+    if (id === get().activeProfile) return;
+    try {
+      const p = await api.switchProfile(id);
+      const collections = await api.getCollections();
+      set({ profiles: p.profiles, activeProfile: p.active, collections });
+      const name = p.profiles.find((x) => x.id === p.active)?.name;
+      get().toast(`Ciao ${name}!`);
+    } catch (e) {
+      get().toast(String(e), "error");
+    }
+  },
+
+  setProfiles: (profiles, activeProfile) => set({ profiles, activeProfile }),
+
+  createCollection: async (name) => {
+    try {
+      const c = await api.addCollection(name);
+      set({ collections: [...get().collections, c] });
+      return c;
+    } catch (e) {
+      get().toast(String(e), "error");
+      return null;
+    }
+  },
+
+  setInCollection: async (collectionId, gameId, value) => {
+    set({ collections: await api.setInCollection(collectionId, gameId, value) });
+  },
+
+  removeCollection: async (id) => {
+    await api.removeCollection(id);
+    set({ collections: get().collections.filter((c) => c.id !== id) });
+  },
+
   toast: (text, tone = "info") => {
     const id = ++toastId;
     set((s) => ({ toasts: [...s.toasts, { id, text, tone }] }));
@@ -246,12 +333,45 @@ function onSessionEvent(
   }
 }
 
+/** Mentions discounted wishlist games, at most once a day. */
+async function announceDeals(toast: (text: string) => void) {
+  const today = new Date().toDateString();
+  try {
+    if (localStorage.getItem("gm-deals-announced") === today) return;
+  } catch {
+    // Storage unavailable: announcing again is harmless.
+  }
+  const deals = await api.wishlistDeals(false).catch(() => null);
+  const n = deals?.items.length ?? 0;
+  if (!n) return;
+  toast(n === 1 ? "Un gioco della tua lista desideri Steam è in offerta: lo trovi in Scarica" : `${n} giochi della tua lista desideri Steam sono in offerta: li trovi in Scarica`);
+  try {
+    localStorage.setItem("gm-deals-announced", today);
+  } catch {
+    // ignore
+  }
+}
+
+/** Warns once when a wireless controller's battery runs low. */
+function onControllers(list: Controller[], set: (partial: Partial<AppState>) => void, get: () => AppState) {
+  const before = get().controllers;
+  for (const c of list) {
+    const prev = before.find((p) => p.slot === c.slot);
+    if (!c.wired && c.level <= 1 && (!prev || prev.wired || prev.level > 1)) {
+      get().toast(`Batteria del controller ${c.slot + 1} quasi scarica`, "error");
+    }
+  }
+  set({ controllers: list });
+}
+
 export interface BackdropArt {
   key: string;
   hero: string | null;
   cover: string | null;
   store: Store;
 }
+
+export const activeProfileOf = (s: AppState) => s.profiles.find((p) => p.id === s.activeProfile);
 
 export const currentScreen = (s: AppState) => s.stack.at(-1)!;
 export const visibleGames = (games: Game[]) => games.filter((g) => !g.hidden);

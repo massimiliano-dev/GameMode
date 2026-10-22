@@ -1,12 +1,16 @@
 // Every input source (native XInput, browser Gamepad API, keyboard) ends up
 // here as an Action. Handlers registered by screens and overlays get first
 // pick, highest priority first; unclaimed directions move focus and
-// unclaimed confirms click the focused element.
+// unclaimed confirms click the focused element (or, on a text field driven
+// by a controller, open the on-screen keyboard).
 
 import { useEffect, useRef } from "react";
 
 import type { Action } from "../lib/types";
 import { moveFocus } from "./focus";
+import { play } from "./sfx";
+
+export type Source = "pad" | "key";
 
 export type Handler = (action: Action, repeat: boolean) => boolean | void;
 
@@ -37,7 +41,14 @@ export function onAnyAction(listener: (action: Action) => void): () => void {
   return () => listeners.delete(listener);
 }
 
-export function dispatch(action: Action, repeat = false) {
+let openKeyboard: ((field: HTMLInputElement) => void) | null = null;
+
+/** Lets the app decide how text fields get typed into from a controller. */
+export function setKeyboardOpener(opener: (field: HTMLInputElement) => void) {
+  openKeyboard = opener;
+}
+
+export function dispatch(action: Action, repeat = false, source: Source = "key") {
   listeners.forEach((l) => l(action));
   for (const entry of entries) {
     if (entry.handler(action, repeat) === true) return;
@@ -47,11 +58,19 @@ export function dispatch(action: Action, repeat = false) {
     case "down":
     case "left":
     case "right":
-      moveFocus(action);
+      if (moveFocus(action)) play("move");
       break;
-    case "confirm":
-      if (!repeat) (document.activeElement as HTMLElement | null)?.click();
+    case "confirm": {
+      if (repeat) break;
+      const el = document.activeElement as HTMLElement | null;
+      if (el instanceof HTMLInputElement && source === "pad" && openKeyboard) {
+        openKeyboard(el);
+      } else {
+        el?.click();
+      }
+      play("select");
       break;
+    }
   }
 }
 

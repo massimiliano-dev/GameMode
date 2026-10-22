@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- GameMode: a controller D-pad whose right arm is a play button. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#151b27"/>
+      <stop offset="1" stop-color="#05070b"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#5ef2c8" stop-opacity="0.22"/>
+      <stop offset="0.6" stop-color="#4aa3ff" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#4aa3ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mark" x1="212" y1="212" x2="842" y2="812" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7dffd6"/>
+      <stop offset="0.5" stop-color="#5ef2c8"/>
+      <stop offset="1" stop-color="#4aa3ff"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.45"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="34"/>
+    </filter>
+    <clipPath id="tile">
+      <rect width="1024" height="1024" rx="232"/>
+    </clipPath>
+    <path id="dpad" d="M470 212H554A48 48 0 0 1 602 260V334L838 476Q890 512 838 548L602 690V764A48 48 0 0 1 554 812H470A48 48 0 0 1 422 764V602H260A48 48 0 0 1 212 554V470A48 48 0 0 1 260 422H422V260A48 48 0 0 1 470 212Z"/>
+  </defs>
+
+  <g clip-path="url(#tile)">
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+    <circle cx="530" cy="512" r="470" fill="url(#halo)"/>
+    <!-- faint inner rim -->
+    <rect x="10" y="10" width="1004" height="1004" rx="222" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="4"/>
+  </g>
+
+  <!-- Shifted left so the lighter triangle side doesn't pull the symbol off-centre. -->
+  <g transform="translate(-28 0)">
+    <use href="#dpad" fill="url(#mark)" opacity="0.55" filter="url(#glow)"/>
+    <use href="#dpad" fill="url(#mark)"/>
+    <use href="#dpad" fill="url(#shine)"/>
+    <!-- D-pad dimple -->
+    <circle cx="512" cy="512" r="30" fill="#07090d" fill-opacity="0.22"/>
+  </g>
+</svg>

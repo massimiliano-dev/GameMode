@@ -14,7 +14,16 @@ pub fn wants_fullscreen(app: &AppHandle) -> bool {
     !cfg!(debug_assertions) && app.state::<AppState>().db.lock().settings.start_fullscreen
 }
 
+/// Applies the TV display mode and audio output, when configured.
+pub fn apply_tv(app: &AppHandle) {
+    let settings = app.state::<AppState>().db.lock().settings.clone();
+    if wants_fullscreen(app) {
+        crate::display::apply_tv(settings.tv_mode, settings.tv_audio.as_deref());
+    }
+}
+
 pub fn bring_to_front(app: &AppHandle) {
+    apply_tv(app);
     let Some(window) = main_window(app) else { return };
     let _ = window.unminimize();
     let _ = window.show();
@@ -35,6 +44,7 @@ pub fn minimize(app: &AppHandle) {
 }
 
 pub fn exit_to_desktop(app: &AppHandle) {
+    crate::display::reset_mode();
     if let Some(window) = main_window(app) {
         let _ = window.set_fullscreen(false);
         let _ = window.minimize();
@@ -58,6 +68,16 @@ pub fn is_foreground(app: &AppHandle) -> bool {
     {
         window.is_focused().unwrap_or(false)
     }
+}
+
+#[cfg(windows)]
+pub fn is_hwnd_foreground(raw: isize) -> bool {
+    win::is_foreground(win::hwnd(raw))
+}
+
+#[cfg(windows)]
+pub fn force_foreground_raw(raw: isize) {
+    win::force_foreground(win::hwnd(raw));
 }
 
 /// Brings the top-level window of one of `pids` to the front (the running game).

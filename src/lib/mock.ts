@@ -1,7 +1,7 @@
 // In-browser stand-in for the Rust backend, so the UI can be developed and
 // tested with `npm run dev` in any browser.
 
-import type { Game, ManualGame, SessionState, Settings, Store, Volume } from "./types";
+import type { Collection, Game, ManualGame, Profile, SessionState, Settings, Store, Volume } from "./types";
 
 const CDN = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps";
 
@@ -48,11 +48,48 @@ let games: Game[] = SEED.map(([store, name, appid], i) => ({
   playtimeSecs: i % 3 === 0 ? (i + 1) * 5400 : 0,
 }));
 
-let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null };
+let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
 let volume: Volume = { level: 0.6, muted: false };
 let autostart = false;
+let retroarch: string | null = null;
+let audioDefault = "speakers";
+let radios = { wifi: true, bluetooth: true };
+let wifiConnected = "Casa";
+let btPaired = ["pad"];
+let backups: { id: string; created: number; automatic: boolean; bytes: number }[] = [
+  { id: "b2", created: now() - 2 * day, automatic: false, bytes: 2_400_000 },
+];
+let romDirs: Record<string, string | null> = {};
+
+function mockEmulators() {
+  const systems: [string, string, string][] = [
+    ["nes", "NES", "fceumm"],
+    ["snes", "Super Nintendo", "snes9x"],
+    ["n64", "Nintendo 64", "mupen64plus_next"],
+    ["gba", "Game Boy Advance", "mgba"],
+    ["psx", "PlayStation", "swanstation"],
+  ];
+  return {
+    retroarch: retroarch ?? "C:\\RetroArch-Win64\\retroarch.exe",
+    detected: retroarch === null,
+    systems: systems.map(([key, name, core]) => ({
+      key,
+      name,
+      core,
+      path: romDirs[key] ?? null,
+      coreInstalled: key !== "n64",
+      roms: romDirs[key] ? 12 : 0,
+    })),
+  };
+}
+let profiles: Profile[] = [
+  { id: "p1", name: "Giocatore 1", color: "#5ef2c8" },
+  { id: "p2", name: "Luca", color: "#4aa3ff" },
+];
+let activeProfile = "p1";
+let collections: Collection[] = [{ id: "c1", name: "Da finire", gameIds: ["steam:mock-0", "gog:mock-12"] }];
 
 type Listener = (payload: unknown) => void;
 const listeners = new Map<string, Set<Listener>>();
@@ -149,6 +186,92 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         return;
       case "native_gamepad":
         return false;
+      case "get_profiles":
+        return { profiles, active: activeProfile };
+      case "add_profile":
+        profiles = [...profiles, { id: `p${now()}`, name: args.name, color: "#f5b942" }];
+        return { profiles, active: activeProfile };
+      case "rename_profile":
+        profiles = profiles.map((p) => (p.id === args.id ? { ...p, name: args.name } : p));
+        return { profiles, active: activeProfile };
+      case "remove_profile":
+        if (profiles.length <= 1) throw "Non puoi eliminare l'unico profilo";
+        profiles = profiles.filter((p) => p.id !== args.id);
+        if (activeProfile === args.id) activeProfile = profiles[0].id;
+        return { profiles, active: activeProfile };
+      case "switch_profile":
+        activeProfile = args.id;
+        emit("library://updated", { games, errors: [] });
+        return { profiles, active: activeProfile };
+      case "get_collections":
+        return collections;
+      case "steam_extras": {
+        await wait(400);
+        const names = ["Primo passo", "Esploratore", "Senza paura", "Collezionista", "Leggenda", "Perfezionista"];
+        return {
+          news: [
+            { title: "Aggiornamento 1.12: nuove sfide stagionali", url: "https://store.steampowered.com", date: now() - 2 * day, snippet: "Arrivano tre nuove sfide, bilanciamento delle armi e correzioni alla modalità cooperativa." },
+            { title: "Note sulla patch di ottobre", url: "https://store.steampowered.com", date: now() - 9 * day, snippet: "Migliorate le prestazioni su schede video di fascia media e ridotti i tempi di caricamento." },
+          ],
+          achievements: names.map((name, i) => ({
+            name,
+            description: "Descrizione dell'obiettivo",
+            icon: null,
+            achieved: i < 4,
+            unlockTime: i < 4 ? now() - i * day : 0,
+          })),
+          achievementStatus: settings.steamApiKey ? "ok" : "needsKey",
+        };
+      }
+      case "wishlist_deals":
+        await wait(500);
+        return {
+          status: "ok",
+          items: [
+            [1593500, "God of War", 60, "49,99€", "19,99€"],
+            [1716740, "Starfield", 35, "69,99€", "45,49€"],
+            [1817070, "Marvel's Spider-Man Remastered", 50, "59,99€", "29,99€"],
+          ].map(([appid, name, discount, initial, price]) => ({
+            appid,
+            name,
+            discount,
+            initial,
+            price,
+            cover: `${CDN}/${appid}/library_600x900_2x.jpg`,
+            hero: `${CDN}/${appid}/library_hero.jpg`,
+          })),
+        };
+      case "get_sessions": {
+        // Three weeks of plausible evenings.
+        const out = [];
+        const today = new Date();
+        today.setHours(21, 0, 0, 0);
+        for (let d = 0; d < 21; d++) {
+          if ((d * 7) % 5 === 3) continue;
+          const g = games[(d * 3) % games.length];
+          const seconds = 1800 + ((d * 977) % 7200);
+          const end = Math.floor(today.getTime() / 1000) - d * day;
+          out.push({ gameId: g.id, profileId: activeProfile, start: end - seconds, end, seconds });
+        }
+        return out;
+      }
+      case "add_collection": {
+        const c = { id: `c${now()}`, name: args.name, gameIds: [] };
+        collections = [...collections, c];
+        return c;
+      }
+      case "remove_collection":
+        collections = collections.filter((c) => c.id !== args.id);
+        return;
+      case "set_in_collection":
+        collections = collections.map((c) =>
+          c.id !== args.collectionId
+            ? c
+            : { ...c, gameIds: args.value ? [...c.gameIds.filter((g) => g !== args.gameId), args.gameId] : c.gameIds.filter((g) => g !== args.gameId) },
+        );
+        return collections;
+      case "get_controllers":
+        return [{ slot: 0, wired: false, level: 2 }];
       case "list_storefronts":
         return (["steam", "xbox", "epic", "gog", "ubisoft", "ea"] as Store[]).map((store, i) => ({
           store,
@@ -194,6 +317,114 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         ].sort((a, b) => a.name.localeCompare(b.name));
         return { items, steam: settings.steamApiKey ? "ok" : "needsKey", gamepassOk: true };
       }
+      case "get_cloud_catalog": {
+        await wait(1200);
+        const cloud: [string, number][] = [
+          ["Forza Horizon 5", 1551360],
+          ["Hellblade: Senua's Sacrifice", 414340],
+          ["Halo Infinite", 1240440],
+        ];
+        return cloud.map(([name, appid]) => ({
+          id: `cloud:mock${appid}:${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+          source: "cloud",
+          store: "xbox",
+          name,
+          cover: `${CDN}/${appid}/library_600x900_2x.jpg`,
+          hero: `${CDN}/${appid}/library_hero.jpg`,
+          playtimeSecs: 0,
+        }));
+      }
+      case "display_modes":
+        return {
+          modes: [
+            { width: 3840, height: 2160, refresh: 60 },
+            { width: 2560, height: 1440, refresh: 144 },
+            { width: 1920, height: 1080, refresh: 120 },
+            { width: 1920, height: 1080, refresh: 60 },
+          ],
+          current: { width: 2560, height: 1440, refresh: 144 },
+        };
+      case "audio_outputs":
+        return [
+          ["speakers", "Altoparlanti"],
+          ["tv", "TV (HDMI)"],
+          ["headset", "Cuffie Xbox Wireless"],
+        ].map(([id, name]) => ({ id, name, default: id === audioDefault }));
+      case "set_audio_output":
+        audioDefault = args.id;
+        return;
+      case "get_radios":
+        return radios;
+      case "set_radio":
+        radios = { ...radios, [args.bluetooth ? "bluetooth" : "wifi"]: args.on };
+        return;
+      case "wifi_networks":
+        await wait(900);
+        return [
+          ["Casa", 4, true],
+          ["Casa-5G", 3, true],
+          ["Ospiti", 2, false],
+          ["Vicino", 1, true],
+        ].map(([ssid, bars, secured]) => ({ ssid, bars, secured, connected: ssid === wifiConnected }));
+      case "wifi_connect":
+        await wait(1200);
+        if (args.ssid !== "Ospiti" && (!args.password || args.password.length < 8)) throw "password sbagliata";
+        wifiConnected = args.ssid;
+        return;
+      case "bluetooth_devices":
+        await wait(args.discover ? 2500 : 300);
+        return [
+          ["pad", "Xbox Wireless Controller"],
+          ["buds", "Cuffie Bluetooth"],
+          ["pad2", "DualSense Wireless Controller"],
+        ]
+          .filter(([id]) => args.discover || btPaired.includes(id))
+          .map(([id, name]) => ({ id, name, paired: btPaired.includes(id), connected: id === "pad" }));
+      case "bluetooth_pair":
+        await wait(1500);
+        btPaired = [...btPaired, args.id];
+        return;
+      case "bluetooth_unpair":
+        btPaired = btPaired.filter((p) => p !== args.id);
+        return;
+      case "save_info":
+        await wait(600);
+        return {
+          known: true,
+          locations: ["C:\\Users\\Max\\Documents\\Saved Games\\Demo"],
+          backups,
+          backupDir: "C:\\Users\\Max\\AppData\\Roaming\\GameMode\\backups",
+        };
+      case "backup_game": {
+        await wait(800);
+        const b = { id: `b${now()}`, created: now(), automatic: false, bytes: 2_500_000 };
+        backups = [b, ...backups];
+        return b;
+      }
+      case "restore_backup":
+        await wait(800);
+        backups = [{ id: `a${now()}`, created: now(), automatic: true, bytes: 2_500_000 }, ...backups];
+        return;
+      case "delete_backup":
+        backups = backups.filter((b) => b.id !== args.backupId);
+        return;
+      case "check_update":
+        await wait(700);
+        return { version: "0.2.1", notes: "Correzioni e miglioramenti" };
+      case "install_update":
+        await wait(1500);
+        throw "Aggiornamento simulato: nel browser non si installa nulla";
+      case "backup_all":
+        await wait(1500);
+        return { saved: 9, skipped: 7 };
+      case "emulator_status":
+        return mockEmulators();
+      case "set_retroarch_path":
+        retroarch = args.path;
+        return mockEmulators();
+      case "set_rom_dir":
+        romDirs = { ...romDirs, [args.system]: args.path };
+        return mockEmulators();
       case "install_catalog_item":
         console.info("[mock] install", args.id);
         return;

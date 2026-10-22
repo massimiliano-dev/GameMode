@@ -4,31 +4,38 @@ import { useEffect, useRef, useState } from "react";
 import { Backdrop } from "./components/Backdrop";
 import { HintBar, Toasts, TopBar } from "./components/Chrome";
 import { LaunchOverlay } from "./components/LaunchOverlay";
-import { Priority, useAction } from "./input/dispatcher";
+import { VirtualKeyboard } from "./components/VirtualKeyboard";
+import { Priority, setKeyboardOpener, useAction } from "./input/dispatcher";
+import { play } from "./input/sfx";
 import { ensureFocus, focusElement } from "./input/focus";
 import { setupInput } from "./input/sources";
 import { Downloads } from "./screens/Downloads";
+import { Connections } from "./screens/Connections";
 import { GameDetail } from "./screens/GameDetail";
 import { Home } from "./screens/Home";
 import { Library } from "./screens/Library";
 import { QuickMenu } from "./screens/QuickMenu";
+import { Search } from "./screens/Search";
 import { Settings } from "./screens/Settings";
+import { Stats } from "./screens/Stats";
 import { Stores } from "./screens/Stores";
 import { currentScreen, type Tab, useApp } from "./store/app";
 
-const TAB_ORDER: Tab[] = ["home", "library", "downloads", "stores", "settings"];
+const TAB_ORDER: Tab[] = ["home", "library", "downloads", "stores", "stats", "settings"];
 
 export default function App() {
   const entry = useApp(currentScreen);
   const depth = useApp((s) => s.stack.length);
   const quickMenu = useApp((s) => s.quickMenu);
   const session = useApp((s) => s.session);
+  const keyboardField = useApp((s) => s.keyboardField);
   const [dismissedLaunch, setDismissedLaunch] = useState<string | null>(null);
   const focusBeforeMenu = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     void useApp.getState().init();
     void setupInput();
+    setKeyboardOpener((field) => useApp.getState().setKeyboardField(field));
     const onWindowFocus = () => {
       ensureFocus();
       useApp.getState().returnedToApp();
@@ -55,7 +62,10 @@ export default function App() {
         app.setQuickMenu(true);
         return true;
       case "back":
-        if (!repeat) app.back();
+        if (!repeat && app.back()) play("back");
+        return true;
+      case "view":
+        if (!repeat && app.stack.at(-1)?.screen.name !== "search") app.open({ name: "search" });
         return true;
       case "lb":
       case "rb": {
@@ -90,8 +100,11 @@ export default function App() {
             {screen.name === "library" && <Library focusId={entry.focusId} />}
             {screen.name === "downloads" && <Downloads />}
             {screen.name === "stores" && <Stores />}
+            {screen.name === "stats" && <Stats />}
             {screen.name === "settings" && <Settings />}
             {screen.name === "detail" && <GameDetail gameId={screen.gameId} />}
+            {screen.name === "search" && <Search />}
+            {screen.name === "connections" && <Connections />}
           </motion.div>
         </AnimatePresence>
       </main>
@@ -100,6 +113,7 @@ export default function App() {
       <AnimatePresence onExitComplete={ensureFocus}>
         {showLaunch && <LaunchOverlay key="launch" onDismiss={() => setDismissedLaunch(launchKey)} />}
       </AnimatePresence>
+      {keyboardField && <VirtualKeyboard field={keyboardField} onClose={() => useApp.getState().setKeyboardField(null)} />}
       <Toasts />
     </div>
   );

@@ -1,4 +1,4 @@
-export type Store = "steam" | "xbox" | "epic" | "gog" | "ea" | "ubisoft" | "manual" | "mock";
+export type Store = "steam" | "xbox" | "epic" | "gog" | "ea" | "ubisoft" | "manual" | "emulator" | "mock";
 
 export interface Artwork {
   cover?: string | null;
@@ -27,6 +27,152 @@ export interface Settings {
   startFullscreen: boolean;
   preloadSteam: boolean;
   steamApiKey: string | null;
+  uiSounds: boolean;
+  tvMode: DisplayMode | null;
+  tvAudio: string | null;
+  performanceMode: boolean;
+  closeApps: string[];
+  overlayEnabled: boolean;
+  backupDir: string | null;
+}
+
+export interface UpdateInfo {
+  version: string;
+  notes: string | null;
+}
+
+export interface BackupInfo {
+  id: string;
+  created: number;
+  automatic: boolean;
+  bytes: number;
+}
+
+export interface SaveInfo {
+  known: boolean;
+  locations: string[];
+  backups: BackupInfo[];
+  backupDir: string;
+}
+
+export interface DisplayMode {
+  width: number;
+  height: number;
+  refresh: number;
+}
+
+export interface DisplayInfo {
+  modes: DisplayMode[];
+  current: DisplayMode | null;
+}
+
+export interface AudioOutput {
+  id: string;
+  name: string;
+  default: boolean;
+}
+
+export interface Radios {
+  wifi: boolean | null;
+  bluetooth: boolean | null;
+}
+
+export interface WifiNetwork {
+  ssid: string;
+  bars: number;
+  secured: boolean;
+  connected: boolean;
+}
+
+export interface BtDevice {
+  id: string;
+  name: string;
+  paired: boolean;
+  connected: boolean;
+}
+
+export interface NewsItem {
+  title: string;
+  url: string;
+  date: number;
+  snippet: string;
+}
+
+export interface Achievement {
+  name: string;
+  description: string;
+  icon: string | null;
+  achieved: boolean;
+  unlockTime: number;
+}
+
+export interface SteamExtras {
+  news: NewsItem[];
+  achievements: Achievement[];
+  achievementStatus: "ok" | "needsKey" | "none" | "unavailable";
+}
+
+export interface Deal {
+  appid: number;
+  name: string;
+  discount: number;
+  initial: string;
+  price: string;
+  cover: string;
+  hero: string;
+}
+
+export interface Deals {
+  items: Deal[];
+  status: "ok" | "noAccount" | "empty" | "failed";
+}
+
+export interface Session {
+  gameId: string;
+  profileId: string;
+  /** Unix seconds. */
+  start: number;
+  end: number;
+  seconds: number;
+}
+
+export interface SystemStatus {
+  key: string;
+  name: string;
+  path: string | null;
+  core: string;
+  coreInstalled: boolean;
+  roms: number;
+}
+
+export interface EmulatorStatus {
+  retroarch: string | null;
+  detected: boolean;
+  systems: SystemStatus[];
+}
+
+export interface Profile {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export interface Profiles {
+  profiles: Profile[];
+  active: string;
+}
+
+export interface Collection {
+  id: string;
+  name: string;
+  gameIds: string[];
+}
+
+export interface Controller {
+  slot: number;
+  wired: boolean;
+  /** 0 empty … 3 full. */
+  level: number;
 }
 
 export interface ManualGame {
@@ -86,14 +232,18 @@ export interface Storefront {
 }
 
 export interface CatalogItem {
-  /** `steam:<appid>` or `gamepass:<productId>`. */
+  /** `<source>:<store id>`, e.g. `steam:570` or `gamepass:9NKX70BBCDRN`. */
   id: string;
-  source: "steam" | "gamepass";
+  source: "steam" | "gamepass" | "epic" | "gog" | "cloud" | "deal";
   store: Store;
   name: string;
   cover: string | null;
   hero: string | null;
   playtimeSecs: number;
+  /** Wishlist deals only. */
+  discount?: number;
+  price?: string;
+  initial?: string;
 }
 
 export type SteamCatalogStatus = "ok" | "notInstalled" | "needsKey" | "noAccount" | "failed";

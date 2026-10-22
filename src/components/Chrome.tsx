@@ -1,7 +1,9 @@
 import { AnimatePresence, motion } from "motion/react";
 
 import { formatClock } from "../lib/format";
-import { type Tab, useApp } from "../store/app";
+import { activeProfileOf, type Tab, useApp } from "../store/app";
+import { Logo } from "./Logo";
+import { Avatar } from "./ProfileSettings";
 import { Glyph, useClock } from "./common";
 
 const TABS: { tab: Tab; label: string }[] = [
@@ -9,6 +11,7 @@ const TABS: { tab: Tab; label: string }[] = [
   { tab: "library", label: "Libreria" },
   { tab: "downloads", label: "Scarica" },
   { tab: "stores", label: "Negozi" },
+  { tab: "stats", label: "Statistiche" },
   { tab: "settings", label: "Impostazioni" },
 ];
 
@@ -22,10 +25,20 @@ export function TopBar() {
   return (
     <header className="topbar">
       <div className="brand">
-        <span className="brand-mark" />
+        <Logo size={30} />
         GameMode
       </div>
       <nav className="tabs" data-nav-group="tabs">
+        <button
+          type="button"
+          data-nav
+          data-nav-id="tab:search"
+          className="tab tab-search"
+          aria-label="Cerca"
+          onClick={() => useApp.getState().open({ name: "search" })}
+        >
+          ⌕
+        </button>
         <Glyph button="LB" />
         {TABS.map(({ tab, label }) => (
           <button
@@ -42,6 +55,8 @@ export function TopBar() {
         <Glyph button="RB" />
       </nav>
       <div className="topbar-right">
+        <ProfileBadge />
+        <Batteries />
         {session && playing && (
           <span className="session-pill">
             <span className="pulse" />
@@ -51,6 +66,49 @@ export function TopBar() {
         <span className="clock">{formatClock(now)}</span>
       </div>
     </header>
+  );
+}
+
+function ProfileBadge() {
+  const profile = useApp(activeProfileOf);
+  const many = useApp((s) => s.profiles.length > 1);
+  if (!profile || !many) return null;
+  return (
+    <span className="profile-badge">
+      <Avatar profile={profile} size="sm" />
+      {profile.name}
+    </span>
+  );
+}
+
+function Batteries() {
+  const controllers = useApp((s) => s.controllers);
+  return (
+    <>
+      {controllers.map((c) => (
+        <span
+          key={c.slot}
+          className={`battery ${c.wired ? "is-wired" : ""} ${!c.wired && c.level <= 1 ? "is-low" : ""}`}
+          title={c.wired ? `Controller ${c.slot + 1}: cablato` : `Controller ${c.slot + 1}: batteria`}
+        >
+          <svg className="battery-pad" viewBox="0 0 24 16" aria-hidden>
+            <path
+              d="M6 1h12a6 6 0 0 1 5.6 8.2l-1.3 3.4A3 3 0 0 1 17 13.4L15.5 11h-7L7 13.4a3 3 0 0 1-5.3-.8L.4 9.2A6 6 0 0 1 6 1Zm1 3v2H5v2h2v2h2V8h2V6H9V4H7Zm9.5 1a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z"
+              fill="currentColor"
+            />
+          </svg>
+          {c.wired ? (
+            <span className="battery-plug">⚡</span>
+          ) : (
+            <span className="battery-cells">
+              {[0, 1, 2].map((i) => (
+                <span key={i} className={`battery-cell ${c.level > i ? "is-full" : ""}`} />
+              ))}
+            </span>
+          )}
+        </span>
+      ))}
+    </>
   );
 }
 
@@ -65,6 +123,10 @@ export function HintBar() {
           {h.label}
         </span>
       ))}
+      <span className="hint">
+        <Glyph button="view" />
+        Cerca
+      </span>
       <span className="hint">
         <Glyph button="menu" />
         Menu rapido

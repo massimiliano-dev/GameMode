@@ -25,22 +25,29 @@ export function Library({ focusId }: { focusId?: string }) {
   const all = useApp((s) => s.games);
   const open = useApp((s) => s.open);
   const launch = useApp((s) => s.launch);
-  const toggleFavorite = useApp((s) => s.toggleFavorite);
   const setBackdrop = useApp((s) => s.setBackdrop);
   const sessionGame = useApp((s) => s.session?.gameId);
-  const [filter, setFilter] = useState<Store | "all">("all");
+  const collections = useApp((s) => s.collections);
+  // "all", a store, or `c:<collection id>`.
+  const [filter, setFilter] = useState<string>("all");
   const [sort, setSort] = useState<Sort>("name");
   const focused = useRef<Game | null>(null);
 
   const games = useMemo(() => visibleGames(all), [all]);
   const filters = useMemo(
-    () => ["all" as const, ...STORES.filter((s) => games.some((g) => g.store === s))],
-    [games],
+    () => [
+      { key: "all", label: "Tutti" },
+      ...STORES.filter((s) => games.some((g) => g.store === s)).map((s) => ({ key: s as string, label: STORE_LABEL[s] })),
+      ...collections.filter((c) => c.gameIds.length).map((c) => ({ key: `c:${c.id}`, label: c.name })),
+    ],
+    [games, collections],
   );
-  const shown = useMemo(
-    () => games.filter((g) => filter === "all" || g.store === filter).sort(SORTERS[sort]),
-    [games, filter, sort],
-  );
+  const shown = useMemo(() => {
+    const collection = filter.startsWith("c:") ? collections.find((c) => `c:${c.id}` === filter) : null;
+    return games
+      .filter((g) => filter === "all" || (collection ? collection.gameIds.includes(g.id) : g.store === (filter as Store)))
+      .sort(SORTERS[sort]);
+  }, [games, collections, filter, sort]);
 
   useScreenFocus(focusId, shown.length > 0);
   useHints([
@@ -48,7 +55,6 @@ export function Library({ focusId }: { focusId?: string }) {
     { button: "X", label: "Gioca" },
     { button: "Y", label: "Ordina" },
     { button: "LT", alt: "RT", label: "Filtro" },
-    { button: "view", label: "Preferito" },
   ]);
 
   const regroup = () => {
@@ -65,8 +71,8 @@ export function Library({ focusId }: { focusId?: string }) {
   useAction((action, repeat) => {
     if (repeat) return;
     if (action === "lt" || action === "rt") {
-      const i = filters.indexOf(filter);
-      const next = filters[(i + (action === "rt" ? 1 : filters.length - 1)) % filters.length];
+      const i = filters.findIndex((f) => f.key === filter);
+      const next = filters[(i + (action === "rt" ? 1 : filters.length - 1)) % filters.length].key;
       setFilter(next);
       regroup();
       return true;
@@ -78,10 +84,6 @@ export function Library({ focusId }: { focusId?: string }) {
     }
     if (action === "x" && focused.current) {
       void launch(focused.current.id);
-      return true;
-    }
-    if (action === "view" && focused.current) {
-      void toggleFavorite(focused.current);
       return true;
     }
   });
@@ -104,8 +106,8 @@ export function Library({ focusId }: { focusId?: string }) {
         <div className="chips">
           <Glyph button="LT" />
           {filters.map((f) => (
-            <span key={f} className={`chip ${f === filter ? "is-active" : ""}`}>
-              {f === "all" ? "Tutti" : STORE_LABEL[f]}
+            <span key={f.key} className={`chip ${f.key === filter ? "is-active" : ""}`}>
+              {f.label}
             </span>
           ))}
           <Glyph button="RT" />

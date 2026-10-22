@@ -33,6 +33,22 @@ struct NavEvent {
     repeat: bool,
 }
 
+/// A connected controller, for the battery indicator.
+#[derive(Serialize, Clone, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Controller {
+    pub slot: u32,
+    pub wired: bool,
+    /// 0 empty … 3 full; meaningless when wired.
+    pub level: u8,
+}
+
+static CONTROLLERS: std::sync::Mutex<Vec<Controller>> = std::sync::Mutex::new(Vec::new());
+
+pub fn controllers() -> Vec<Controller> {
+    CONTROLLERS.lock().unwrap().clone()
+}
+
 /// Starts the polling thread. Returns false when no native backend exists on
 /// this platform, so the frontend falls back to the Gamepad API.
 pub fn start(app: AppHandle) -> bool {
@@ -97,13 +113,16 @@ impl Repeater {
 mod xinput {
     use std::time::{Duration, Instant};
 
-    use tauri::{AppHandle, Emitter};
+    use tauri::{AppHandle, Emitter, Manager};
     use windows::core::{s, PCSTR};
     use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
-    use windows::Win32::UI::Input::XboxController::{XInputGetState, XINPUT_STATE};
+    use windows::Win32::UI::Input::XboxController::{
+        XInputGetBatteryInformation, XInputGetState, BATTERY_DEVTYPE_GAMEPAD, BATTERY_TYPE_DISCONNECTED,
+        BATTERY_TYPE_WIRED, XINPUT_BATTERY_INFORMATION, XINPUT_STATE,
+    };
 
-    use super::{Action, NavEvent, Repeater};
-    use crate::window;
+    use super::{Action, Controller, NavEvent, Repeater, CONTROLLERS};
+    use crate::{overlay, window};
 
     const DPAD_UP: u32 = 0x0001;
     const DPAD_DOWN: u32 = 0x0002;
@@ -129,6 +148,7 @@ mod xinput {
     const POLL: Duration = Duration::from_millis(8);
     /// Polling an empty slot is slow, so disconnected slots are probed rarely.
     const PROBE_INTERVAL: Duration = Duration::from_secs(1);
+    const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
 
     const MAPPING: &[(u32, Action)] = &[
         (DPAD_UP, Action::Up),
@@ -198,6 +218,8 @@ mod xinput {
             let mut repeater = Repeater::default();
             let mut combo_since: Option<Instant> = None;
             let mut combo_fired = false;
+            let mut last_battery: Option<Instant> = None;
+            let mut was_connected = connected;
 
             loop {
                 let now = Instant::now();
@@ -214,14 +236,28 @@ mod xinput {
                     }
                 }
 
-                let foreground = window::is_foreground(&app);
+                // Input goes only to the GameMode window that has focus.
+                let target = if overlay::is_foreground(&app) {
+                    Some(overlay::LABEL)
+                } else if window::is_foreground(&app) {
+                    Some("main")
+                } else {
+                    None
+                };
                 for (bit, repeat) in repeater.step(buttons, DIRECTIONS, now) {
                     let Some(&(_, action)) = MAPPING.iter().find(|(b, _)| *b == bit) else { continue };
                     if action == Action::Guide {
-                        summon(&app, foreground);
-                    } else if foreground {
-                        let _ = app.emit("gamepad://nav", NavEvent { action, repeat });
+                        summon(&app, target);
+                    } else if let Some(label) = target {
+                        let _ = app.emit_to(label, "gamepad://nav", NavEvent { action, repeat });
                     }
+                }
+                let foreground = target.is_some();
+
+                if connected != was_connected || last_battery.is_none_or(|t| now - t >= BATTERY_INTERVAL) {
+                    was_connected = connected;
+                    last_battery = Some(now);
+                    update_controllers(&app, &connected);
                 }
 
                 // Back+Start held: fallback for when Game Bar swallows Guide.
@@ -229,7 +265,7 @@ mod xinput {
                     let since = *combo_since.get_or_insert(now);
                     if !combo_fired && now - since >= COMBO_HOLD && !foreground {
                         combo_fired = true;
-                        summon(&app, false);
+                        summon(&app, None);
                     }
                 } else {
                     combo_since = None;
@@ -241,11 +277,39 @@ mod xinput {
         });
     }
 
-    fn summon(app: &AppHandle, foreground: bool) {
-        if !foreground {
-            window::bring_to_front(app);
+    fn update_controllers(app: &AppHandle, connected: &[bool; 4]) {
+        let list: Vec<Controller> = (0..4u32)
+            .filter(|&slot| connected[slot as usize])
+            .map(|slot| {
+                let mut info = XINPUT_BATTERY_INFORMATION::default();
+                let ok = unsafe { XInputGetBatteryInformation(slot, BATTERY_DEVTYPE_GAMEPAD, &mut info) } == 0;
+                let wired = !ok || info.BatteryType == BATTERY_TYPE_WIRED || info.BatteryType == BATTERY_TYPE_DISCONNECTED;
+                Controller { slot, wired, level: info.BatteryLevel.0 }
+            })
+            .collect();
+        let mut current = CONTROLLERS.lock().unwrap();
+        if *current != list {
+            *current = list.clone();
+            let _ = app.emit("gamepad://controllers", &list);
         }
-        let _ = app.emit("gamepad://nav", NavEvent { action: Action::Guide, repeat: false });
+    }
+
+    /// Guide: toggles the overlay over a running game, otherwise brings
+    /// GameMode back and opens its quick menu.
+    fn summon(app: &AppHandle, target: Option<&str>) {
+        let guide = NavEvent { action: Action::Guide, repeat: false };
+        if let Some(label) = target {
+            let _ = app.emit_to(label, "gamepad://nav", guide);
+            return;
+        }
+        let state = app.state::<crate::AppState>();
+        let playing = state.launcher.current().is_some_and(|s| s.phase == crate::launcher::Phase::Running);
+        if playing && state.db.lock().settings.overlay_enabled && overlay::window(app).is_some() {
+            overlay::show(app);
+            return;
+        }
+        window::bring_to_front(app);
+        let _ = app.emit_to("main", "gamepad://nav", guide);
     }
 }
 

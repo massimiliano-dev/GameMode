@@ -1,6 +1,6 @@
 // Input sources feeding the dispatcher.
 
-import { api, isTauri, on } from "../lib/api";
+import { api, isTauri, onWindow } from "../lib/api";
 import type { Action } from "../lib/types";
 import { dispatch } from "./dispatcher";
 
@@ -19,6 +19,7 @@ const KEYS: Record<string, Action> = {
   y: "y",
   m: "menu",
   v: "view",
+  "/": "view",
   g: "guide",
   "1": "lt",
   "3": "rt",
@@ -100,10 +101,10 @@ function browserGamepad() {
       if (!state) {
         held.set(action, { since: t, last: t });
         controllerActive();
-        dispatch(action, false);
+        dispatch(action, false, "pad");
       } else if (REPEATABLE.has(action) && t - state.since >= REPEAT_DELAY && t - state.last >= REPEAT_RATE) {
         state.last = t;
-        dispatch(action, true);
+        dispatch(action, true, "pad");
       }
     }
     for (const action of held.keys()) if (!pressed.has(action)) held.delete(action);
@@ -140,9 +141,9 @@ async function start(): Promise<boolean> {
   pointer();
   const native = isTauri ? await api.nativeGamepad().catch(() => false) : false;
   if (native) {
-    on<{ action: Action; repeat: boolean }>("gamepad://nav", (e) => {
+    onWindow<{ action: Action; repeat: boolean }>("gamepad://nav", (e) => {
       controllerActive();
-      dispatch(e.action, e.repeat);
+      dispatch(e.action, e.repeat, "pad");
     });
   } else {
     browserGamepad();

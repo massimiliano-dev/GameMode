@@ -131,7 +131,7 @@ fn save(app: &AppHandle, id: &str, artwork: Artwork) {
         let game = d.game_mut(id)?;
         game.artwork = artwork;
         game.artwork_checked_at = Some(now());
-        Some(game.clone())
+        d.view_game(id)
     });
     if let Ok(Some(game)) = updated {
         let _ = app.emit("library://game", &game);
@@ -160,6 +160,11 @@ impl Fetcher {
             let mut found = None;
             if let Some(appid) = game.steam_appid {
                 found = self.from_steam(appid, kind, &dir).await;
+            }
+            if found.is_none() && kind == Kind::Cover {
+                if let Some(url) = &game.cover_url {
+                    found = self.download(url, &dir, kind).await.ok();
+                }
             }
             if found.is_none() && game.store == Store::Xbox {
                 let images = match &ms_images {

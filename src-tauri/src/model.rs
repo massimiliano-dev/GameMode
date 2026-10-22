@@ -12,6 +12,7 @@ pub enum Store {
     Ea,
     Ubisoft,
     Manual,
+    Emulator,
     Mock,
 }
 
@@ -25,6 +26,7 @@ impl Store {
             Store::Ea => "ea",
             Store::Ubisoft => "ubisoft",
             Store::Manual => "manual",
+            Store::Emulator => "emulator",
             Store::Mock => "mock",
         }
     }
@@ -80,6 +82,9 @@ pub struct Game {
     /// Steam appid, when known, used to fetch artwork from the Steam CDN.
     #[serde(default)]
     pub steam_appid: Option<u32>,
+    /// A known cover image URL (e.g. libretro thumbnails for ROMs).
+    #[serde(default)]
+    pub cover_url: Option<String>,
 
     // User state, preserved across rescans.
     #[serde(default)]
@@ -109,6 +114,7 @@ impl Game {
             install_dir: None,
             launch,
             steam_appid: None,
+            cover_url: None,
             artwork: Artwork::default(),
             artwork_checked_at: None,
             favorite: false,
@@ -151,9 +157,39 @@ pub struct ManualGame {
 #[serde(rename_all = "camelCase")]
 pub struct Session {
     pub game_id: String,
+    /// Profile that played; empty in data from before profiles existed.
+    #[serde(default)]
+    pub profile_id: String,
     pub start: i64,
     pub end: i64,
     pub seconds: u64,
+}
+
+/// One person in the household.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Profile {
+    pub id: String,
+    pub name: String,
+    /// Avatar colour, as a CSS hex value.
+    pub color: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Collection {
+    pub id: String,
+    pub name: String,
+    pub game_ids: Vec<String>,
+}
+
+/// What each profile keeps for itself.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProfileState {
+    pub favorites: Vec<String>,
+    pub hidden: Vec<String>,
+    pub collections: Vec<Collection>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -166,6 +202,32 @@ pub struct Settings {
     pub preload_steam: bool,
     /// Steam Web API key, to list owned games that aren't installed.
     pub steam_api_key: Option<String>,
+    /// Navigation clicks in the UI.
+    pub ui_sounds: bool,
+    /// RetroArch executable; detected when unset.
+    pub retroarch_path: Option<PathBuf>,
+    /// ROM folder per emulated system.
+    pub rom_dirs: Vec<RomDir>,
+    /// Display mode to run GameMode in ("TV mode"); `None` keeps the desktop's.
+    pub tv_mode: Option<crate::display::DisplayMode>,
+    /// Audio output (device id) to switch to when GameMode takes the screen.
+    pub tv_audio: Option<String>,
+    /// High-performance power plan and closing `close_apps` while playing.
+    pub performance_mode: bool,
+    /// Executable names, e.g. "chrome.exe".
+    pub close_apps: Vec<String>,
+    /// Guide during a game opens the overlay instead of the launcher.
+    pub overlay_enabled: bool,
+    /// Where save backups go; the app data folder when unset.
+    pub backup_dir: Option<PathBuf>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RomDir {
+    /// Key from `library::emulators::SYSTEMS`.
+    pub system: String,
+    pub path: PathBuf,
 }
 
 impl Default for Settings {
@@ -176,6 +238,15 @@ impl Default for Settings {
             start_fullscreen: true,
             preload_steam: true,
             steam_api_key: None,
+            ui_sounds: true,
+            retroarch_path: None,
+            rom_dirs: Vec::new(),
+            tv_mode: None,
+            tv_audio: None,
+            performance_mode: false,
+            close_apps: Vec::new(),
+            overlay_enabled: true,
+            backup_dir: None,
         }
     }
 }

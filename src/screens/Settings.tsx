@@ -1,8 +1,13 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { EmulatorSettings } from "../components/EmulatorSettings";
+import { SystemSettings } from "../components/SystemSettings";
+import { UpdateSettings } from "../components/UpdateSettings";
+import { ProfileSettings } from "../components/ProfileSettings";
+import { Row, Section } from "../components/SettingsRows";
 import { Toggle, useHints, useScreenFocus } from "../components/common";
 import { ensureFocus } from "../input/focus";
-import { api, pickExecutable } from "../lib/api";
+import { api, pickExecutable, pickFolder } from "../lib/api";
 import { STORE_LABEL, STORES } from "../lib/format";
 import type { ManualGame, Store } from "../lib/types";
 import { useApp } from "../store/app";
@@ -30,6 +35,7 @@ export function Settings() {
   const [key, setKey] = useState(settings?.steamgriddbKey ?? "");
   const [steamKey, setSteamKey] = useState(settings?.steamApiKey ?? "");
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [backingUp, setBackingUp] = useState(false);
 
   useEffect(() => {
     setBackdrop(null);
@@ -111,12 +117,28 @@ export function Settings() {
             control={<Toggle on={settings.startFullscreen} />}
           />
           <Row
+            label="Overlay durante il gioco"
+            hint="Guide apre un pannello sopra il gioco invece di tornare a GameMode (giochi in finestra senza bordi)"
+            onClick={() => void saveSettings({ ...settings, overlayEnabled: !settings.overlayEnabled })}
+            control={<Toggle on={settings.overlayEnabled} />}
+          />
+          <Row
+            label="Suoni dell'interfaccia"
+            hint="Click leggeri quando ti muovi e selezioni"
+            onClick={() => void saveSettings({ ...settings, uiSounds: !settings.uiSounds })}
+            control={<Toggle on={settings.uiSounds} />}
+          />
+          <Row
             label="Avvia Steam in background"
             hint="Steam parte nascosto insieme a GameMode, così i giochi si avviano prima"
             onClick={() => void saveSettings({ ...settings, preloadSteam: !settings.preloadSteam })}
             control={<Toggle on={settings.preloadSteam} />}
           />
         </Section>
+
+        <SystemSettings settings={settings} />
+
+        <ProfileSettings />
 
         <Section title="Librerie">
           {STORES.filter((s) => s !== "manual").map((store) => (
@@ -240,6 +262,41 @@ export function Settings() {
           )}
         </Section>
 
+        <EmulatorSettings />
+
+        <Section title="Salvataggi">
+          <Row
+            label="Cartella dei backup"
+            hint={settings.backupDir ?? "Cartella dati di GameMode (consigliato un disco esterno o OneDrive)"}
+            onClick={async () => {
+              const dir = await pickFolder();
+              if (dir) await saveSettings({ ...settings, backupDir: dir });
+            }}
+            control={<span className="setting-action">Cambia</span>}
+          />
+          <Row
+            label={backingUp ? "Backup in corso…" : "Backup di tutti i giochi"}
+            hint="Copia i salvataggi di ogni gioco installato che li tiene sul PC"
+            onClick={async () => {
+              if (backingUp) return;
+              setBackingUp(true);
+              try {
+                const r = await api.backupAll();
+                toast(`Backup fatto per ${r.saved} giochi${r.skipped ? ` (${r.skipped} senza salvataggi da copiare)` : ""}`);
+              } catch (e) {
+                toast(String(e), "error");
+              } finally {
+                setBackingUp(false);
+              }
+            }}
+          />
+          <p className="setting-hint settings-note">
+            I percorsi dei salvataggi vengono dal Ludusavi Manifest, basato su PCGamingWiki.
+          </p>
+        </Section>
+
+        <UpdateSettings />
+
         {hidden.length > 0 && (
           <Section title="Giochi nascosti">
             {hidden.map((g) => (
@@ -258,33 +315,6 @@ export function Settings() {
         )}
       </div>
     </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="settings-section">
-      <h2 className="row-title">{title}</h2>
-      <div className="settings-list">{children}</div>
-    </section>
-  );
-}
-
-function Row(props: { label: string; hint?: string; control?: ReactNode; autofocus?: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      className="setting-row"
-      data-nav
-      data-nav-autofocus={props.autofocus || undefined}
-      onClick={props.onClick}
-    >
-      <span className="setting-text">
-        <span className="setting-label">{props.label}</span>
-        {props.hint && <span className="setting-hint">{props.hint}</span>}
-      </span>
-      {props.control}
-    </button>
   );
 }
 

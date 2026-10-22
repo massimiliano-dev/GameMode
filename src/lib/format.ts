@@ -8,6 +8,7 @@ export const STORE_LABEL: Record<Store, string> = {
   ea: "EA",
   ubisoft: "Ubisoft",
   manual: "Aggiunti a mano",
+  emulator: "Emulatori",
   mock: "Demo",
 };
 
@@ -22,7 +23,7 @@ export const SHOP_LABEL: Partial<Record<Store, string>> = {
 };
 
 /** Stores the user can toggle in settings, in display order. */
-export const STORES: Store[] = ["steam", "xbox", "epic", "gog", "ea", "ubisoft", "manual"];
+export const STORES: Store[] = ["steam", "xbox", "epic", "gog", "ea", "ubisoft", "emulator", "manual"];
 
 export function formatPlaytime(secs: number): string {
   if (secs < 60) return secs > 0 ? "meno di un minuto" : "mai giocato";

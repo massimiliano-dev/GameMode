@@ -1,19 +1,42 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { CatalogCard } from "../components/CatalogCard";
 
 import { Glyph, StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
 import { forgetGroup } from "../input/focus";
 import { api } from "../lib/api";
 import { formatPlaytime } from "../lib/format";
-import type { Catalog, CatalogItem } from "../lib/types";
+import type { Catalog, CatalogItem, Deals } from "../lib/types";
 import { useApp } from "../store/app";
 
-type Filter = "all" | "steam" | "gamepass";
-const FILTERS: { key: Filter; label: string }[] = [
+type Filter = "all" | CatalogItem["source"];
+const ALL_FILTERS: { key: Filter; label: string }[] = [
   { key: "all", label: "Tutti" },
-  { key: "steam", label: "La tua libreria Steam" },
+  { key: "steam", label: "Steam" },
+  { key: "epic", label: "Epic" },
+  { key: "gog", label: "GOG" },
   { key: "gamepass", label: "PC Game Pass" },
+  { key: "cloud", label: "Cloud" },
+  { key: "deal", label: "Offerte" },
 ];
+/** "Tutti" lists what can be installed; cloud games and offers have their own tabs. */
+const IN_ALL = new Set<CatalogItem["source"]>(["steam", "epic", "gog", "gamepass"]);
+
+function dealItems(deals: Deals | null): CatalogItem[] {
+  return (deals?.items ?? []).map((d) => ({
+    id: `deal:${d.appid}`,
+    source: "deal",
+    store: "steam",
+    name: d.name,
+    cover: d.cover,
+    hero: d.hero,
+    playtimeSecs: 0,
+    discount: d.discount,
+    price: d.price,
+    initial: d.initial,
+  }));
+}
 
 const STEAM_NOTICE: Record<Exclude<Catalog["steam"], "ok">, string> = {
   notInstalled: "Steam non è installato su questo PC.",
@@ -29,6 +52,8 @@ export function Downloads() {
   const setBackdropArt = useApp((s) => s.setBackdropArt);
   const setTab = useApp((s) => s.setTab);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [deals, setDeals] = useState<Deals | null>(null);
+  const [cloud, setCloud] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("all");
   const [focused, setFocused] = useState<CatalogItem | null>(null);
@@ -36,8 +61,12 @@ export function Downloads() {
 
   const load = useCallback(async (force: boolean) => {
     setLoading(true);
+    // Thousands of titles: arrives on its own, after the rest.
+    void api.getCloudCatalog(force).then(setCloud).catch(() => {});
     try {
-      setCatalog(await api.getCatalog(force));
+      const [c, d] = await Promise.all([api.getCatalog(force), api.wishlistDeals(force).catch(() => null)]);
+      setCatalog(c);
+      setDeals(d);
     } finally {
       setLoading(false);
     }
@@ -48,9 +77,14 @@ export function Downloads() {
     void load(false);
   }, [load, setBackdropArt]);
 
+  const items = useMemo(() => [...(catalog?.items ?? []), ...cloud, ...dealItems(deals)], [catalog, cloud, deals]);
+  const filters = useMemo(
+    () => ALL_FILTERS.filter((f) => f.key === "all" || items.some((i) => i.source === f.key)),
+    [items],
+  );
   const shown = useMemo(
-    () => (catalog?.items ?? []).filter((i) => filter === "all" || i.source === filter),
-    [catalog, filter],
+    () => items.filter((i) => (filter === "all" ? IN_ALL.has(i.source) : i.source === filter)),
+    [items, filter],
   );
 
   useScreenFocus(undefined, !loading);
@@ -63,8 +97,8 @@ export function Downloads() {
   useAction((action, repeat) => {
     if (repeat) return;
     if (action === "lt" || action === "rt") {
-      const i = FILTERS.findIndex((f) => f.key === filter);
-      const next = FILTERS[(i + (action === "rt" ? 1 : FILTERS.length - 1)) % FILTERS.length].key;
+      const i = filters.findIndex((f) => f.key === filter);
+      const next = filters[(i + (action === "rt" ? 1 : filters.length - 1)) % filters.length].key;
       setFilter(next);
       forgetGroup("catalog");
       requestAnimationFrame(() => document.querySelector<HTMLElement>(".catalog-grid [data-nav]")?.focus());
@@ -84,9 +118,20 @@ export function Downloads() {
     },
     [setBackdropArt],
   );
-  const onSelect = useCallback((item: CatalogItem) => void installFromCatalog(item.id, item.name), [installFromCatalog]);
+  const toast = useApp((s) => s.toast);
+  const onSelect = useCallback(
+    (item: CatalogItem) => {
+      if (item.source === "deal") {
+        void api.openLink(`steam://store/${item.id.slice("deal:".length)}`);
+        toast(`${item.name} a ${item.price} nel negozio Steam. Premi Guide per tornare qui`);
+      } else {
+        void installFromCatalog(item.id, item.name);
+      }
+    },
+    [installFromCatalog, toast],
+  );
 
-  const steamNotice = catalog && catalog.steam !== "ok" && filter !== "gamepass" ? STEAM_NOTICE[catalog.steam] : null;
+  const steamNotice = catalog && catalog.steam !== "ok" && (filter === "all" || filter === "steam") ? STEAM_NOTICE[catalog.steam] : null;
 
   return (
     <div className="screen downloads">
@@ -96,7 +141,7 @@ export function Downloads() {
         </h1>
         <div className="chips">
           <Glyph button="LT" />
-          {FILTERS.map((f) => (
+          {filters.map((f) => (
             <span key={f.key} className={`chip ${f.key === filter ? "is-active" : ""}`}>
               {f.label}
             </span>
@@ -106,11 +151,7 @@ export function Downloads() {
         {focused && (
           <span className="sort-label catalog-focus">
             <StoreBadge store={focused.store} />
-            {focused.source === "gamepass"
-              ? "Incluso in PC Game Pass"
-              : focused.playtimeSecs > 0
-                ? `Giocato ${formatPlaytime(focused.playtimeSecs)}`
-                : "Mai giocato"}
+            {describe(focused)}
           </span>
         )}
       </header>
@@ -125,7 +166,7 @@ export function Downloads() {
           )}
         </div>
       )}
-      {catalog && !catalog.gamepassOk && filter !== "steam" && (
+      {catalog && !catalog.gamepassOk && (filter === "all" || filter === "gamepass") && (
         <div className="notice">Catalogo PC Game Pass non raggiungibile: controlla la connessione e premi X per riprovare.</div>
       )}
 
@@ -147,39 +188,15 @@ export function Downloads() {
   );
 }
 
-const CatalogCard = memo(function CatalogCard(props: {
-  item: CatalogItem;
-  autofocus: boolean;
-  onFocus: (item: CatalogItem) => void;
-  onSelect: (item: CatalogItem) => void;
-}) {
-  const { item } = props;
-  const [failed, setFailed] = useState(false);
-  return (
-    <button
-      type="button"
-      className="game-card"
-      data-nav
-      data-nav-id={`catalog:${item.id}`}
-      data-nav-autofocus={props.autofocus || undefined}
-      onFocus={() => props.onFocus(item)}
-      onClick={() => props.onSelect(item)}
-      aria-label={`Installa ${item.name}`}
-    >
-      {item.cover && !failed ? (
-        <img className="cover" src={item.cover} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} />
-      ) : (
-        <span className={`cover cover-placeholder store-tint-${item.store}`}>
-          <span className="cover-placeholder-name">{item.name}</span>
-        </span>
-      )}
-      <span className="game-card-meta">
-        <StoreBadge store={item.store} compact />
-        {item.source === "gamepass" && <span className="pass-pill">Game Pass</span>}
-      </span>
-      <span className="install-pill" aria-hidden>
-        ↓ Installa
-      </span>
-    </button>
-  );
-});
+function describe(item: CatalogItem) {
+  switch (item.source) {
+    case "gamepass":
+      return "Incluso in PC Game Pass";
+    case "cloud":
+      return "Gioca in streaming con Xbox Cloud Gaming";
+    case "deal":
+      return `In offerta: ${item.initial} → ${item.price}`;
+    default:
+      return item.playtimeSecs > 0 ? `Giocato ${formatPlaytime(item.playtimeSecs)}` : "Mai giocato";
+  }
+}

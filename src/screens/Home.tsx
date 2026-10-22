@@ -5,7 +5,7 @@ import { StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
 import { artUrl } from "../lib/api";
 import { formatLastPlayed, formatPlaytime, STORE_LABEL, STORES } from "../lib/format";
-import type { Game } from "../lib/types";
+import type { Collection, Game } from "../lib/types";
 import { useApp, visibleGames } from "../store/app";
 
 interface Row {
@@ -16,7 +16,7 @@ interface Row {
 
 const ROW_LIMIT = 14;
 
-function buildRows(all: Game[]): Row[] {
+function buildRows(all: Game[], collections: Collection[]): Row[] {
   const games = visibleGames(all);
   const rows: Row[] = [];
   const recent = games
@@ -27,6 +27,11 @@ function buildRows(all: Game[]): Row[] {
 
   const favorites = games.filter((g) => g.favorite);
   if (favorites.length) rows.push({ key: "favorites", title: "Preferiti", games: favorites });
+
+  for (const c of collections) {
+    const list = c.gameIds.map((id) => games.find((g) => g.id === id)).filter((g): g is Game => !!g);
+    if (list.length) rows.push({ key: `c-${c.id}`, title: c.name, games: list });
+  }
 
   // On first launch every game shares the same timestamp: nothing is "new".
   const oldest = Math.min(...games.map((g) => g.addedAt));
@@ -46,6 +51,7 @@ function buildRows(all: Game[]): Row[] {
 
 export function Home({ focusId }: { focusId?: string }) {
   const games = useApp((s) => s.games);
+  const collections = useApp((s) => s.collections);
   const loaded = useApp((s) => s.loaded);
   const open = useApp((s) => s.open);
   const launch = useApp((s) => s.launch);
@@ -53,7 +59,7 @@ export function Home({ focusId }: { focusId?: string }) {
   const setBackdrop = useApp((s) => s.setBackdrop);
   const featured = useApp((s) => s.games.find((g) => g.id === s.backdropId));
   const sessionGame = useApp((s) => s.session?.gameId);
-  const rows = useMemo(() => buildRows(games), [games]);
+  const rows = useMemo(() => buildRows(games, collections), [games, collections]);
 
   useScreenFocus(focusId, rows.length > 0);
   useHints([

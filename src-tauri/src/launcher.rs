@@ -81,6 +81,10 @@ impl Launcher {
 }
 
 pub fn launch(app: &AppHandle, game: &Game) -> Result<()> {
+    let settings = app.state::<AppState>().db.lock().settings.clone();
+    if settings.performance_mode {
+        crate::performance::begin(&settings.close_apps);
+    }
     let spawned = spawn(app, &game.launch).with_context(|| format!("avvio di {}", game.name))?;
     // A spawned store client (Galaxy, Steam…) is not the game: follow the
     // spawned process only for hand-added executables, or when there is no
@@ -244,10 +248,16 @@ fn end(app: &AppHandle, generation: u64, phase: Phase, seconds: u64) {
     state.launcher.finish(generation);
 
     if phase == Phase::Exited && seconds > 0 {
-        let record = Session { game_id: session.game_id.clone(), start: session.started_at, end: now(), seconds };
+        let record = Session {
+            game_id: session.game_id.clone(),
+            profile_id: String::new(),
+            start: session.started_at,
+            end: now(),
+            seconds,
+        };
         match state.db.update(|d| {
             d.record_session(record);
-            d.game(&session.game_id).cloned()
+            d.view_game(&session.game_id)
         }) {
             Ok(Some(game)) => {
                 let _ = app.emit("library://game", &game);
@@ -257,6 +267,7 @@ fn end(app: &AppHandle, generation: u64, phase: Phase, seconds: u64) {
         }
     }
     let _ = app.emit("game://state", &session);
+    crate::performance::end();
     if phase == Phase::Exited {
         window::bring_to_front(app);
     }
