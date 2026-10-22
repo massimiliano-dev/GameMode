@@ -61,10 +61,9 @@ pub fn watch(app: AppHandle, game: Game) {
         while started.elapsed() < std::time::Duration::from_secs(15 * 60) {
             std::thread::sleep(std::time::Duration::from_secs(2));
             if !still_installed(&game) {
-                crate::assist::disable();
                 crate::scan(&app);
                 if !crate::window::is_foreground(&app) {
-                    crate::window::bring_to_front(&app);
+                    crate::storefront::return_to_gamemode(&app);
                 }
                 let _ = app.emit("uninstall://done", &game.name);
                 return;

@@ -1,0 +1,12 @@
+{
+  "productName": "GameMode Beta",
+  "identifier": "it.maxpolce.gamemode.beta",
+  "bundle": {
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/massimiliano-dev/GameMode/releases/download/beta/latest.json"]
+    }
+  }
+}

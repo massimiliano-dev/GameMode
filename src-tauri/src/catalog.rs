@@ -371,8 +371,7 @@ pub fn watch_steam_install(app: AppHandle, appid: String) {
                 return;
             }
             if steam::library_folders(&root).iter().any(|f| f.join("steamapps").join(&manifest).is_file()) {
-                crate::assist::disable();
-                crate::window::bring_to_front(&app);
+                crate::storefront::return_to_gamemode(&app);
                 let _ = app.emit("install://queued", &appid);
                 return;
             }

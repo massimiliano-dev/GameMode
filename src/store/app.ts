@@ -241,7 +241,8 @@ export const useApp = create<AppState>((set, get) => ({
   openStore: async (store, gameId) => {
     try {
       const what = "Apro il negozio.";
-      get().toast(store === "xbox" ? nativeHint(what) : assistHint(get().settings, what));
+      const native = store === "xbox" || (store === "steam" && !!get().settings?.steamBigPicture);
+      get().toast(native ? nativeHint(what) : assistHint(get().settings, what));
       await sleep(HANDOFF_DELAY);
       await api.openStore(store, gameId);
       set({ rescanOnReturn: true });
@@ -255,7 +256,8 @@ export const useApp = create<AppState>((set, get) => ({
       if (!id.startsWith("cloud:")) {
         // Shown while GameMode is still on screen: it steps aside next.
         const what = `Apro l'installazione di ${name}.`;
-        get().toast(id.startsWith("gamepass:") ? nativeHint(what) : assistHint(get().settings, what));
+        const native = id.startsWith("gamepass:") || (id.startsWith("steam:") && !!get().settings?.steamBigPicture);
+        get().toast(native ? nativeHint(what) : assistHint(get().settings, what));
         await sleep(HANDOFF_DELAY);
       }
       await api.installCatalogItem(id);
@@ -268,7 +270,8 @@ export const useApp = create<AppState>((set, get) => ({
   uninstall: async (game) => {
     try {
       if (!["manual", "xbox", "mock"].includes(game.store)) {
-        get().toast(assistHint(get().settings, `Apro la disinstallazione di ${game.name}.`));
+        const what = `Apro la disinstallazione di ${game.name}.`;
+        get().toast(game.store === "steam" && get().settings?.steamBigPicture ? nativeHint(what) : assistHint(get().settings, what));
         await sleep(HANDOFF_DELAY);
       }
       const outcome = await api.uninstallGame(game.id);
@@ -357,7 +360,7 @@ function assistHint(settings: Settings | null, what: string) {
     : `${what} Tieni premuto ⧉ per tornare qui`;
 }
 
-/** For apps that already work with a controller (Xbox app, Microsoft Store). */
+/** For apps that already work with a controller (Xbox app, Store, Steam Big Picture). */
 function nativeHint(what: string) {
   return `${what} Usa il controller come al solito; tieni premuto ⧉ per tornare a GameMode`;
 }

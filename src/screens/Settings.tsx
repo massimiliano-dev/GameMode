@@ -124,6 +124,12 @@ export function Settings() {
             control={<Toggle on={settings.overlayEnabled} />}
           />
           <Row
+            label="Steam in Big Picture"
+            hint="Negozio, installazioni e disinstallazioni di Steam si aprono in Big Picture, comandabile col controller"
+            onClick={() => void saveSettings({ ...settings, steamBigPicture: !settings.steamBigPicture })}
+            control={<Toggle on={settings.steamBigPicture} />}
+          />
+          <Row
             label="Controller nelle finestre degli store"
             hint="Nei dialoghi di installazione e disinstallazione: A = Invio, B = Esc, croce = frecce, LB/RB = Tab, ⧉ torna a GameMode"
             onClick={() => void saveSettings({ ...settings, keyboardAssist: !settings.keyboardAssist })}

@@ -273,8 +273,7 @@ mod xinput {
                     let since = *view_since.get_or_insert(now);
                     if now - since >= VIEW_HOLD {
                         view_since = None;
-                        assist::disable();
-                        window::bring_to_front(&app);
+                        crate::storefront::return_to_gamemode(&app);
                     }
                 } else {
                     view_since = None;
@@ -334,8 +333,7 @@ mod xinput {
             Action::Lb => Key::ShiftTab,
             Action::X => Key::Space,
             Action::View => {
-                assist::disable();
-                window::bring_to_front(app);
+                crate::storefront::return_to_gamemode(app);
                 return;
             }
             _ => return,
