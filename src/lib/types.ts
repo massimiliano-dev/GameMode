@@ -35,6 +35,7 @@ export interface Settings {
   overlayEnabled: boolean;
   backupDir: string | null;
   keyboardAssist: boolean;
+  steamBigPicture: boolean;
 }
 
 export interface UpdateInfo {

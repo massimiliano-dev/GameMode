@@ -222,6 +222,8 @@ pub struct Settings {
     pub backup_dir: Option<PathBuf>,
     /// The controller types Enter/Esc/arrows in store windows GameMode opens.
     pub keyboard_assist: bool,
+    /// Open Steam's store/install/uninstall in Big Picture (controller UI).
+    pub steam_big_picture: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -250,6 +252,7 @@ impl Default for Settings {
             overlay_enabled: true,
             backup_dir: None,
             keyboard_assist: true,
+            steam_big_picture: true,
         }
     }
 }

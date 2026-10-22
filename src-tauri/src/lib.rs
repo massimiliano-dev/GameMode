@@ -441,12 +441,16 @@ async fn wishlist_deals(app: AppHandle, force: bool) -> steam_web::Deals {
 
 /// Opens a web page or store link and steps aside for it.
 #[tauri::command]
-fn open_link(app: AppHandle, url: String) -> CmdResult<()> {
+async fn open_link(app: AppHandle, url: String) -> CmdResult<()> {
     let allowed = ["https://", "steam://", "ms-settings:"];
     if !allowed.iter().any(|p| url.starts_with(p)) {
         return Err("Link non supportato".into());
     }
-    storefront::open_uri(&app, &url).map_err(|e| format!("{e:#}"))
+    if url.starts_with("steam://") {
+        start_assist(&app, !storefront::uses_big_picture(&app));
+    }
+    let handle = app.clone();
+    blocking(move || storefront::open_uri(&handle, &url)).await
 }
 
 #[tauri::command]
@@ -467,7 +471,8 @@ async fn install_catalog_item(app: AppHandle, id: String) -> CmdResult<()> {
     // Cloud games run in Edge, which handles the controller itself and needs
     // View for the game; the Xbox app and Store handle the controller too.
     if !id.starts_with("cloud:") {
-        start_assist(&app, !id.starts_with("gamepass:"));
+        let native_controller = id.starts_with("gamepass:") || (id.starts_with("steam:") && storefront::uses_big_picture(&app));
+        start_assist(&app, !native_controller);
     }
     if let Some(appid) = id.strip_prefix("steam:") {
         catalog::watch_steam_install(app.clone(), appid.to_string());
@@ -487,7 +492,8 @@ async fn uninstall_game(app: AppHandle, id: String) -> CmdResult<uninstall::Outc
         .map_err(err)?
         .map_err(|e| format!("{e:#}"))?;
     if outcome == uninstall::Outcome::Started {
-        start_assist(&app, true);
+        // Big Picture handles the controller by itself.
+        start_assist(&app, !(game.store == model::Store::Steam && storefront::uses_big_picture(&app)));
         uninstall::watch(app.clone(), game);
     }
     if outcome == uninstall::Outcome::Removed {
@@ -631,7 +637,8 @@ async fn list_storefronts() -> CmdResult<Vec<storefront::Storefront>> {
 #[tauri::command]
 async fn open_store(app: AppHandle, store: model::Store, game_id: Option<String>) -> CmdResult<storefront::OpensIn> {
     let game = game_id.and_then(|id| app.state::<AppState>().db.lock().game(&id).cloned());
-    start_assist(&app, store != model::Store::Xbox);
+    let native_controller = store == model::Store::Xbox || (store == model::Store::Steam && storefront::uses_big_picture(&app));
+    start_assist(&app, !native_controller);
     let handle = app.clone();
     blocking(move || storefront::open(&handle, store, game.as_ref())).await
 }

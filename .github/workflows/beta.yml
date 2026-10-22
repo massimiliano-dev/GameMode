@@ -1,0 +1,59 @@
+name: Beta
+
+# Every push to a beta branch publishes "GameMode Beta": a separate app
+# (own name, data and shortcuts) that installs next to the stable one and
+# updates itself from the "beta" release.
+on:
+  push:
+    branches: ["console-mode", "beta/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  beta:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # Beta versions sit one minor above stable and grow with every build,
+      # so installed betas always see the newest one as an update.
+      - name: Beta version
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs");
+            const [major, minor] = require("./package.json").version.split(".").map(Number);
+            const conf = JSON.parse(fs.readFileSync("src-tauri/tauri.beta.conf.json", "utf8"));
+            conf.version = `${major}.${minor + 1}.${process.env.GITHUB_RUN_NUMBER}`;
+            fs.writeFileSync("src-tauri/tauri.beta.generated.json", JSON.stringify(conf, null, 2));
+            console.log("Beta version", conf.version);
+          '
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: beta
+          releaseName: GameMode Beta
+          releaseBody: Versione di prova dal branch ${{ github.ref_name }}. Si installa accanto a GameMode e si aggiorna da sola a ogni nuova build.
+          releaseDraft: false
+          prerelease: true
+          updaterJsonPreferNsis: true
+          args: --bundles nsis --config src-tauri/tauri.beta.generated.json

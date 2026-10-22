@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::model::{Game, Store};
@@ -192,11 +192,44 @@ pub fn open_first(app: &AppHandle, uris: &[String]) -> Result<()> {
     open_uri(app, last)
 }
 
+/// Big Picture was opened for the current hand-off and should close on return.
+static STEAM_BIG_PICTURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Time Steam needs to switch to Big Picture before it takes the next link.
+const BIG_PICTURE_DELAY: std::time::Duration = std::time::Duration::from_millis(1800);
+
+pub fn uses_big_picture(app: &AppHandle) -> bool {
+    app.state::<crate::AppState>().db.lock().settings.steam_big_picture
+}
+
 /// Opens a store client link and steps aside so its window gets the screen.
+/// Steam links go through Big Picture, which the controller can drive.
+/// Blocking (waits for Big Picture): call off the main thread.
 pub fn open_uri(app: &AppHandle, uri: &str) -> Result<()> {
+    if uri.starts_with("steam://") && uses_big_picture(app) {
+        app.opener().open_url("steam://open/bigpicture", None::<&str>)?;
+        STEAM_BIG_PICTURE.store(true, std::sync::atomic::Ordering::SeqCst);
+        std::thread::sleep(BIG_PICTURE_DELAY);
+    }
     app.opener().open_url(uri, None::<&str>)?;
     window::minimize(app);
     Ok(())
+}
+
+/// Comes back from a hand-off: closes Big Picture if GameMode opened it (so
+/// it doesn't sit over later games) and brings GameMode to the front.
+pub fn return_to_gamemode(app: &AppHandle) {
+    crate::assist::disable();
+    if STEAM_BIG_PICTURE.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        let _ = app.opener().open_url("steam://close/bigpicture", None::<&str>);
+        let app = app.clone();
+        // Leaving Big Picture brings the Steam window up: wait for it.
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            window::bring_to_front(&app);
+        });
+        return;
+    }
+    window::bring_to_front(app);
 }
 
 #[cfg(test)]
