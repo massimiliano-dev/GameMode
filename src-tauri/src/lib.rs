@@ -633,6 +633,8 @@ async fn install_update(app: AppHandle) -> CmdResult<()> {
     let Some(update) = app.updater().map_err(err)?.check().await.map_err(err)? else {
         return Err("Nessun aggiornamento disponibile".into());
     };
+    // The console-mode watchdog must not open the desktop during the restart.
+    shell::mark_updating();
     update.download_and_install(|_, _| {}, || {}).await.map_err(err)?;
     display::reset_mode();
     app.restart();

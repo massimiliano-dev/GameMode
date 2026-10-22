@@ -109,9 +109,43 @@ mod imp {
                 let _ = CloseHandle(handle);
             }
         }
+        // An update restarts GameMode: give the new version time to come up
+        // instead of opening the desktop under the installer.
+        if super::update_pending() {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+            while std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                if other_instance_running() {
+                    super::clear_update_flag();
+                    return;
+                }
+            }
+            super::clear_update_flag();
+        }
         // A clean exit to the desktop already started Explorer.
         std::thread::sleep(std::time::Duration::from_millis(500));
         start_explorer();
+    }
+
+    /// Another GameMode (not this watchdog) is running.
+    fn other_instance_running() -> bool {
+        use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+        let Some(name) = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_os_string())) else {
+            return false;
+        };
+        let me = std::process::id();
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+        sys.processes().iter().any(|(pid, p)| pid.as_u32() != me && p.name().eq_ignore_ascii_case(&name))
+    }
+
+    /// Packaged apps (Xbox app, Microsoft Store, Settings) need Explorer:
+    /// start it in the background first, in console mode.
+    pub fn ensure_explorer() {
+        if !explorer_running() {
+            start_explorer();
+            std::thread::sleep(std::time::Duration::from_secs(3));
+        }
     }
 
     fn run_values(root: HKEY, view: u32) -> Vec<(String, String)> {
@@ -210,6 +244,8 @@ mod imp {
 
     pub fn start_explorer() {}
 
+    pub fn ensure_explorer() {}
+
     pub fn spawn_watchdog() {}
 
     pub fn run_watchdog(_pid: u32) {}
@@ -217,7 +253,41 @@ mod imp {
     pub fn run_startup_apps() {}
 }
 
-pub use imp::{run_startup_apps, run_watchdog, set, spawn_watchdog, start_explorer, status};
+pub use imp::{ensure_explorer, run_startup_apps, run_watchdog, set, spawn_watchdog, start_explorer, status};
+
+fn update_flag() -> std::path::PathBuf {
+    std::env::temp_dir().join("gamemode-updating")
+}
+
+/// Marks that GameMode is about to restart for an update (read by the watchdog).
+pub fn mark_updating() {
+    let _ = std::fs::write(update_flag(), crate::model::now().to_string());
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn update_pending() -> bool {
+    std::fs::read_to_string(update_flag())
+        .ok()
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .is_some_and(|at| crate::model::now() - at < 300)
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn clear_update_flag() {
+    let _ = std::fs::remove_file(update_flag());
+}
+
+/// Links handled by packaged apps, which don't start without Explorer.
+pub fn needs_explorer(uri: &str) -> bool {
+    ["msxbox:", "ms-windows-store:", "ms-settings:", "ms-xbl-", "xbox:"].iter().any(|p| uri.starts_with(p))
+}
+
+/// Before opening `uri`: in console mode, packaged apps get Explorer first.
+pub fn prepare_for(uri: &str) {
+    if needs_explorer(uri) && status().active {
+        ensure_explorer();
+    }
+}
 
 /// `--watchdog <pid>` on the command line.
 pub fn watchdog_pid() -> Option<u32> {

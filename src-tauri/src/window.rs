@@ -38,6 +38,11 @@ pub fn bring_to_front(app: &AppHandle) {
 }
 
 pub fn minimize(app: &AppHandle) {
+    // In console mode there's no desktop underneath: stepping aside would
+    // leave a black screen if the other app doesn't show up.
+    if crate::shell::status().active {
+        return;
+    }
     if let Some(window) = main_window(app) {
         let _ = window.minimize();
     }
