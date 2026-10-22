@@ -15,8 +15,24 @@ pub const LABEL: &str = "overlay";
 static VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Bumped on every show, so only the newest keep-on-top loop runs.
 static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-/// How long the overlay keeps trying to take focus back after opening.
+/// How long the overlay takes focus back from any window after opening.
 const FOCUS_FIGHT: std::time::Duration = std::time::Duration::from_secs(3);
+/// Apps that react to Guide themselves: the overlay takes focus back from
+/// them for as long as it is open.
+const GUIDE_GRABBERS: &[&str] = &["steam.exe", "steamwebhelper.exe", "gamebar.exe", "gamebarftserver.exe"];
+
+/// The foreground window belongs to an app that grabs Guide.
+fn guide_grabber_in_front() -> bool {
+    #[cfg(windows)]
+    {
+        crate::window::foreground_process_name().is_some_and(|n| GUIDE_GRABBERS.contains(&n.as_str()))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = GUIDE_GRABBERS;
+        false
+    }
+}
 
 /// While the overlay is up it gets all controller input, even when Game Bar
 /// or the game itself grabbed the foreground for a moment.
@@ -94,7 +110,7 @@ pub fn show(app: &AppHandle) {
             if let Ok(hwnd) = w.hwnd() {
                 crate::window::raise_topmost_raw(hwnd.0 as isize);
             }
-            if started.elapsed() < FOCUS_FIGHT {
+            if started.elapsed() < FOCUS_FIGHT || guide_grabber_in_front() {
                 claim_focus(&w);
             }
         }
