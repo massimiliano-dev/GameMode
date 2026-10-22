@@ -58,6 +58,7 @@ let audioDefault = "speakers";
 let radios = { wifi: true, bluetooth: true };
 let wifiConnected = "Casa";
 let btPaired = ["pad"];
+let consoleMode = false;
 let backups: { id: string; created: number; automatic: boolean; bytes: number }[] = [
   { id: "b2", created: now() - 2 * day, automatic: false, bytes: 2_400_000 },
 ];
@@ -408,6 +409,11 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "delete_backup":
         backups = backups.filter((b) => b.id !== args.backupId);
         return;
+      case "get_console_mode":
+        return { enabled: consoleMode, active: false };
+      case "set_console_mode":
+        consoleMode = args.enabled;
+        return { enabled: consoleMode, active: false };
       case "check_update":
         await wait(700);
         return { version: "0.2.1", notes: "Correzioni e miglioramenti" };

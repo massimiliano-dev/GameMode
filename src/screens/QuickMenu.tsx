@@ -27,9 +27,11 @@ export function QuickMenu() {
   const [armed, setArmed] = useState<string | null>(null);
   const [outputs, setOutputs] = useState<AudioOutput[] | null>(null);
   const output = outputs?.find((o) => o.default);
+  const [consoleMode, setConsoleMode] = useState(false);
   // The screen below keeps the hint bar; the panel shows its own.
   useEffect(() => {
     void api.getVolume().then(setVolume).catch(() => setVolume(null));
+    void api.getConsoleMode().then((s) => setConsoleMode(s.active)).catch(() => {});
   }, []);
   useScreenFocus();
 
@@ -169,7 +171,7 @@ export function QuickMenu() {
             Cerca di nuovo i giochi
           </QmButton>
           <QmButton onClick={() => void api.toggleFullscreen()}>Schermo intero sì/no</QmButton>
-          <QmButton onClick={() => { close(); void api.exitToDesktop(); }}>Vai al desktop</QmButton>
+          <QmButton onClick={() => { close(); void api.exitToDesktop(); }}>{consoleMode ? "Apri il desktop di Windows" : "Vai al desktop"}</QmButton>
         </div>
 
         <div className="qm-list qm-power">
@@ -177,7 +179,7 @@ export function QuickMenu() {
           <QmButton armed={armed === "restart"} onClick={power("restart")}>Riavvia</QmButton>
           <QmButton danger armed={armed === "shutdown"} onClick={power("shutdown")}>Spegni</QmButton>
           <QmButton armed={armed === "quit"} onClick={() => confirmTwice("quit", () => void api.quit())}>
-            Chiudi GameMode
+            {consoleMode ? "Chiudi GameMode e apri il desktop" : "Chiudi GameMode"}
           </QmButton>
         </div>
         <div className="qm-hints">

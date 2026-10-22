@@ -146,7 +146,11 @@ fn spawn(app: &AppHandle, spec: &LaunchSpec) -> Result<Option<u32>> {
             Ok(None)
         }
         LaunchSpec::AppsFolder { aumid } => {
-            Command::new("explorer.exe").arg(format!(r"shell:AppsFolder\{aumid}")).spawn()?;
+            // Straight through the activation manager: going through
+            // explorer.exe would bring the whole desktop up in console mode.
+            if activate_packaged(aumid).is_err() {
+                Command::new("explorer.exe").arg(format!(r"shell:AppsFolder\{aumid}")).spawn()?;
+            }
             Ok(None)
         }
         LaunchSpec::Exe { path, args, cwd } => {
@@ -273,6 +277,24 @@ fn end(app: &AppHandle, generation: u64, phase: Phase, seconds: u64) {
     if phase == Phase::Exited {
         window::bring_to_front(app);
     }
+}
+
+#[cfg(windows)]
+fn activate_packaged(aumid: &str) -> Result<u32> {
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_LOCAL_SERVER, COINIT_MULTITHREADED};
+    use windows::Win32::UI::Shell::{ApplicationActivationManager, IApplicationActivationManager, AO_NONE};
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let manager: IApplicationActivationManager =
+            CoCreateInstance(&ApplicationActivationManager, None, CLSCTX_LOCAL_SERVER)?;
+        Ok(manager.ActivateApplication(&HSTRING::from(aumid), PCWSTR::null(), AO_NONE)?)
+    }
+}
+
+#[cfg(not(windows))]
+fn activate_packaged(_aumid: &str) -> Result<u32> {
+    anyhow::bail!("solo su Windows")
 }
 
 #[cfg(windows)]

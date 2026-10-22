@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { ConsoleSettings } from "../components/ConsoleSettings";
 import { EmulatorSettings } from "../components/EmulatorSettings";
 import { SystemSettings } from "../components/SystemSettings";
 import { UpdateSettings } from "../components/UpdateSettings";
@@ -141,6 +142,8 @@ export function Settings() {
             control={<Toggle on={settings.preloadSteam} />}
           />
         </Section>
+
+        <ConsoleSettings />
 
         <SystemSettings settings={settings} />
 

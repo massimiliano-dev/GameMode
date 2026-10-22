@@ -20,6 +20,7 @@ mod overlay;
 mod performance;
 mod procinfo;
 mod saves;
+mod shell;
 #[cfg(windows)]
 mod sqlite;
 mod steam_web;
@@ -322,7 +323,19 @@ fn overlay_to_launcher(app: AppHandle) {
 
 #[tauri::command]
 fn exit_to_desktop(app: AppHandle) {
+    // In console mode there is no desktop until Explorer runs.
+    shell::start_explorer();
     window::exit_to_desktop(&app);
+}
+
+#[tauri::command]
+fn get_console_mode() -> shell::ShellStatus {
+    shell::status()
+}
+
+#[tauri::command]
+fn set_console_mode(enabled: bool) -> CmdResult<shell::ShellStatus> {
+    shell::set_enabled(enabled).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -333,6 +346,7 @@ fn toggle_fullscreen(app: AppHandle) {
 #[tauri::command]
 fn quit_app(app: AppHandle) {
     display::reset_mode();
+    shell::start_explorer();
     app.exit(0);
 }
 
@@ -638,6 +652,11 @@ async fn open_store(app: AppHandle, store: model::Store, game_id: Option<String>
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // The console-mode watchdog is this same executable with `--watchdog`.
+    if let Some(pid) = shell::watchdog_pid() {
+        shell::run_watchdog(pid);
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| window::bring_to_front(app)))
         .plugin(tauri_plugin_opener::init())
@@ -661,6 +680,15 @@ pub fn run() {
             });
 
             let handle = app.handle().clone();
+            let console = shell::status().active;
+            if console {
+                // GameMode is the shell: do Explorer's sign-in chores.
+                shell::spawn_watchdog();
+                std::thread::spawn(shell::run_startup_apps);
+                if let Some(w) = window::main_window(&handle) {
+                    let _ = w.set_fullscreen(true);
+                }
+            }
             autostart::repair(&handle);
             if autostart::launched_at_login() {
                 // Explorer is still settling at login and tends to take the
@@ -717,6 +745,8 @@ pub fn run() {
             set_volume,
             set_muted,
             exit_to_desktop,
+            get_console_mode,
+            set_console_mode,
             overlay_hide,
             overlay_to_launcher,
             toggle_fullscreen,

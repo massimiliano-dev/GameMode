@@ -37,6 +37,13 @@ export interface Settings {
   keyboardAssist: boolean;
 }
 
+export interface ShellStatus {
+  /** GameMode is this user's Windows shell. */
+  enabled: boolean;
+  /** This session started in console mode (no Explorer). */
+  active: boolean;
+}
+
 export interface UpdateInfo {
   version: string;
   notes: string | null;
