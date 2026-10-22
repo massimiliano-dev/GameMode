@@ -1,6 +1,6 @@
 [package]
 name = "gamemode"
-version = "0.2.4"
+version = "0.2.5"
 description = "Launcher console per i giochi su Windows"
 authors = ["Massimiliano Polce"]
 edition = "2024"

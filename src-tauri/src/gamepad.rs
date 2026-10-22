@@ -146,6 +146,9 @@ mod xinput {
     const STICK_THRESHOLD: i16 = 16_000;
     const TRIGGER_THRESHOLD: u8 = 128;
     const COMBO_HOLD: Duration = Duration::from_secs(1);
+    /// During a game Back+Start toggles the overlay quickly: unlike Guide,
+    /// neither Steam nor Game Bar grab this combination.
+    const COMBO_HOLD_IN_GAME: Duration = Duration::from_millis(300);
     const POLL: Duration = Duration::from_millis(8);
     /// Polling an empty slot is slow, so disconnected slots are probed rarely.
     const PROBE_INTERVAL: Duration = Duration::from_secs(1);
@@ -289,9 +292,16 @@ mod xinput {
                 // Back+Start held: fallback for when Game Bar swallows Guide.
                 if buttons & (BACK | START) == BACK | START {
                     let since = *combo_since.get_or_insert(now);
-                    if !combo_fired && now - since >= COMBO_HOLD && !foreground {
+                    let in_game = app
+                        .state::<crate::AppState>()
+                        .launcher
+                        .current()
+                        .is_some_and(|s| s.phase == crate::launcher::Phase::Running);
+                    let hold = if in_game { COMBO_HOLD_IN_GAME } else { COMBO_HOLD };
+                    let overlay_target = target.filter(|t| *t == overlay::LABEL);
+                    if !combo_fired && now - since >= hold && (!foreground || overlay_target.is_some()) {
                         combo_fired = true;
-                        summon(&app, None);
+                        summon(&app, overlay_target);
                     }
                 } else {
                     combo_since = None;
