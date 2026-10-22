@@ -85,6 +85,30 @@ pub fn force_foreground_raw(raw: isize) {
     win::force_foreground(win::hwnd(raw));
 }
 
+/// Executable name (lowercase, e.g. "steam.exe") of the foreground window's process.
+#[cfg(windows)]
+pub fn foreground_process_name() -> Option<String> {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut pid));
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+        let _ = CloseHandle(handle);
+        ok.then(|| {
+            let path = String::from_utf16_lossy(&buf[..len as usize]);
+            path.rsplit(['\\', '/']).next().unwrap_or_default().to_lowercase()
+        })
+    }
+}
+
 /// Puts a window back on top of other always-on-top windows (Steam, Game
 /// Bar) without taking focus.
 #[cfg(windows)]
