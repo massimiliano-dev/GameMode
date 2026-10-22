@@ -150,6 +150,8 @@ mod xinput {
     /// Polling an empty slot is slow, so disconnected slots are probed rarely.
     const PROBE_INTERVAL: Duration = Duration::from_secs(1);
     const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
+    /// Holding View this long during a hand-off returns to GameMode.
+    const VIEW_HOLD: Duration = Duration::from_millis(500);
 
     const MAPPING: &[(u32, Action)] = &[
         (DPAD_UP, Action::Up),
@@ -221,6 +223,7 @@ mod xinput {
             let mut combo_fired = false;
             let mut last_battery: Option<Instant> = None;
             let mut was_connected = connected;
+            let mut view_since: Option<Instant> = None;
 
             loop {
                 let now = Instant::now();
@@ -259,9 +262,22 @@ mod xinput {
                         summon(&app, target);
                     } else if let Some(label) = target {
                         let _ = app.emit_to(label, "gamepad://nav", NavEvent { action, repeat });
-                    } else if assisting {
+                    } else if assisting && assist::types_keys() {
                         assist_key(&app, action);
                     }
+                }
+
+                // Holding View: the way back from any hand-off, also from apps
+                // that use the controller themselves (Xbox app, Microsoft Store).
+                if assisting && buttons & BACK != 0 {
+                    let since = *view_since.get_or_insert(now);
+                    if now - since >= VIEW_HOLD {
+                        view_since = None;
+                        assist::disable();
+                        window::bring_to_front(&app);
+                    }
+                } else {
+                    view_since = None;
                 }
                 let foreground = target.is_some();
 

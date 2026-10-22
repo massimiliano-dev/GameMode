@@ -1221,7 +1221,7 @@ dependencies = [
 
 [[package]]
 name = "gamemode"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "base64 0.23.1",

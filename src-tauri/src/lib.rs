@@ -454,18 +454,20 @@ async fn get_cloud_catalog(app: AppHandle, force: bool) -> Vec<catalog::CatalogI
     catalog::cloud(&app, force).await
 }
 
-/// Lets the controller drive the store window GameMode is handing off to.
-fn start_assist(app: &AppHandle) {
-    if app.state::<AppState>().db.lock().settings.keyboard_assist {
-        assist::enable();
-    }
+/// Starts a hand-off to a store window: holding View comes back, and when
+/// the window doesn't handle a controller (`needs_keys`) the controller
+/// types keys into it.
+fn start_assist(app: &AppHandle, needs_keys: bool) {
+    let keys = needs_keys && app.state::<AppState>().db.lock().settings.keyboard_assist;
+    assist::enable(keys);
 }
 
 #[tauri::command]
 async fn install_catalog_item(app: AppHandle, id: String) -> CmdResult<()> {
-    // Cloud games run in Edge, which handles the controller itself.
+    // Cloud games run in Edge, which handles the controller itself and needs
+    // View for the game; the Xbox app and Store handle the controller too.
     if !id.starts_with("cloud:") {
-        start_assist(&app);
+        start_assist(&app, !id.starts_with("gamepass:"));
     }
     if let Some(appid) = id.strip_prefix("steam:") {
         catalog::watch_steam_install(app.clone(), appid.to_string());
@@ -485,7 +487,7 @@ async fn uninstall_game(app: AppHandle, id: String) -> CmdResult<uninstall::Outc
         .map_err(err)?
         .map_err(|e| format!("{e:#}"))?;
     if outcome == uninstall::Outcome::Started {
-        start_assist(&app);
+        start_assist(&app, true);
         uninstall::watch(app.clone(), game);
     }
     if outcome == uninstall::Outcome::Removed {
@@ -629,7 +631,7 @@ async fn list_storefronts() -> CmdResult<Vec<storefront::Storefront>> {
 #[tauri::command]
 async fn open_store(app: AppHandle, store: model::Store, game_id: Option<String>) -> CmdResult<storefront::OpensIn> {
     let game = game_id.and_then(|id| app.state::<AppState>().db.lock().game(&id).cloned());
-    start_assist(&app);
+    start_assist(&app, store != model::Store::Xbox);
     let handle = app.clone();
     blocking(move || storefront::open(&handle, store, game.as_ref())).await
 }

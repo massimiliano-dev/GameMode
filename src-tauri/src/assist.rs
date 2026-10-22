@@ -1,16 +1,19 @@
-//! "Controller as keyboard" for store windows GameMode opens on purpose
-//! (uninstall confirmations, install dialogs), which don't understand a
-//! controller: A = Enter, B = Esc, D-pad = arrows, LB/RB = Shift+Tab/Tab,
-//! X = Space. Only active right after such a hand-off and never while a game
-//! runs, so keys are never typed into a game.
+//! Hand-offs to store windows GameMode opens on purpose (install and
+//! uninstall dialogs, the Xbox app…). During a hand-off, holding View brings
+//! GameMode back. For windows that don't understand a controller the
+//! controller also types keys: A = Enter, B = Esc, D-pad = arrows,
+//! LB/RB = Shift+Tab/Tab, X = Space, and a short View press goes back.
+//! Never active while a game runs, so keys are never typed into a game.
 
 // Driven from the XInput thread, which only exists on Windows.
 #![cfg_attr(not(windows), allow(dead_code))]
 
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 /// Unix milliseconds the mode was switched on, 0 when off.
 static ENABLED_AT: AtomicI64 = AtomicI64::new(0);
+/// Whether the controller types keys, or only offers the way back.
+static KEYS: AtomicBool = AtomicBool::new(false);
 /// Turns itself off after this long, whatever happens.
 const MAX_MS: i64 = 15 * 60 * 1000;
 /// Right after a hand-off GameMode may still have focus for a moment.
@@ -23,8 +26,14 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-pub fn enable() {
+/// Starts a hand-off. `keys`: the window doesn't handle a controller itself.
+pub fn enable(keys: bool) {
+    KEYS.store(keys, Ordering::SeqCst);
     ENABLED_AT.store(now_ms(), Ordering::SeqCst);
+}
+
+pub fn types_keys() -> bool {
+    KEYS.load(Ordering::SeqCst)
 }
 
 pub fn disable() {

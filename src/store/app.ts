@@ -240,13 +240,11 @@ export const useApp = create<AppState>((set, get) => ({
 
   openStore: async (store, gameId) => {
     try {
-      const opensIn = await api.openStore(store, gameId);
+      const what = "Apro il negozio.";
+      get().toast(store === "xbox" ? nativeHint(what) : assistHint(get().settings, what));
+      await sleep(HANDOFF_DELAY);
+      await api.openStore(store, gameId);
       set({ rescanOnReturn: true });
-      get().toast(
-        opensIn === "client"
-          ? "Negozio aperto nel client. Premi Guide per tornare qui"
-          : "Negozio aperto nel browser. Premi Guide per tornare qui",
-      );
     } catch (e) {
       get().toast(String(e), "error");
     }
@@ -256,7 +254,8 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       if (!id.startsWith("cloud:")) {
         // Shown while GameMode is still on screen: it steps aside next.
-        get().toast(assistHint(get().settings, `Apro l'installazione di ${name}.`));
+        const what = `Apro l'installazione di ${name}.`;
+        get().toast(id.startsWith("gamepass:") ? nativeHint(what) : assistHint(get().settings, what));
         await sleep(HANDOFF_DELAY);
       }
       await api.installCatalogItem(id);
@@ -355,7 +354,12 @@ function onSessionEvent(
 function assistHint(settings: Settings | null, what: string) {
   return settings?.keyboardAssist
     ? `${what} Col controller: A conferma, B annulla, croce per muoverti, ⧉ torna a GameMode`
-    : `${what} Premi Guide o ⧉ per tornare qui`;
+    : `${what} Tieni premuto ⧉ per tornare qui`;
+}
+
+/** For apps that already work with a controller (Xbox app, Microsoft Store). */
+function nativeHint(what: string) {
+  return `${what} Usa il controller come al solito; tieni premuto ⧉ per tornare a GameMode`;
 }
 
 /** Mentions discounted wishlist games, at most once a day. */
