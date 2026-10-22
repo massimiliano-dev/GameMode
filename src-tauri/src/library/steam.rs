@@ -63,7 +63,7 @@ pub fn find_steam_root() -> Option<PathBuf> {
 }
 
 /// All library folders configured in Steam, including the main install.
-fn library_folders(root: &Path) -> Vec<PathBuf> {
+pub fn library_folders(root: &Path) -> Vec<PathBuf> {
     let mut folders = vec![root.to_path_buf()];
     let vdf_path = root.join("steamapps").join("libraryfolders.vdf");
     if let Some(parsed) = fs::read_to_string(vdf_path).ok().and_then(|s| vdf::parse(&s).ok()) {

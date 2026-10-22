@@ -34,6 +34,7 @@ export interface Settings {
   closeApps: string[];
   overlayEnabled: boolean;
   backupDir: string | null;
+  keyboardAssist: boolean;
 }
 
 export interface UpdateInfo {

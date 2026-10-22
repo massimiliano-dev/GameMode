@@ -220,6 +220,8 @@ pub struct Settings {
     pub overlay_enabled: bool,
     /// Where save backups go; the app data folder when unset.
     pub backup_dir: Option<PathBuf>,
+    /// The controller types Enter/Esc/arrows in store windows GameMode opens.
+    pub keyboard_assist: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -247,6 +249,7 @@ impl Default for Settings {
             close_apps: Vec::new(),
             overlay_enabled: true,
             backup_dir: None,
+            keyboard_assist: true,
         }
     }
 }

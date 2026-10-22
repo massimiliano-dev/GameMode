@@ -1,0 +1,107 @@
+//! "Controller as keyboard" for store windows GameMode opens on purpose
+//! (uninstall confirmations, install dialogs), which don't understand a
+//! controller: A = Enter, B = Esc, D-pad = arrows, LB/RB = Shift+Tab/Tab,
+//! X = Space. Only active right after such a hand-off and never while a game
+//! runs, so keys are never typed into a game.
+
+// Driven from the XInput thread, which only exists on Windows.
+#![cfg_attr(not(windows), allow(dead_code))]
+
+use std::sync::atomic::{AtomicI64, Ordering};
+
+/// Unix milliseconds the mode was switched on, 0 when off.
+static ENABLED_AT: AtomicI64 = AtomicI64::new(0);
+/// Turns itself off after this long, whatever happens.
+const MAX_MS: i64 = 15 * 60 * 1000;
+/// Right after a hand-off GameMode may still have focus for a moment.
+pub const GRACE_MS: i64 = 3000;
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+pub fn enable() {
+    ENABLED_AT.store(now_ms(), Ordering::SeqCst);
+}
+
+pub fn disable() {
+    ENABLED_AT.store(0, Ordering::SeqCst);
+}
+
+pub fn is_active() -> bool {
+    let at = ENABLED_AT.load(Ordering::SeqCst);
+    at > 0 && now_ms() - at < MAX_MS
+}
+
+/// Milliseconds since the mode was switched on.
+pub fn age_ms() -> i64 {
+    now_ms() - ENABLED_AT.load(Ordering::SeqCst)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Key {
+    Enter,
+    Escape,
+    Up,
+    Down,
+    Left,
+    Right,
+    Tab,
+    ShiftTab,
+    Space,
+}
+
+/// Types `key` into whatever window has focus.
+#[cfg(windows)]
+pub fn press(key: Key) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_DOWN,
+        VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+    };
+
+    fn input(vk: VIRTUAL_KEY, up: bool) -> INPUT {
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: 0,
+                    dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
+    let vk = match key {
+        Key::Enter => VK_RETURN,
+        Key::Escape => VK_ESCAPE,
+        Key::Up => VK_UP,
+        Key::Down => VK_DOWN,
+        Key::Left => VK_LEFT,
+        Key::Right => VK_RIGHT,
+        Key::Tab | Key::ShiftTab => VK_TAB,
+        Key::Space => VK_SPACE,
+    };
+    let mut inputs = Vec::with_capacity(4);
+    if key == Key::ShiftTab {
+        inputs.push(input(VK_SHIFT, false));
+    }
+    inputs.push(input(vk, false));
+    inputs.push(input(vk, true));
+    if key == Key::ShiftTab {
+        inputs.push(input(VK_SHIFT, true));
+    }
+    unsafe {
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn press(key: Key) {
+    let _ = key;
+}

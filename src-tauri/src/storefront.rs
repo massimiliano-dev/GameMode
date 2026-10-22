@@ -132,20 +132,64 @@ fn client_installed(shop: &Shop) -> bool {
     shop.scheme.is_some_and(scheme_registered)
 }
 
-/// Whether some installed app handles `scheme://` links.
+/// Whether some installed app handles `scheme://` links: classic apps
+/// register in the registry, packaged ones (Xbox, Microsoft Store) only show
+/// up through the WinRT launcher. Blocking: call off the main thread.
 #[cfg(windows)]
 pub fn scheme_registered(scheme: &str) -> bool {
     use winreg::enums::HKEY_CLASSES_ROOT;
-    winreg::RegKey::predef(HKEY_CLASSES_ROOT)
+    let classic = winreg::RegKey::predef(HKEY_CLASSES_ROOT)
         .open_subkey(scheme)
         .and_then(|k| k.get_value::<String, _>("URL Protocol"))
-        .is_ok()
+        .is_ok();
+    classic || {
+        use windows::core::HSTRING;
+        use windows::Foundation::Uri;
+        use windows::System::{LaunchQuerySupportStatus, LaunchQuerySupportType, Launcher};
+        Uri::CreateUri(&HSTRING::from(format!("{scheme}://")))
+            .and_then(|u| Launcher::QueryUriSupportAsync(&u, LaunchQuerySupportType::Uri)?.join())
+            .is_ok_and(|s| s == LaunchQuerySupportStatus::Available)
+    }
 }
 
 #[cfg(not(windows))]
 pub fn scheme_registered(scheme: &str) -> bool {
     // Only Steam has a macOS/Linux client worth deep-linking into.
     scheme == "steam" && crate::library::steam::find_steam_root().is_some()
+}
+
+/// Opens `uri` through Windows' own launcher, which also reaches packaged
+/// apps (Xbox app, Microsoft Store) that the classic registry check misses.
+/// Asks first, so Windows never pops "you need an app to open this link".
+/// Blocking: call off the main thread.
+#[cfg(windows)]
+pub fn launch_uri(uri: &str) -> bool {
+    use windows::core::HSTRING;
+    use windows::Foundation::Uri;
+    use windows::System::{LaunchQuerySupportStatus, LaunchQuerySupportType, Launcher};
+    let Ok(target) = Uri::CreateUri(&HSTRING::from(uri)) else { return false };
+    let supported = Launcher::QueryUriSupportAsync(&target, LaunchQuerySupportType::Uri)
+        .and_then(|op| op.join())
+        .is_ok_and(|s| s == LaunchQuerySupportStatus::Available);
+    supported && Launcher::LaunchUriAsync(&target).and_then(|op| op.join()).unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+pub fn launch_uri(_uri: &str) -> bool {
+    false
+}
+
+/// Opens the first link some installed app accepts; the last one (a web
+/// page) always opens in the browser.
+pub fn open_first(app: &AppHandle, uris: &[String]) -> Result<()> {
+    let Some((last, apps)) = uris.split_last() else { anyhow::bail!("nessun link") };
+    for uri in apps {
+        if launch_uri(uri) {
+            window::minimize(app);
+            return Ok(());
+        }
+    }
+    open_uri(app, last)
 }
 
 /// Opens a store client link and steps aside so its window gets the screen.

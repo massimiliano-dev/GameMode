@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::MacosLauncher;
 
 mod artwork;
+mod assist;
 mod autostart;
 mod catalog;
 mod db;
@@ -453,19 +454,40 @@ async fn get_cloud_catalog(app: AppHandle, force: bool) -> Vec<catalog::CatalogI
     catalog::cloud(&app, force).await
 }
 
+/// Lets the controller drive the store window GameMode is handing off to.
+fn start_assist(app: &AppHandle) {
+    if app.state::<AppState>().db.lock().settings.keyboard_assist {
+        assist::enable();
+    }
+}
+
 #[tauri::command]
-fn install_catalog_item(app: AppHandle, id: String) -> CmdResult<()> {
-    catalog::install(&app, &id).map_err(|e| format!("{e:#}"))
+async fn install_catalog_item(app: AppHandle, id: String) -> CmdResult<()> {
+    // Cloud games run in Edge, which handles the controller itself.
+    if !id.starts_with("cloud:") {
+        start_assist(&app);
+    }
+    if let Some(appid) = id.strip_prefix("steam:") {
+        catalog::watch_steam_install(app.clone(), appid.to_string());
+    }
+    // Launching may wait on Windows (WinRT launcher): keep it off the main thread.
+    let handle = app.clone();
+    blocking(move || catalog::install(&handle, &id)).await
 }
 
 #[tauri::command]
 async fn uninstall_game(app: AppHandle, id: String) -> CmdResult<uninstall::Outcome> {
     let game = app.state::<AppState>().db.lock().game(&id).cloned().ok_or("Gioco non trovato")?;
     let handle = app.clone();
-    let outcome = tauri::async_runtime::spawn_blocking(move || uninstall::uninstall(&handle, &game))
+    let target = game.clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || uninstall::uninstall(&handle, &target))
         .await
         .map_err(err)?
         .map_err(|e| format!("{e:#}"))?;
+    if outcome == uninstall::Outcome::Started {
+        start_assist(&app);
+        uninstall::watch(app.clone(), game);
+    }
     if outcome == uninstall::Outcome::Removed {
         let handle = app.clone();
         let _ = tauri::async_runtime::spawn_blocking(move || scan(&handle)).await;
@@ -600,19 +622,16 @@ fn refresh_artwork(app: AppHandle) {
 }
 
 #[tauri::command]
-fn list_storefronts() -> Vec<storefront::Storefront> {
-    storefront::list()
+async fn list_storefronts() -> CmdResult<Vec<storefront::Storefront>> {
+    blocking(|| Ok(storefront::list())).await
 }
 
 #[tauri::command]
-fn open_store(
-    app: AppHandle,
-    state: State<AppState>,
-    store: model::Store,
-    game_id: Option<String>,
-) -> CmdResult<storefront::OpensIn> {
-    let game = game_id.and_then(|id| state.db.lock().game(&id).cloned());
-    storefront::open(&app, store, game.as_ref()).map_err(|e| format!("{e:#}"))
+async fn open_store(app: AppHandle, store: model::Store, game_id: Option<String>) -> CmdResult<storefront::OpensIn> {
+    let game = game_id.and_then(|id| app.state::<AppState>().db.lock().game(&id).cloned());
+    start_assist(&app);
+    let handle = app.clone();
+    blocking(move || storefront::open(&handle, store, game.as_ref())).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

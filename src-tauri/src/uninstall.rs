@@ -41,6 +41,38 @@ pub fn uninstall(app: &AppHandle, game: &Game) -> Result<Outcome> {
     }
 }
 
+/// Whether the game is still on disk (Steam: its manifest still exists).
+pub fn still_installed(game: &Game) -> bool {
+    let Some(dir) = game.install_dir.as_deref() else { return false };
+    if game.store == Store::Steam {
+        if let (Some(appid), Some(steamapps)) = (game.steam_appid, dir.parent().and_then(|p| p.parent())) {
+            return steamapps.join(format!("appmanifest_{appid}.acf")).is_file();
+        }
+    }
+    dir.exists()
+}
+
+/// Waits for a store's uninstaller to finish, then refreshes the library and
+/// brings GameMode back, so nobody needs a mouse to return.
+pub fn watch(app: AppHandle, game: Game) {
+    use tauri::Emitter;
+    std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        while started.elapsed() < std::time::Duration::from_secs(15 * 60) {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            if !still_installed(&game) {
+                crate::assist::disable();
+                crate::scan(&app);
+                if !crate::window::is_foreground(&app) {
+                    crate::window::bring_to_front(&app);
+                }
+                let _ = app.emit("uninstall://done", &game.name);
+                return;
+            }
+        }
+    });
+}
+
 fn native_id(game: &Game) -> &str {
     game.id.split_once(':').map_or(game.id.as_str(), |(_, id)| id)
 }
@@ -141,6 +173,23 @@ mod tests {
 
     fn values(pairs: &[(&str, &str)]) -> Values {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn steam_games_count_as_installed_while_their_manifest_exists() {
+        let root = std::env::temp_dir().join(format!("gm-uninst-{}", std::process::id()));
+        let dir = root.join("steamapps").join("common").join("Hades");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = root.join("steamapps").join("appmanifest_1145360.acf");
+        std::fs::write(&manifest, b"").unwrap();
+        let mut game = Game::new(Store::Steam, "1145360", "Hades", LaunchSpec::Uri { uri: String::new() }).with_install_dir(&dir);
+        game.steam_appid = Some(1145360);
+        assert!(still_installed(&game));
+        std::fs::remove_file(&manifest).unwrap();
+        assert!(!still_installed(&game), "leftover files don't matter once Steam dropped the manifest");
+        let gog = Game::new(Store::Gog, "1", "X", LaunchSpec::Uri { uri: String::new() }).with_install_dir(root.join("gone"));
+        assert!(!still_installed(&gog));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

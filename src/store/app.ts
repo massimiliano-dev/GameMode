@@ -93,6 +93,9 @@ interface AppState {
 }
 
 let toastId = 0;
+/** Time to read the controller hint before a store window takes over. */
+const HANDOFF_DELAY = 2200;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let initialized = false;
 
 export const useApp = create<AppState>((set, get) => ({
@@ -123,6 +126,14 @@ export const useApp = create<AppState>((set, get) => ({
     on<Game>("library://game", (g) => get().upsertGame(g));
     on<SessionState>("game://state", (s) => onSessionEvent(s, set, get));
     on<Controller[]>("gamepad://controllers", (list) => onControllers(list, set, get));
+    on<string>("uninstall://done", (name) => {
+      set({ rescanOnReturn: false });
+      get().toast(`${name} disinstallato`);
+    });
+    on<string>("install://queued", () => {
+      set({ rescanOnReturn: false });
+      get().toast("Download avviato in Steam: lo trovi in Libreria quando ha finito");
+    });
     void api.getControllers().then((controllers) => set({ controllers })).catch(() => {});
 
     const [games, settings, session, profiles, collections] = await Promise.all([
@@ -243,9 +254,13 @@ export const useApp = create<AppState>((set, get) => ({
 
   installFromCatalog: async (id, name) => {
     try {
+      if (!id.startsWith("cloud:")) {
+        // Shown while GameMode is still on screen: it steps aside next.
+        get().toast(assistHint(get().settings, `Apro l'installazione di ${name}.`));
+        await sleep(HANDOFF_DELAY);
+      }
       await api.installCatalogItem(id);
       set({ rescanOnReturn: true });
-      get().toast(`Installazione di ${name} aperta nel client. Premi Guide per tornare qui`);
     } catch (e) {
       get().toast(String(e), "error");
     }
@@ -253,13 +268,16 @@ export const useApp = create<AppState>((set, get) => ({
 
   uninstall: async (game) => {
     try {
+      if (!["manual", "xbox", "mock"].includes(game.store)) {
+        get().toast(assistHint(get().settings, `Apro la disinstallazione di ${game.name}.`));
+        await sleep(HANDOFF_DELAY);
+      }
       const outcome = await api.uninstallGame(game.id);
       if (outcome === "removed") {
         get().toast(`${game.name} disinstallato`);
         get().back();
       } else {
         set({ rescanOnReturn: true });
-        get().toast(`Completa la disinstallazione di ${game.name}, poi premi Guide per tornare qui`);
       }
     } catch (e) {
       get().toast(String(e), "error");
@@ -331,6 +349,13 @@ function onSessionEvent(
   } else {
     set({ session: s });
   }
+}
+
+/** How to drive a store window GameMode just opened. */
+function assistHint(settings: Settings | null, what: string) {
+  return settings?.keyboardAssist
+    ? `${what} Col controller: A conferma, B annulla, croce per muoverti, ⧉ torna a GameMode`
+    : `${what} Premi Guide o ⧉ per tornare qui`;
 }
 
 /** Mentions discounted wishlist games, at most once a day. */

@@ -81,6 +81,7 @@ impl Launcher {
 }
 
 pub fn launch(app: &AppHandle, game: &Game) -> Result<()> {
+    crate::assist::disable();
     let settings = app.state::<AppState>().db.lock().settings.clone();
     if settings.performance_mode {
         crate::performance::begin(&settings.close_apps);

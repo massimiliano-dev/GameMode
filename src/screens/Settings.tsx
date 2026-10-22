@@ -123,6 +123,12 @@ export function Settings() {
             control={<Toggle on={settings.overlayEnabled} />}
           />
           <Row
+            label="Controller nelle finestre degli store"
+            hint="Nei dialoghi di installazione e disinstallazione: A = Invio, B = Esc, croce = frecce, LB/RB = Tab, ⧉ torna a GameMode"
+            onClick={() => void saveSettings({ ...settings, keyboardAssist: !settings.keyboardAssist })}
+            control={<Toggle on={settings.keyboardAssist} />}
+          />
+          <Row
             label="Suoni dell'interfaccia"
             hint="Click leggeri quando ti muovi e selezioni"
             onClick={() => void saveSettings({ ...settings, uiSounds: !settings.uiSounds })}

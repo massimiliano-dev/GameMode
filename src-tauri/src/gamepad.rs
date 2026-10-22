@@ -122,6 +122,7 @@ mod xinput {
     };
 
     use super::{Action, Controller, NavEvent, Repeater, CONTROLLERS};
+    use crate::assist::{self, Key};
     use crate::{overlay, window};
 
     const DPAD_UP: u32 = 0x0001;
@@ -244,12 +245,22 @@ mod xinput {
                 } else {
                     None
                 };
+                // Keyboard assist ends once GameMode is back, and never runs during a game.
+                if assist::is_active() {
+                    let playing = app.state::<crate::AppState>().launcher.current().is_some();
+                    if playing || (target.is_some() && assist::age_ms() > assist::GRACE_MS) {
+                        assist::disable();
+                    }
+                }
+                let assisting = target.is_none() && assist::is_active();
                 for (bit, repeat) in repeater.step(buttons, DIRECTIONS, now) {
                     let Some(&(_, action)) = MAPPING.iter().find(|(b, _)| *b == bit) else { continue };
                     if action == Action::Guide {
                         summon(&app, target);
                     } else if let Some(label) = target {
                         let _ = app.emit_to(label, "gamepad://nav", NavEvent { action, repeat });
+                    } else if assisting {
+                        assist_key(&app, action);
                     }
                 }
                 let foreground = target.is_some();
@@ -292,6 +303,28 @@ mod xinput {
             *current = list.clone();
             let _ = app.emit("gamepad://controllers", &list);
         }
+    }
+
+    /// Drives a store dialog with the keys it understands; View goes back.
+    fn assist_key(app: &AppHandle, action: Action) {
+        let key = match action {
+            Action::Confirm => Key::Enter,
+            Action::Back => Key::Escape,
+            Action::Up => Key::Up,
+            Action::Down => Key::Down,
+            Action::Left => Key::Left,
+            Action::Right => Key::Right,
+            Action::Rb => Key::Tab,
+            Action::Lb => Key::ShiftTab,
+            Action::X => Key::Space,
+            Action::View => {
+                assist::disable();
+                window::bring_to_front(app);
+                return;
+            }
+            _ => return,
+        };
+        assist::press(key);
     }
 
     /// Guide: toggles the overlay over a running game, otherwise brings

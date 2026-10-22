@@ -328,8 +328,18 @@ pub fn install(app: &AppHandle, id: &str) -> Result<()> {
     let Some((source, native)) = id.split_once(':') else { bail!("Gioco non valido") };
     let uri = match source {
         "steam" => format!("steam://install/{native}"),
-        "gamepass" if storefront::scheme_registered("msxbox") => format!("msxbox://game/?productId={native}"),
-        "gamepass" => format!("ms-windows-store://pdp/?ProductId={native}"),
+        "gamepass" => {
+            // Xbox app first (it handles Game Pass installs), then the
+            // Microsoft Store, then the game's page on xbox.com.
+            return storefront::open_first(
+                app,
+                &[
+                    format!("msxbox://game/?productId={native}"),
+                    format!("ms-windows-store://pdp/?ProductId={native}"),
+                    format!("https://www.xbox.com/it-IT/games/store/game/{native}"),
+                ],
+            );
+        }
         "epic" => {
             let parts: Vec<&str> = native.splitn(3, ':').collect();
             let [ns, item, app_name] = parts[..] else { bail!("Gioco non valido") };
@@ -344,6 +354,30 @@ pub fn install(app: &AppHandle, id: &str) -> Result<()> {
         _ => bail!("Gioco non valido"),
     };
     storefront::open_uri(app, &uri)
+}
+
+/// After a Steam install dialog: as soon as Steam registers the game (its
+/// manifest appears, i.e. the download was queued) GameMode comes back.
+pub fn watch_steam_install(app: AppHandle, appid: String) {
+    use tauri::Emitter;
+    std::thread::spawn(move || {
+        let Some(root) = steam::find_steam_root() else { return };
+        let manifest = format!("appmanifest_{appid}.acf");
+        let started = std::time::Instant::now();
+        while started.elapsed() < Duration::from_secs(10 * 60) {
+            std::thread::sleep(Duration::from_secs(2));
+            // The user went back by hand: nothing left to do.
+            if !crate::assist::is_active() && crate::window::is_foreground(&app) {
+                return;
+            }
+            if steam::library_folders(&root).iter().any(|f| f.join("steamapps").join(&manifest).is_file()) {
+                crate::assist::disable();
+                crate::window::bring_to_front(&app);
+                let _ = app.emit("install://queued", &appid);
+                return;
+            }
+        }
+    });
 }
 
 /// Cloud games run in Edge's app mode, full screen: Edge has the user's
