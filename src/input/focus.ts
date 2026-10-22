@@ -31,7 +31,14 @@ function groupOf(el: HTMLElement) {
   return el.closest<HTMLElement>("[data-nav-group]");
 }
 
+let marked: HTMLElement | null = null;
+
 export function focusElement(el: HTMLElement) {
+  // Mirrors focus in an attribute: the overlay window often lacks system
+  // focus (Steam, Game Bar), and then :focus styles don't show.
+  marked?.removeAttribute("data-nav-current");
+  el.setAttribute("data-nav-current", "");
+  marked = el;
   el.focus({ preventScroll: true });
   el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
   const group = groupOf(el);

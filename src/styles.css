@@ -2162,3 +2162,10 @@ html.is-overlay body {
   gap: 0.2rem;
   padding: 0 0.4rem;
 }
+
+/* The overlay may be visible without system focus: show the selection anyway. */
+html.is-overlay .qm-button[data-nav-current],
+html.is-overlay .qm-volume[data-nav-current] {
+  background: var(--surface-strong);
+  box-shadow: inset 0 0 0 0.14rem var(--focus);
+}

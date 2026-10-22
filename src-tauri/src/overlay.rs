@@ -13,6 +13,10 @@ pub const LABEL: &str = "overlay";
 
 /// Tracked here so the 8 ms controller loop doesn't query the window.
 static VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Bumped on every show, so only the newest keep-on-top loop runs.
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// How long the overlay keeps trying to take focus back after opening.
+const FOCUS_FIGHT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// While the overlay is up it gets all controller input, even when Game Bar
 /// or the game itself grabbed the foreground for a moment.
@@ -73,16 +77,24 @@ pub fn show(app: &AppHandle) {
     let _ = w.set_always_on_top(true);
     claim_focus(&w);
     let _ = app.emit_to(LABEL, "overlay://open", ());
-    // Guide also wakes Xbox Game Bar and some games take focus back on their
-    // next frame: try again once they've had their turn.
+    // Guide also wakes Steam and Xbox Game Bar, which jump on top right
+    // after us. While open, keep the overlay above them (input reaches it
+    // either way) and, for the first seconds, take focus back too.
+    let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     let app = app.clone();
     std::thread::spawn(move || {
-        for delay in [150, 450, 1000] {
-            std::thread::sleep(std::time::Duration::from_millis(delay));
+        let started = std::time::Instant::now();
+        while is_open() && GENERATION.load(std::sync::atomic::Ordering::SeqCst) == generation {
+            std::thread::sleep(std::time::Duration::from_millis(250));
             if !is_open() || is_foreground(&app) {
-                return;
+                continue;
             }
-            if let Some(w) = window(&app) {
+            let Some(w) = window(&app) else { break };
+            #[cfg(windows)]
+            if let Ok(hwnd) = w.hwnd() {
+                crate::window::raise_topmost_raw(hwnd.0 as isize);
+            }
+            if started.elapsed() < FOCUS_FIGHT {
                 claim_focus(&w);
             }
         }

@@ -80,6 +80,18 @@ pub fn force_foreground_raw(raw: isize) {
     win::force_foreground(win::hwnd(raw));
 }
 
+/// Puts a window back on top of other always-on-top windows (Steam, Game
+/// Bar) without taking focus.
+#[cfg(windows)]
+pub fn raise_topmost_raw(raw: isize) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    };
+    unsafe {
+        let _ = SetWindowPos(win::hwnd(raw), Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+}
+
 /// Brings the top-level window of one of `pids` to the front (the running game).
 pub fn focus_process(pids: &[u32]) -> bool {
     #[cfg(windows)]

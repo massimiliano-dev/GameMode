@@ -128,6 +128,7 @@ export function OverlayApp() {
         <div className="qm-hints">
           <span className="hint"><Glyph button="A" /> Seleziona</span>
           <span className="hint"><Glyph button="B" /> Torna al gioco</span>
+          <span className="hint"><Glyph button="view" /><Glyph button="menu" /> Apri/chiudi</span>
         </div>
       </motion.aside>
       <Toasts />
