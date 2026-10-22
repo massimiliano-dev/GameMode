@@ -90,8 +90,7 @@ pub fn open(app: &AppHandle, store: Store, game: Option<&Game>) -> Result<OpensI
         anyhow::bail!("Nessun negozio per questo store");
     };
     let (target, opens_in) = resolve(shop, game, client_installed(shop));
-    app.opener().open_url(&target, None::<&str>)?;
-    window::minimize(app);
+    open_uri(app, &target)?;
     Ok(opens_in)
 }
 
@@ -129,10 +128,14 @@ fn game_web(store: Store, game: &Game) -> Option<String> {
     }
 }
 
-#[cfg(windows)]
 fn client_installed(shop: &Shop) -> bool {
+    shop.scheme.is_some_and(scheme_registered)
+}
+
+/// Whether some installed app handles `scheme://` links.
+#[cfg(windows)]
+pub fn scheme_registered(scheme: &str) -> bool {
     use winreg::enums::HKEY_CLASSES_ROOT;
-    let Some(scheme) = shop.scheme else { return false };
     winreg::RegKey::predef(HKEY_CLASSES_ROOT)
         .open_subkey(scheme)
         .and_then(|k| k.get_value::<String, _>("URL Protocol"))
@@ -140,9 +143,16 @@ fn client_installed(shop: &Shop) -> bool {
 }
 
 #[cfg(not(windows))]
-fn client_installed(shop: &Shop) -> bool {
+pub fn scheme_registered(scheme: &str) -> bool {
     // Only Steam has a macOS/Linux client worth deep-linking into.
-    shop.scheme == Some("steam") && crate::library::steam::find_steam_root().is_some()
+    scheme == "steam" && crate::library::steam::find_steam_root().is_some()
+}
+
+/// Opens a store client link and steps aside so its window gets the screen.
+pub fn open_uri(app: &AppHandle, uri: &str) -> Result<()> {
+    app.opener().open_url(uri, None::<&str>)?;
+    window::minimize(app);
+    Ok(())
 }
 
 #[cfg(test)]

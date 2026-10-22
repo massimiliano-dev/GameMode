@@ -287,7 +287,7 @@ dd {
 
 .glyph-A { background: #5dc21e; color: #06210a; }
 .glyph-B { background: #d1303a; color: #fff; }
-.glyph-X { background: #2f78d6; color: #fff; }
+.glyph-X { background: #2a6cc4; color: #fff; }
 .glyph-Y { background: #f2c230; color: #2a2000; }
 .glyph-LB,
 .glyph-RB,
@@ -712,6 +712,111 @@ dd {
 
 .play-icon {
   font-size: 0.85em;
+}
+
+.btn-danger {
+  background: rgba(232, 67, 75, 0.2);
+  color: #ffb3b7;
+}
+
+.btn-danger:focus {
+  background: #b8232d;
+  color: #fff;
+}
+
+.btn-danger-quiet {
+  color: #ffb3b7;
+}
+
+/* ---------- Dialog ---------- */
+
+.dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 5, 8, 0.7);
+  backdrop-filter: blur(6px);
+}
+
+.dialog {
+  width: min(34rem, 90vw);
+  padding: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 1.1rem;
+  background: var(--panel);
+  box-shadow: 0 2rem 4rem rgba(0, 0, 0, 0.6);
+}
+
+.dialog-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  text-wrap: balance;
+}
+
+.dialog-text {
+  margin-top: 0.7rem;
+  color: var(--text-dim);
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
+.dialog-actions {
+  margin-top: 1.6rem;
+  justify-content: flex-end;
+}
+
+/* ---------- Downloads ---------- */
+
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.8rem 1.4rem;
+  margin: 0.6rem var(--gutter) 0;
+  padding: 0.9rem 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  max-width: 60rem;
+}
+
+.catalog-focus {
+  gap: 0.7rem;
+}
+
+.pass-pill {
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(16, 124, 16, 0.85);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.install-pill {
+  position: absolute;
+  left: 50%;
+  bottom: 0.7rem;
+  padding: 0.3rem 0.8rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-50%, 0.4rem);
+  transition: opacity 0.16s var(--ease), transform 0.16s var(--ease);
+  pointer-events: none;
+}
+
+.game-card:focus .install-pill {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 /* ---------- Stores ---------- */

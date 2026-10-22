@@ -3,16 +3,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_autostart::MacosLauncher;
 
 mod artwork;
+mod autostart;
+mod catalog;
 mod db;
 mod gamepad;
 mod launcher;
 mod library;
 mod model;
+mod procinfo;
 mod storefront;
 mod system;
+mod uninstall;
 mod window;
 
 use db::Db;
@@ -26,6 +30,7 @@ pub struct AppState {
     pub data_dir: PathBuf,
     pub native_gamepad: AtomicBool,
     pub artwork_running: AtomicBool,
+    pub catalog: catalog::CatalogCache,
     scanning: AtomicBool,
 }
 
@@ -204,13 +209,37 @@ fn native_gamepad(state: State<AppState>) -> bool {
 
 #[tauri::command]
 fn get_autostart(app: AppHandle) -> bool {
-    app.autolaunch().is_enabled().unwrap_or(false)
+    autostart::is_enabled(&app).unwrap_or(false)
 }
 
 #[tauri::command]
 fn set_autostart(app: AppHandle, enabled: bool) -> CmdResult<()> {
-    let manager = app.autolaunch();
-    if enabled { manager.enable() } else { manager.disable() }.map_err(err)
+    autostart::set(&app, enabled).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn get_catalog(app: AppHandle, force: bool) -> catalog::Catalog {
+    catalog::load(&app, force).await
+}
+
+#[tauri::command]
+fn install_catalog_item(app: AppHandle, id: String) -> CmdResult<()> {
+    catalog::install(&app, &id).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn uninstall_game(app: AppHandle, id: String) -> CmdResult<uninstall::Outcome> {
+    let game = app.state::<AppState>().db.lock().game(&id).cloned().ok_or("Gioco non trovato")?;
+    let handle = app.clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || uninstall::uninstall(&handle, &game))
+        .await
+        .map_err(err)?
+        .map_err(|e| format!("{e:#}"))?;
+    if outcome == uninstall::Outcome::Removed {
+        let handle = app.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || scan(&handle)).await;
+    }
+    Ok(outcome)
 }
 
 #[tauri::command]
@@ -240,7 +269,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| window::bring_to_front(app)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![autostart::ARG])))
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let db = Db::open(&data_dir)?;
@@ -251,10 +280,25 @@ pub fn run() {
                 data_dir,
                 native_gamepad: AtomicBool::new(false),
                 artwork_running: AtomicBool::new(false),
+                catalog: catalog::CatalogCache::default(),
                 scanning: AtomicBool::new(false),
             });
 
             let handle = app.handle().clone();
+            autostart::repair(&handle);
+            if autostart::launched_at_login() {
+                // Explorer is still settling at login and tends to take the
+                // foreground back: claim it again once things calm down.
+                let h = handle.clone();
+                std::thread::spawn(move || {
+                    for delay in [3, 8] {
+                        std::thread::sleep(std::time::Duration::from_secs(delay));
+                        if !window::is_foreground(&h) {
+                            window::bring_to_front(&h);
+                        }
+                    }
+                });
+            }
             if window::wants_fullscreen(&handle) {
                 if let Some(w) = window::main_window(&handle) {
                     let _ = w.set_fullscreen(true);
@@ -303,6 +347,9 @@ pub fn run() {
             refresh_artwork,
             list_storefronts,
             open_store,
+            get_catalog,
+            install_catalog_item,
+            uninstall_game,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

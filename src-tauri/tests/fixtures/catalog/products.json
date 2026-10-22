@@ -1,0 +1,88 @@
+{
+ "Products": [
+  {
+   "ProductId": "9NPDN9R45JX4",
+   "ProductKind": "Game",
+   "LocalizedProperties": [
+    {
+     "ProductTitle": "1000xRESIST",
+     "Images": [
+      {
+       "ImagePurpose": "Poster",
+       "Uri": "//store-images.s-microsoft.com/image/apps.42712.13724740810259939.b66dd818-9d75-4097-b510-7e4f8f43131a.ac32cda4-2fd9-4049-a090-966d3ace3e22",
+       "Width": 1440,
+       "Height": 2160
+      },
+      {
+       "ImagePurpose": "BoxArt",
+       "Uri": "//store-images.s-microsoft.com/image/apps.26170.13724740810259939.b66dd818-9d75-4097-b510-7e4f8f43131a.ae40357e-1af2-40ef-8179-06b7546b3e9e",
+       "Width": 2160,
+       "Height": 2160
+      },
+      {
+       "ImagePurpose": "SuperHeroArt",
+       "Uri": "//store-images.s-microsoft.com/image/apps.38663.13724740810259939.b66dd818-9d75-4097-b510-7e4f8f43131a.17207052-a7ae-4ad3-afaa-030774844c4d",
+       "Width": 3840,
+       "Height": 2160
+      }
+     ]
+    }
+   ],
+   "DisplaySkuAvailabilities": [
+    {
+     "Sku": {
+      "Properties": {
+       "Packages": [
+        {
+         "PackageFamilyName": "SurpriseAttackPtyLtd.1000xResist_8k24hnfn3vvj0"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "ProductId": "9P8LR42PTRGJ",
+   "ProductKind": "Game",
+   "LocalizedProperties": [
+    {
+     "ProductTitle": "33 Immortals",
+     "Images": [
+      {
+       "ImagePurpose": "SuperHeroArt",
+       "Uri": "//store-images.s-microsoft.com/image/apps.3461.14090162823233215.2d39e9bd-f341-4d5f-9638-b1a6c75a4e3a.72ec0057-de44-41e8-8f55-3697194006ad",
+       "Width": 1920,
+       "Height": 1080
+      },
+      {
+       "ImagePurpose": "Poster",
+       "Uri": "//store-images.s-microsoft.com/image/apps.51551.14090162823233215.5f027b60-c9ed-4eea-ad07-8091580faccc.1129aa1a-4841-4079-b300-e9051e479ea3",
+       "Width": 720,
+       "Height": 1080
+      },
+      {
+       "ImagePurpose": "BoxArt",
+       "Uri": "//store-images.s-microsoft.com/image/apps.2377.14090162823233215.5f027b60-c9ed-4eea-ad07-8091580faccc.a49b63e1-962f-4afc-ba9a-6385aba2159d",
+       "Width": 1080,
+       "Height": 1080
+      }
+     ]
+    }
+   ],
+   "DisplaySkuAvailabilities": [
+    {
+     "Sku": {
+      "Properties": {
+       "Packages": [
+        {
+         "PackageFamilyName": "44905ThunderLotusGames.33Immortals_hbhkcnqstm4gr"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

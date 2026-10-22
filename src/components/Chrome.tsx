@@ -7,6 +7,7 @@ import { Glyph, useClock } from "./common";
 const TABS: { tab: Tab; label: string }[] = [
   { tab: "home", label: "Home" },
   { tab: "library", label: "Libreria" },
+  { tab: "downloads", label: "Scarica" },
   { tab: "stores", label: "Negozi" },
   { tab: "settings", label: "Impostazioni" },
 ];

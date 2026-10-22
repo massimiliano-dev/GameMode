@@ -48,7 +48,7 @@ let games: Game[] = SEED.map(([store, name, appid], i) => ({
   playtimeSecs: i % 3 === 0 ? (i + 1) * 5400 : 0,
 }));
 
-let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true };
+let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
 let volume: Volume = { level: 0.6, muted: false };
@@ -155,6 +155,54 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
           opensIn: i < 3 ? "client" : "browser",
           clientInstalled: i < 4,
         }));
+      case "get_catalog": {
+        await wait(700);
+        const owned: [string, number][] = [
+          ["Portal 2", 620],
+          ["Celeste", 504230],
+          ["Disco Elysium", 632470],
+          ["Sekiro: Shadows Die Twice", 814380],
+          ["Outer Wilds", 753640],
+        ];
+        const pass: [string, number][] = [
+          ["Hi-Fi Rush", 1817230],
+          ["Sea of Thieves", 1172620],
+          ["Grounded", 962130],
+          ["Pentiment", 1205520],
+          ["Microsoft Flight Simulator", 1250410],
+          ["Age of Empires IV", 1466860],
+        ];
+        const items = [
+          ...owned.map(([name, appid], i) => ({
+            id: `steam:${appid}`,
+            source: "steam",
+            store: "steam",
+            name,
+            cover: `${CDN}/${appid}/library_600x900_2x.jpg`,
+            hero: `${CDN}/${appid}/library_hero.jpg`,
+            playtimeSecs: i * 3600,
+          })),
+          ...pass.map(([name, appid]) => ({
+            id: `gamepass:mock-${appid}`,
+            source: "gamepass",
+            store: "xbox",
+            name,
+            cover: `${CDN}/${appid}/library_600x900_2x.jpg`,
+            hero: `${CDN}/${appid}/library_hero.jpg`,
+            playtimeSecs: 0,
+          })),
+        ].sort((a, b) => a.name.localeCompare(b.name));
+        return { items, steam: settings.steamApiKey ? "ok" : "needsKey", gamepassOk: true };
+      }
+      case "install_catalog_item":
+        console.info("[mock] install", args.id);
+        return;
+      case "uninstall_game": {
+        const game = games.find((g) => g.id === args.id);
+        games = games.filter((g) => g.id !== args.id);
+        emit("library://updated", { games, errors: [] });
+        return game?.store === "steam" ? "started" : "removed";
+      }
       case "open_store":
         console.info("[mock] open_store", args);
         return ["steam", "xbox", "epic"].includes(args.store) ? "client" : "browser";

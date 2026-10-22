@@ -7,6 +7,7 @@ import { LaunchOverlay } from "./components/LaunchOverlay";
 import { Priority, useAction } from "./input/dispatcher";
 import { ensureFocus, focusElement } from "./input/focus";
 import { setupInput } from "./input/sources";
+import { Downloads } from "./screens/Downloads";
 import { GameDetail } from "./screens/GameDetail";
 import { Home } from "./screens/Home";
 import { Library } from "./screens/Library";
@@ -15,7 +16,7 @@ import { Settings } from "./screens/Settings";
 import { Stores } from "./screens/Stores";
 import { currentScreen, type Tab, useApp } from "./store/app";
 
-const TAB_ORDER: Tab[] = ["home", "library", "stores", "settings"];
+const TAB_ORDER: Tab[] = ["home", "library", "downloads", "stores", "settings"];
 
 export default function App() {
   const entry = useApp(currentScreen);
@@ -87,6 +88,7 @@ export default function App() {
           >
             {screen.name === "home" && <Home focusId={entry.focusId} />}
             {screen.name === "library" && <Library focusId={entry.focusId} />}
+            {screen.name === "downloads" && <Downloads />}
             {screen.name === "stores" && <Stores />}
             {screen.name === "settings" && <Settings />}
             {screen.name === "detail" && <GameDetail gameId={screen.gameId} />}

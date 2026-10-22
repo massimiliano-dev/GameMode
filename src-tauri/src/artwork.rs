@@ -27,7 +27,7 @@ const MS_CATALOG: &str = "https://displaycatalog.mp.microsoft.com/v7.0/products/
 pub const PIPELINE_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum Kind {
+pub(crate) enum Kind {
     Cover,
     Hero,
     Logo,
@@ -296,7 +296,7 @@ struct MsLocalized {
 
 #[derive(Deserialize, Default, Clone, Debug)]
 #[serde(rename_all = "PascalCase", default)]
-struct MsImage {
+pub(crate) struct MsImage {
     image_purpose: String,
     uri: String,
     width: u32,
@@ -314,7 +314,7 @@ fn parse_ms_catalog(body: &[u8]) -> Vec<MsImage> {
 }
 
 /// Best image for `kind`, as a URL asking the CDN for a sensible size.
-fn pick_ms_image(images: &[MsImage], kind: Kind) -> Option<String> {
+pub(crate) fn pick_ms_image(images: &[MsImage], kind: Kind) -> Option<String> {
     let (purposes, width) = kind.ms_purposes();
     let image = purposes
         .iter()

@@ -1,4 +1,7 @@
-import { useEffect } from "react";
+import { AnimatePresence } from "motion/react";
+import { useEffect, useState } from "react";
+
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 import { Cover } from "../components/GameCard";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
@@ -13,6 +16,8 @@ export function GameDetail({ gameId }: { gameId: string }) {
   const toggleFavorite = useApp((s) => s.toggleFavorite);
   const toggleHidden = useApp((s) => s.toggleHidden);
   const openStore = useApp((s) => s.openStore);
+  const uninstall = useApp((s) => s.uninstall);
+  const [confirmUninstall, setConfirmUninstall] = useState(false);
   const setBackdrop = useApp((s) => s.setBackdrop);
   const back = useApp((s) => s.back);
 
@@ -80,6 +85,11 @@ export function GameDetail({ gameId }: { gameId: string }) {
           >
             {game.hidden ? "Mostra nella libreria" : "Nascondi"}
           </button>
+          {game.store !== "mock" && (
+            <button type="button" className="btn btn-danger-quiet" data-nav onClick={() => setConfirmUninstall(true)}>
+              {game.store === "manual" ? "Rimuovi dalla libreria" : "Disinstalla"}
+            </button>
+          )}
         </div>
 
         <dl className="stats">
@@ -102,6 +112,26 @@ export function GameDetail({ gameId }: { gameId: string }) {
       <div className="detail-cover">
         <Cover game={game} />
       </div>
+      <AnimatePresence>
+        {confirmUninstall && (
+          <ConfirmDialog
+            title={game.store === "manual" ? `Rimuovere ${game.name}?` : `Disinstallare ${game.name}?`}
+            text={
+              game.store === "manual"
+                ? "Il gioco sparisce da GameMode, i suoi file restano dove sono."
+                : game.store === "xbox"
+                  ? "Il gioco viene rimosso dal PC. I salvataggi nel cloud restano sul tuo account Xbox."
+                  : "Si apre la disinstallazione dello store, che potrebbe chiederti un'ulteriore conferma."
+            }
+            confirmLabel={game.store === "manual" ? "Rimuovi" : "Disinstalla"}
+            onCancel={() => setConfirmUninstall(false)}
+            onConfirm={() => {
+              setConfirmUninstall(false);
+              void uninstall(game);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

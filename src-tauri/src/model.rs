@@ -164,6 +164,8 @@ pub struct Settings {
     pub start_fullscreen: bool,
     /// Start Steam silently together with GameMode.
     pub preload_steam: bool,
+    /// Steam Web API key, to list owned games that aren't installed.
+    pub steam_api_key: Option<String>,
 }
 
 impl Default for Settings {
@@ -173,6 +175,7 @@ impl Default for Settings {
             disabled_stores: Vec::new(),
             start_fullscreen: true,
             preload_steam: true,
+            steam_api_key: None,
         }
     }
 }

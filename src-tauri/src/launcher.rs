@@ -1,6 +1,7 @@
 //! Starting games and following them: store clients start the real game
 //! process themselves, so a game is "running" while any process whose
-//! executable lives inside its install folder is alive.
+//! executable lives inside its install folder is alive — or, for Xbox /
+//! Game Pass titles, any process running with the game's package identity.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -11,6 +12,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+
+use crate::procinfo::{ProcInfo, Probe};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -92,10 +95,38 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<()> {
     *launcher.active.lock().unwrap() = Some(Active { generation, state: state.clone(), pids: Vec::new() });
     let _ = app.emit("game://state", &state);
 
+    let target = Target {
+        dir: game.install_dir.as_deref().map(normalize).filter(|d| d.len() > 3),
+        // Xbox game ids are `xbox:<PackageFamilyName>`.
+        family: (game.store == Store::Xbox).then(|| native_id(game).to_lowercase()),
+        child_pid,
+    };
     let app = app.clone();
-    let install_dir = game.install_dir.clone();
-    std::thread::spawn(move || monitor(app, generation, install_dir, child_pid));
+    std::thread::spawn(move || monitor(app, generation, target));
     Ok(())
+}
+
+fn native_id(game: &Game) -> &str {
+    game.id.split_once(':').map_or(game.id.as_str(), |(_, id)| id)
+}
+
+/// What identifies the processes of one game.
+struct Target {
+    /// Normalized install folder.
+    dir: Option<String>,
+    /// Lowercase package family name.
+    family: Option<String>,
+    child_pid: Option<u32>,
+}
+
+impl Target {
+    fn matches(&self, pid: u32, info: &ProcInfo) -> bool {
+        Some(pid) == self.child_pid
+            || self.family.as_ref().is_some_and(|f| info.family.as_ref().is_some_and(|pf| pf.to_lowercase() == *f))
+            || self.dir.as_ref().is_some_and(|d| {
+                info.exe.as_deref().is_some_and(|exe| normalize(exe).starts_with(&format!("{d}/")))
+            })
+    }
 }
 
 fn spawn(app: &AppHandle, spec: &LaunchSpec) -> Result<Option<u32>> {
@@ -130,10 +161,11 @@ fn spawn(app: &AppHandle, spec: &LaunchSpec) -> Result<Option<u32>> {
     }
 }
 
-fn monitor(app: AppHandle, generation: u64, install_dir: Option<PathBuf>, child_pid: Option<u32>) {
+fn monitor(app: AppHandle, generation: u64, target: Target) {
     let launcher = &app.state::<AppState>().launcher;
     let refresh = ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet);
     let mut sys = System::new();
+    let mut probe = Probe::default();
     let started = Instant::now();
     let mut first_seen: Option<Instant> = None;
     let mut last_seen = Instant::now();
@@ -145,7 +177,8 @@ fn monitor(app: AppHandle, generation: u64, install_dir: Option<PathBuf>, child_
             return;
         }
         sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
-        let pids = game_pids(&sys, install_dir.as_deref(), child_pid);
+        probe.retain_alive(sys.processes());
+        let pids = game_pids(&sys, &mut probe, &target);
 
         if !pids.is_empty() {
             last_seen = Instant::now();
@@ -170,6 +203,8 @@ fn monitor(app: AppHandle, generation: u64, install_dir: Option<PathBuf>, child_
         } else {
             match first_seen {
                 None if started.elapsed() > LAUNCH_TIMEOUT => {
+                    // Never detected: the game may well be running anyway, so
+                    // don't pull the launcher over it.
                     end(&app, generation, Phase::Failed, 0);
                     return;
                 }
@@ -185,22 +220,16 @@ fn monitor(app: AppHandle, generation: u64, install_dir: Option<PathBuf>, child_
     }
 }
 
-fn game_pids(sys: &System, install_dir: Option<&Path>, child_pid: Option<u32>) -> Vec<u32> {
-    let dir = install_dir.map(normalize).filter(|d| d.len() > 3);
+fn game_pids(sys: &System, probe: &mut Probe, target: &Target) -> Vec<u32> {
     sys.processes()
         .iter()
-        .filter(|(pid, process)| {
-            Some(pid.as_u32()) == child_pid
-                || dir.as_ref().is_some_and(|d| {
-                    process.exe().is_some_and(|exe| normalize(exe).starts_with(&format!("{d}/")))
-                })
-        })
+        .filter(|(pid, process)| target.matches(pid.as_u32(), probe.info(**pid, process)))
         .map(|(pid, _)| pid.as_u32())
         .collect()
 }
 
 /// Case- and separator-insensitive path string, as Windows compares paths.
-fn normalize(path: &Path) -> String {
+pub(crate) fn normalize(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/").trim_end_matches('/').to_lowercase()
 }
 
@@ -228,7 +257,9 @@ fn end(app: &AppHandle, generation: u64, phase: Phase, seconds: u64) {
         }
     }
     let _ = app.emit("game://state", &session);
-    window::bring_to_front(app);
+    if phase == Phase::Exited {
+        window::bring_to_front(app);
+    }
 }
 
 #[cfg(windows)]
@@ -275,6 +306,25 @@ pub fn close_running(app: &AppHandle) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matches_by_folder_or_package_identity() {
+        let target = Target {
+            dir: Some(normalize(Path::new(r"C:\XboxGames\Forza\Content"))),
+            family: Some("microsoft.624f8b84b80_8wekyb3d8bbwe".into()),
+            child_pid: None,
+        };
+        let in_dir = ProcInfo { exe: Some(r"C:\XboxGames\Forza\Content\Forza.exe".into()), family: None };
+        let packaged = ProcInfo {
+            exe: Some(r"C:\Program Files\WindowsApps\X\Forza.exe".into()),
+            family: Some("Microsoft.624F8B84B80_8wekyb3d8bbwe".into()),
+        };
+        let other = ProcInfo { exe: Some(r"C:\Windows\explorer.exe".into()), family: None };
+        assert!(target.matches(1, &in_dir));
+        assert!(target.matches(2, &packaged));
+        assert!(!target.matches(3, &other));
+        assert!(!target.matches(4, &ProcInfo::default()));
+    }
 
     #[test]
     fn normalizes_windows_paths() {

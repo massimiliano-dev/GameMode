@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import { mockInvoke, mockListen } from "./mock";
 import type {
+  Catalog,
   Game,
   LibraryUpdate,
   ManualGame,
@@ -11,6 +12,7 @@ import type {
   Settings,
   Store,
   Storefront,
+  UninstallOutcome,
   Volume,
 } from "./types";
 
@@ -50,6 +52,9 @@ export const api = {
   listStorefronts: () => call<Storefront[]>("list_storefronts"),
   openStore: (store: Store, gameId?: string) =>
     call<Storefront["opensIn"]>("open_store", { store, gameId: gameId ?? null }),
+  getCatalog: (force = false) => call<Catalog>("get_catalog", { force }),
+  installCatalogItem: (id: string) => call<void>("install_catalog_item", { id }),
+  uninstallGame: (id: string) => call<UninstallOutcome>("uninstall_game", { id }),
 };
 
 export function on<T>(event: string, handler: (payload: T) => void): () => void {

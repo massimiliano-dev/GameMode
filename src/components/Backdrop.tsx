@@ -7,9 +7,12 @@ import { useApp } from "../store/app";
 /** Full-screen art of the highlighted game, cross-faded on change. */
 export function Backdrop() {
   const game = useApp((s) => s.games.find((g) => g.id === s.backdropId));
-  const hero = artUrl(game?.artwork.hero, game?.artworkCheckedAt);
-  const cover = artUrl(game?.artwork.cover, game?.artworkCheckedAt);
-  const key = game ? `${game.id}:${hero ?? cover ?? "none"}` : "none";
+  const art = useApp((s) => s.backdropArt);
+  const hero = art ? (art.hero ?? undefined) : artUrl(game?.artwork.hero, game?.artworkCheckedAt);
+  const cover = art ? (art.cover ?? undefined) : artUrl(game?.artwork.cover, game?.artworkCheckedAt);
+  const store = art?.store ?? game?.store;
+  const id = art?.key ?? game?.id;
+  const key = id ? `${id}:${hero ?? cover ?? "none"}` : "none";
 
   return (
     <div className="backdrop" aria-hidden>
@@ -22,7 +25,7 @@ export function Backdrop() {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.6, ease: [0.2, 0.8, 0.2, 1] }}
         >
-          {game && <BackdropImage hero={hero} cover={cover} store={game.store} />}
+          {store && <BackdropImage hero={hero} cover={cover} store={store} />}
         </motion.div>
       </AnimatePresence>
       <div className="backdrop-shade" />

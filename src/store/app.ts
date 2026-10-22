@@ -5,7 +5,7 @@ import { api, on } from "../lib/api";
 import { formatPlaytime } from "../lib/format";
 import type { Game, LibraryUpdate, ScanError, SessionState, Settings, Store } from "../lib/types";
 
-export type Tab = "home" | "library" | "stores" | "settings";
+export type Tab = "home" | "library" | "downloads" | "stores" | "settings";
 export type Screen = { name: Tab } | { name: "detail"; gameId: string };
 
 interface Entry {
@@ -38,6 +38,8 @@ interface AppState {
   session: SessionState | null;
   /** Game whose art fills the background. */
   backdropId: string | null;
+  /** Art for things that aren't installed games (catalog entries). */
+  backdropArt: BackdropArt | null;
   hints: Hint[];
   toasts: Toast[];
   /** A shop was opened: rescan when the user comes back, new games may be installed. */
@@ -50,6 +52,7 @@ interface AppState {
   back: () => boolean;
   setQuickMenu: (open: boolean) => void;
   setBackdrop: (id: string | null) => void;
+  setBackdropArt: (art: BackdropArt | null) => void;
   setHints: (hints: Hint[]) => void;
   upsertGame: (game: Game) => void;
   saveSettings: (settings: Settings) => Promise<void>;
@@ -57,6 +60,8 @@ interface AppState {
   toggleHidden: (game: Game) => Promise<void>;
   launch: (id: string) => Promise<void>;
   openStore: (store: Store, gameId?: string) => Promise<void>;
+  installFromCatalog: (id: string, name: string) => Promise<void>;
+  uninstall: (game: Game) => Promise<void>;
   returnedToApp: () => void;
   toast: (text: string, tone?: Toast["tone"]) => void;
 }
@@ -74,6 +79,7 @@ export const useApp = create<AppState>((set, get) => ({
   quickMenu: false,
   session: null,
   backdropId: null,
+  backdropArt: null,
   hints: [],
   toasts: [],
   rescanOnReturn: false,
@@ -135,7 +141,8 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   setQuickMenu: (quickMenu) => set({ quickMenu }),
-  setBackdrop: (backdropId) => set({ backdropId }),
+  setBackdrop: (backdropId) => set({ backdropId, backdropArt: null }),
+  setBackdropArt: (backdropArt) => set({ backdropArt, backdropId: null }),
   setHints: (hints) => set({ hints }),
 
   upsertGame: (game) =>
@@ -184,6 +191,31 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
+  installFromCatalog: async (id, name) => {
+    try {
+      await api.installCatalogItem(id);
+      set({ rescanOnReturn: true });
+      get().toast(`Installazione di ${name} aperta nel client. Premi Guide per tornare qui`);
+    } catch (e) {
+      get().toast(String(e), "error");
+    }
+  },
+
+  uninstall: async (game) => {
+    try {
+      const outcome = await api.uninstallGame(game.id);
+      if (outcome === "removed") {
+        get().toast(`${game.name} disinstallato`);
+        get().back();
+      } else {
+        set({ rescanOnReturn: true });
+        get().toast(`Completa la disinstallazione di ${game.name}, poi premi Guide per tornare qui`);
+      }
+    } catch (e) {
+      get().toast(String(e), "error");
+    }
+  },
+
   returnedToApp: () => {
     if (!get().rescanOnReturn) return;
     set({ rescanOnReturn: false });
@@ -212,6 +244,13 @@ function onSessionEvent(
   } else {
     set({ session: s });
   }
+}
+
+export interface BackdropArt {
+  key: string;
+  hero: string | null;
+  cover: string | null;
+  store: Store;
 }
 
 export const currentScreen = (s: AppState) => s.stack.at(-1)!;

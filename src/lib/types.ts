@@ -26,6 +26,7 @@ export interface Settings {
   disabledStores: Store[];
   startFullscreen: boolean;
   preloadSteam: boolean;
+  steamApiKey: string | null;
 }
 
 export interface ManualGame {
@@ -83,5 +84,26 @@ export interface Storefront {
   opensIn: "client" | "browser";
   clientInstalled: boolean;
 }
+
+export interface CatalogItem {
+  /** `steam:<appid>` or `gamepass:<productId>`. */
+  id: string;
+  source: "steam" | "gamepass";
+  store: Store;
+  name: string;
+  cover: string | null;
+  hero: string | null;
+  playtimeSecs: number;
+}
+
+export type SteamCatalogStatus = "ok" | "notInstalled" | "needsKey" | "noAccount" | "failed";
+
+export interface Catalog {
+  items: CatalogItem[];
+  steam: SteamCatalogStatus;
+  gamepassOk: boolean;
+}
+
+export type UninstallOutcome = "started" | "removed";
 
 export type PowerAction = "shutdown" | "restart" | "sleep";

@@ -28,6 +28,7 @@ export function Settings() {
   const [autostart, setAutostart] = useState(false);
   const [manual, setManual] = useState<ManualGame[]>([]);
   const [key, setKey] = useState(settings?.steamgriddbKey ?? "");
+  const [steamKey, setSteamKey] = useState(settings?.steamApiKey ?? "");
   const [draft, setDraft] = useState<Draft | null>(null);
 
   useEffect(() => {
@@ -54,6 +55,11 @@ export function Settings() {
   const saveKey = async () => {
     await saveSettings({ ...settings, steamgriddbKey: key.trim() || null });
     toast(key.trim() ? "Chiave salvata, scarico le copertine mancanti" : "Chiave rimossa");
+  };
+
+  const saveSteamKey = async () => {
+    await saveSettings({ ...settings, steamApiKey: steamKey.trim() || null });
+    toast(steamKey.trim() ? "Chiave Steam salvata: i giochi non installati compaiono in Scarica" : "Chiave Steam rimossa");
   };
 
   const startAdd = async () => {
@@ -127,6 +133,32 @@ export function Settings() {
             hint="Rileva giochi installati o disinstallati"
             onClick={() => void rescan()}
           />
+        </Section>
+
+        <Section title="Libreria Steam completa">
+          <div className="setting-row is-static">
+            <div className="setting-text">
+              <span className="setting-label">Chiave Web API di Steam</span>
+              <span className="setting-hint">
+                Serve per mostrare in Scarica i giochi Steam che possiedi ma non hai installato. Gratuita:
+                steamcommunity.com/dev/apikey (come dominio puoi scrivere localhost).
+              </span>
+            </div>
+            <div className="setting-inline">
+              <input
+                className="text-input mono"
+                data-nav
+                value={steamKey}
+                placeholder="Incolla la chiave"
+                spellCheck={false}
+                onChange={(e) => setSteamKey(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void saveSteamKey()}
+              />
+              <button type="button" className="btn" data-nav onClick={() => void saveSteamKey()}>
+                Salva
+              </button>
+            </div>
+          </div>
         </Section>
 
         <Section title="Copertine">

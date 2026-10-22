@@ -48,7 +48,6 @@ pub fn toggle_fullscreen(app: &AppHandle) {
     }
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
 pub fn is_foreground(app: &AppHandle) -> bool {
     let Some(window) = main_window(app) else { return false };
     #[cfg(windows)]

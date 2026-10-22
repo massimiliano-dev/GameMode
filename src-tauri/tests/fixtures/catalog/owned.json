@@ -1,0 +1,5 @@
+{"response":{"game_count":3,"games":[
+ {"appid":570,"name":"Dota 2","playtime_forever":1200,"img_icon_url":"x"},
+ {"appid":1145360,"name":"Hades","playtime_forever":0,"img_icon_url":"y"},
+ {"appid":413150,"name":"Stardew Valley","playtime_forever":90,"img_icon_url":"z"}
+]}}
