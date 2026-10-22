@@ -269,6 +269,7 @@ fn end(app: &AppHandle, generation: u64, phase: Phase, seconds: u64) {
     }
     let _ = app.emit("game://state", &session);
     crate::performance::end();
+    crate::overlay::hide(app);
     if phase == Phase::Exited {
         window::bring_to_front(app);
     }

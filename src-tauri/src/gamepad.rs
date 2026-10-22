@@ -241,7 +241,7 @@ mod xinput {
                 }
 
                 // Input goes only to the GameMode window that has focus.
-                let target = if overlay::is_foreground(&app) {
+                let target = if overlay::is_open() {
                     Some(overlay::LABEL)
                 } else if window::is_foreground(&app) {
                     Some("main")
