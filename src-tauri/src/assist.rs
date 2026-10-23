@@ -64,14 +64,15 @@ pub enum Key {
     /// Wand's overlay shortcuts.
     AltW,
     AltBacktick,
+    Backspace,
 }
 
 /// Types `key` into whatever window has focus.
 #[cfg(windows)]
 pub fn press(key: Key) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_DOWN,
-        VK_ESCAPE, VK_LEFT, VK_MENU, VK_OEM_3, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP, VK_W,
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_BACK,
+        VK_DOWN, VK_ESCAPE, VK_LEFT, VK_MENU, VK_OEM_3, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP, VK_W,
     };
 
     fn input(vk: VIRTUAL_KEY, up: bool) -> INPUT {
@@ -100,6 +101,7 @@ pub fn press(key: Key) {
         Key::Space => VK_SPACE,
         Key::AltW => VK_W,
         Key::AltBacktick => VK_OEM_3,
+        Key::Backspace => VK_BACK,
     };
     let modifier = match key {
         Key::ShiftTab => Some(VK_SHIFT),
@@ -123,4 +125,46 @@ pub fn press(key: Key) {
 #[cfg(not(windows))]
 pub fn press(key: Key) {
     let _ = key;
+}
+
+/// Types `text` into whatever window has focus as Unicode characters, so
+/// the keyboard layout doesn't matter (also into UWP and WebView2 windows).
+/// Line breaks become Enter. Elevated windows drop injected input (UIPI).
+#[cfg(windows)]
+pub fn type_text(text: &str) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY,
+    };
+
+    fn unicode(unit: u16, up: bool) -> INPUT {
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: VIRTUAL_KEY(0),
+                    wScan: unit,
+                    dwFlags: if up { KEYEVENTF_UNICODE | KEYEVENTF_KEYUP } else { KEYEVENTF_UNICODE },
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            press(Key::Enter);
+        }
+        let inputs: Vec<INPUT> = line.encode_utf16().flat_map(|unit| [unicode(unit, false), unicode(unit, true)]).collect();
+        if !inputs.is_empty() {
+            unsafe {
+                SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn type_text(text: &str) {
+    let _ = text;
 }

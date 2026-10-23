@@ -1,7 +1,9 @@
 import { motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Priority, useAction } from "../input/dispatcher";
+import { onWindow } from "../lib/api";
+import type { RemoteText } from "../lib/types";
 import { play } from "../input/sfx";
 import { Glyph, useScreenFocus } from "./common";
 
@@ -55,6 +57,17 @@ export function VirtualKeyboard({ field, onClose }: Props) {
     // Screens save on Enter (e.g. API key fields).
     field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   };
+  // Text typed on the phone companion lands here while the keyboard is open.
+  const doneRef = useRef(done);
+  doneRef.current = done;
+  useEffect(
+    () =>
+      onWindow<RemoteText>("remote://text", (e) => {
+        setValue((v) => (e.backspace ? v.slice(0, -1) : v) + e.text);
+        if (e.enter) requestAnimationFrame(() => doneRef.current());
+      }),
+    [],
+  );
 
   useAction((action, repeat) => {
     switch (action) {

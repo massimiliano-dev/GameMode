@@ -4,10 +4,10 @@
 // Parsers and helpers below are only reached from Windows-only code paths.
 #![cfg_attr(not(windows), allow(dead_code))]
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Action {
     Up,
@@ -61,6 +61,18 @@ pub fn start(app: AppHandle) -> bool {
     {
         let _ = app;
         false
+    }
+}
+
+/// Routes one press that didn't come from a controller (the phone
+/// companion) exactly where a controller press would go.
+pub fn route(app: &AppHandle, action: Action, repeat: bool) {
+    #[cfg(windows)]
+    xinput::route(app, action, repeat);
+    #[cfg(not(windows))]
+    {
+        use tauri::Emitter;
+        let _ = app.emit_to("main", "gamepad://nav", NavEvent { action, repeat });
     }
 }
 
@@ -282,15 +294,7 @@ mod xinput {
                 let wand = target.is_none() && crate::wand::is_open();
                 for (bit, repeat) in repeater.step(buttons, DIRECTIONS, now) {
                     let Some(&(_, action)) = MAPPING.iter().find(|(b, _)| *b == bit) else { continue };
-                    if wand {
-                        wand_key(&app, action);
-                    } else if action == Action::Guide {
-                        summon(&app, target, true);
-                    } else if let Some(label) = target {
-                        let _ = app.emit_to(label, "gamepad://nav", NavEvent { action, repeat });
-                    } else if assisting && assist::types_keys() {
-                        assist_key(&app, action);
-                    }
+                    dispatch(&app, target, wand, assisting, action, repeat, true);
                 }
 
                 // Holding View: the way back from any hand-off, also from apps
@@ -354,6 +358,35 @@ mod xinput {
                 std::thread::sleep(POLL);
             }
         });
+    }
+
+    /// Where a press goes: Wand's overlay, a GameMode window, or a store
+    /// window during a hand-off. `from_guide`: a real Guide press, which
+    /// Steam games may keep for Steam's overlay.
+    fn dispatch(app: &AppHandle, target: Option<&str>, wand: bool, assisting: bool, action: Action, repeat: bool, from_guide: bool) {
+        if wand {
+            wand_key(app, action);
+        } else if action == Action::Guide {
+            summon(app, target, from_guide);
+        } else if let Some(label) = target {
+            let _ = app.emit_to(label, "gamepad://nav", NavEvent { action, repeat });
+        } else if assisting && assist::types_keys() {
+            assist_key(app, action);
+        }
+    }
+
+    /// A press from the phone companion, routed like a controller's.
+    pub fn route(app: &AppHandle, action: Action, repeat: bool) {
+        let target = if overlay::is_open() {
+            Some(overlay::LABEL)
+        } else if window::is_foreground(app) {
+            Some("main")
+        } else {
+            None
+        };
+        let wand = target.is_none() && crate::wand::is_open();
+        let assisting = target.is_none() && assist::is_active();
+        dispatch(app, target, wand, assisting, action, repeat, false);
     }
 
     fn update_controllers(app: &AppHandle, connected: &[bool; 4]) {

@@ -10,6 +10,7 @@ import type {
   Catalog,
   CatalogItem,
   Collection,
+  CompanionStatus,
   Controller,
   Deals,
   DisplayInfo,
@@ -124,6 +125,8 @@ export const api = {
   removeCollection: (id: string) => call<void>("remove_collection", { id }),
   setInCollection: (collectionId: string, gameId: string, value: boolean) =>
     call<Collection[]>("set_in_collection", { collectionId, gameId, value }),
+  companionStatus: () => call<CompanionStatus>("companion_status"),
+  companionFirewall: () => call<boolean>("companion_firewall"),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

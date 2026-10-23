@@ -44,6 +44,8 @@ export interface Settings {
   wandCombo: boolean;
   /** Freeze the game while Wand has the screen. */
   wandPause: boolean;
+  /** Phone companion: the LAN remote server. */
+  companionEnabled: boolean;
 }
 
 export interface ShellStatus {
@@ -296,3 +298,23 @@ export interface Catalog {
 export type UninstallOutcome = "started" | "removed";
 
 export type PowerAction = "shutdown" | "restart" | "sleep";
+
+export interface CompanionStatus {
+  enabled: boolean;
+  running: boolean;
+  /** `http://<lan ip>:<port>`, to type by hand. */
+  address: string | null;
+  /** The same with the token: what the QR code encodes. */
+  url: string | null;
+  qrSvg: string | null;
+  pin: string | null;
+  firewall: "ok" | "missing" | "unknown";
+  error: string | null;
+}
+
+/** Text sent from the phone's keyboard (`remote://text`). */
+export interface RemoteText {
+  text: string;
+  enter: boolean;
+  backspace: boolean;
+}

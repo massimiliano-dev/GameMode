@@ -48,7 +48,7 @@ let games: Game[] = SEED.map(([store, name, appid], i) => ({
   playtimeSecs: i % 3 === 0 ? (i + 1) * 5400 : 0,
 }));
 
-let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true };
+let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, companionEnabled: false };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
 let suspended: SessionState[] = [];
@@ -489,6 +489,22 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "open_store":
         console.info("[mock] open_store", args);
         return ["steam", "xbox", "epic"].includes(args.store) ? "client" : "browser";
+      case "companion_status":
+        return {
+          enabled: settings.companionEnabled,
+          running: settings.companionEnabled,
+          address: settings.companionEnabled ? "http://192.168.1.20:7373" : null,
+          url: settings.companionEnabled ? "http://192.168.1.20:7373/?t=demo" : null,
+          qrSvg: settings.companionEnabled
+            ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" shape-rendering="crispEdges"><rect width="8" height="8" fill="#fff"/><path fill="#07090d" d="M1 1h3v3H1zM5 1h2v2H5zM1 5h2v2H1zM4 4h1v1H4zM5 5h2v2H5z"/></svg>'
+            : null,
+          pin: settings.companionEnabled ? "482913" : null,
+          firewall: "ok",
+          error: null,
+        };
+      case "companion_firewall":
+        await wait(500);
+        return true;
       default:
         // power, exit_to_desktop, toggle_fullscreen, quit_app, refresh_artwork
         console.info(`[mock] ${cmd}`, args);

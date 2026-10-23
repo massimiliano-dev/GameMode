@@ -3,6 +3,7 @@
 import { api, isTauri, onWindow } from "../lib/api";
 import type { Action } from "../lib/types";
 import { dispatch } from "./dispatcher";
+import { remoteText } from "./remote";
 
 const KEYS: Record<string, Action> = {
   ArrowUp: "up",
@@ -139,6 +140,7 @@ export function setupInput(): Promise<boolean> {
 async function start(): Promise<boolean> {
   keyboard();
   pointer();
+  remoteText();
   const native = isTauri ? await api.nativeGamepad().catch(() => false) : false;
   if (native) {
     onWindow<{ action: Action; repeat: boolean }>("gamepad://nav", (e) => {

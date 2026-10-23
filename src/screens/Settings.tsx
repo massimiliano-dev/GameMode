@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { CompanionSettings } from "../components/CompanionSettings";
 import { ConsoleSettings } from "../components/ConsoleSettings";
 import { EmulatorSettings } from "../components/EmulatorSettings";
 import { SystemSettings } from "../components/SystemSettings";
@@ -407,6 +408,7 @@ export function Settings() {
           <>
             <SystemSettings settings={settings} />
             <ConsoleSettings />
+            <CompanionSettings settings={settings} />
           </>
         )}
       </div>

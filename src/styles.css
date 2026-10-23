@@ -2232,3 +2232,34 @@ html.is-overlay .qm-volume[data-nav-current] {
   background: var(--surface-strong);
   box-shadow: inset 0 0 0 0.14rem var(--focus);
 }
+
+/* Phone companion (Settings → Sistema → Telefono) */
+.setting-row.companion {
+  gap: 1.2rem;
+  align-items: center;
+}
+
+.companion-qr {
+  flex: none;
+  width: 9rem;
+  height: 9rem;
+  padding: 0.4rem;
+  border-radius: 0.6rem;
+  background: #ffffff;
+}
+
+.companion-qr.is-empty {
+  background: var(--surface);
+}
+
+.companion-qr svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.companion-pin {
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+}
