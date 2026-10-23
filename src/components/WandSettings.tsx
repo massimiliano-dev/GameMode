@@ -25,6 +25,12 @@ export function WandSettings() {
         onClick={() => void api.openWandApp()}
       />
       <Row
+        label="Metti in pausa il gioco mentre usi Wand"
+        hint="Il gioco si blocca finché sei in Wand, così il personaggio non si muove mentre scegli le mod. Riparte appena torni al gioco"
+        onClick={() => void saveSettings({ ...settings, wandPause: !settings.wandPause })}
+        control={<Toggle on={settings.wandPause} />}
+      />
+      <Row
         label="Scorciatoia dell'overlay di Wand"
         hint="Deve essere la stessa scelta in Wand → Impostazioni → Personalizzazione"
         onClick={() => void saveSettings({ ...settings, wandBacktick: !settings.wandBacktick })}

@@ -231,6 +231,8 @@ pub struct Settings {
     pub wand_backtick: bool,
     /// LB+RB held during a game opens Wand's overlay.
     pub wand_combo: bool,
+    /// Freeze the game while Wand has the screen.
+    pub wand_pause: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -263,6 +265,7 @@ impl Default for Settings {
             steam_guide: false,
             wand_backtick: false,
             wand_combo: false,
+            wand_pause: true,
         }
     }
 }

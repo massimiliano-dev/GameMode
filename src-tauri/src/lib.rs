@@ -370,6 +370,8 @@ fn toggle_fullscreen(app: AppHandle) {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
+    // Never leave a game frozen behind.
+    wand::forget();
     display::reset_mode();
     shell::start_explorer();
     app.exit(0);

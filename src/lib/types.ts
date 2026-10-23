@@ -42,6 +42,8 @@ export interface Settings {
   wandBacktick: boolean;
   /** LB+RB held during a game opens Wand's overlay. */
   wandCombo: boolean;
+  /** Freeze the game while Wand has the screen. */
+  wandPause: boolean;
 }
 
 export interface ShellStatus {

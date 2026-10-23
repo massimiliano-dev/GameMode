@@ -67,7 +67,7 @@ pub fn open_app(app: &AppHandle) {
                 if let Some(&hwnd) = crate::window::windows_of(PROCESSES).first() {
                     crate::window::move_to_gamemode_screen(&app, hwnd, true);
                 }
-                IN_APP.store(true, Ordering::SeqCst);
+                entered(&app, &IN_APP);
                 return;
             }
             if let Some(&hwnd) = crate::window::windows_of(PROCESSES).first() {
@@ -122,7 +122,7 @@ pub fn open(app: &AppHandle) {
         for _ in 0..10 {
             std::thread::sleep(std::time::Duration::from_millis(100));
             if has_focus() {
-                OPEN.store(true, Ordering::SeqCst);
+                entered(&app, &OPEN);
                 return;
             }
         }
@@ -131,12 +131,72 @@ pub fn open(app: &AppHandle) {
 
 pub fn close(app: &AppHandle) {
     if OPEN.swap(false, Ordering::SeqCst) {
+        // Thawed first: a frozen game can't take the shortcut.
+        pause::resume();
         assist::press(hotkey(app));
     }
 }
 
-/// The game ended or GameMode came back: Wand's overlay went with it.
+/// The game ended, GameMode came back or the game took the focus again:
+/// Wand is out of the picture.
 pub fn forget() {
     OPEN.store(false, Ordering::SeqCst);
     IN_APP.store(false, Ordering::SeqCst);
+    pause::resume();
+}
+
+/// Wand has the keyboard: the controller drives it, and (when switched on)
+/// the game is frozen meanwhile — games read the controller even without
+/// focus, so the character would walk around while picking mods.
+fn entered(app: &AppHandle, flag: &AtomicBool) {
+    flag.store(true, Ordering::SeqCst);
+    let state = app.state::<AppState>();
+    if state.db.lock().settings.wand_pause {
+        pause::suspend(&state.launcher.running_pids());
+    }
+}
+
+/// Freezing and thawing a game's processes (what Windows does to suspended
+/// apps). Always undone when Wand is left; elevated games can't be touched.
+mod pause {
+    static SUSPENDED: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+
+    #[cfg(windows)]
+    fn call(name: windows::core::PCSTR, pid: u32) -> bool {
+        use windows::core::s;
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
+        use windows::Win32::System::Threading::{OpenProcess, PROCESS_SUSPEND_RESUME};
+        type NtProcessFn = unsafe extern "system" fn(HANDLE) -> i32;
+        unsafe {
+            let Ok(ntdll) = GetModuleHandleA(s!("ntdll.dll")) else { return false };
+            let Some(f) = GetProcAddress(ntdll, name) else { return false };
+            let f = std::mem::transmute::<unsafe extern "system" fn() -> isize, NtProcessFn>(f);
+            let Ok(handle) = OpenProcess(PROCESS_SUSPEND_RESUME, false, pid) else { return false };
+            let ok = f(handle) >= 0;
+            let _ = CloseHandle(handle);
+            ok
+        }
+    }
+
+    pub fn suspend(pids: &[u32]) {
+        let mut suspended = SUSPENDED.lock().unwrap();
+        for &pid in pids {
+            #[cfg(windows)]
+            if !suspended.contains(&pid) && call(windows::core::s!("NtSuspendProcess"), pid) {
+                suspended.push(pid);
+            }
+            #[cfg(not(windows))]
+            let _ = (pid, &mut suspended);
+        }
+    }
+
+    pub fn resume() {
+        for pid in std::mem::take(&mut *SUSPENDED.lock().unwrap()) {
+            #[cfg(windows)]
+            call(windows::core::s!("NtResumeProcess"), pid);
+            #[cfg(not(windows))]
+            let _ = pid;
+        }
+    }
 }
