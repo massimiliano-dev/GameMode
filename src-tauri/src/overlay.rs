@@ -98,6 +98,20 @@ pub fn is_foreground(app: &AppHandle) -> bool {
     }
 }
 
+/// After the overlay closes back to the game: Steam answers Guide too, so
+/// if it jumped in front, it goes back down and the game gets the screen.
+pub fn after_resume(app: &AppHandle, pids: Vec<u32>) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        for _ in 0..8 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if dismiss_steam() {
+                crate::window::resume_game(&app, &pids);
+            }
+        }
+    });
+}
+
 /// Opens the overlay after Guide: Steam and Game Bar react to the same
 /// press, so wait for them to make their move, then clear Steam away and
 /// come up on top.

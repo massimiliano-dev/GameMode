@@ -262,7 +262,7 @@ mod xinput {
                 for (bit, repeat) in repeater.step(buttons, DIRECTIONS, now) {
                     let Some(&(_, action)) = MAPPING.iter().find(|(b, _)| *b == bit) else { continue };
                     if action == Action::Guide {
-                        summon(&app, target);
+                        summon(&app, target, true);
                     } else if let Some(label) = target {
                         let _ = app.emit_to(label, "gamepad://nav", NavEvent { action, repeat });
                     } else if assisting && assist::types_keys() {
@@ -301,7 +301,7 @@ mod xinput {
                     let overlay_target = target.filter(|t| *t == overlay::LABEL);
                     if !combo_fired && now - since >= hold && (!foreground || overlay_target.is_some()) {
                         combo_fired = true;
-                        summon(&app, overlay_target);
+                        summon(&app, overlay_target, false);
                     }
                 } else {
                     combo_since = None;
@@ -353,14 +353,21 @@ mod xinput {
 
     /// Guide: toggles the overlay over a running game, otherwise brings
     /// GameMode back and opens its quick menu.
-    fn summon(app: &AppHandle, target: Option<&str>) {
+    fn summon(app: &AppHandle, target: Option<&str>, from_guide: bool) {
         let guide = NavEvent { action: Action::Guide, repeat: false };
         if let Some(label) = target {
             let _ = app.emit_to(label, "gamepad://nav", guide);
             return;
         }
         let state = app.state::<crate::AppState>();
-        let playing = state.launcher.current().is_some_and(|s| s.phase == crate::launcher::Phase::Running);
+        let session = state.launcher.current();
+        let playing = session.as_ref().is_some_and(|s| s.phase == crate::launcher::Phase::Running);
+        // Steam reacts to Guide in its games: when the user leaves Guide to
+        // Steam's overlay, only Back+Start brings GameMode's up.
+        let steam_game = session.as_ref().is_some_and(|s| s.game_id.starts_with("steam:"));
+        if from_guide && playing && steam_game && state.db.lock().settings.steam_guide {
+            return;
+        }
         if playing && state.db.lock().settings.overlay_enabled && overlay::window(app).is_some() {
             overlay::show_after_guide(app);
             return;

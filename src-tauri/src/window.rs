@@ -192,6 +192,29 @@ pub fn game_window(pids: &[u32]) -> Option<isize> {
     }
 }
 
+/// Nothing to look at in front: no foreground window, a hidden one, or
+/// Explorer's desktop and taskbar (hidden in console mode).
+pub fn nothing_in_front() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow, IsWindowVisible};
+        unsafe {
+            let hwnd = GetForegroundWindow();
+            if hwnd.is_invalid() || !IsWindowVisible(hwnd).as_bool() {
+                return true;
+            }
+            let mut class = [0u16; 64];
+            let len = GetClassNameW(hwnd, &mut class).max(0) as usize;
+            let class = String::from_utf16_lossy(&class[..len]);
+            matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd")
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 /// The window still exists and is shown.
 pub fn window_alive(raw: isize) -> bool {
     #[cfg(windows)]

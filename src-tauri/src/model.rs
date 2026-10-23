@@ -224,6 +224,9 @@ pub struct Settings {
     pub keyboard_assist: bool,
     /// Open Steam's store/install/uninstall in Big Picture (controller UI).
     pub steam_big_picture: bool,
+    /// In Steam games Guide is left to Steam (its overlay); Back+Start
+    /// still opens GameMode's.
+    pub steam_guide: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -253,6 +256,7 @@ impl Default for Settings {
             backup_dir: None,
             keyboard_assist: true,
             steam_big_picture: true,
+            steam_guide: false,
         }
     }
 }

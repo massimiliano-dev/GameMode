@@ -124,6 +124,16 @@ export function Settings() {
             control={<Toggle on={settings.overlayEnabled} />}
           />
           <Row
+            label="Tasto Xbox ai giochi Steam"
+            hint={
+              settings.steamGuide
+                ? "Nei giochi Steam il tasto Xbox apre l'overlay di Steam; quello di GameMode si apre con Back+Start"
+                : "Il tasto Xbox apre l'overlay di GameMode. Se compare anche Steam, disattiva in Steam → Impostazioni → Controller l'opzione del tasto Guida"
+            }
+            onClick={() => void saveSettings({ ...settings, steamGuide: !settings.steamGuide })}
+            control={<Toggle on={settings.steamGuide} />}
+          />
+          <Row
             label="Steam in Big Picture"
             hint="Negozio, installazioni e disinstallazioni di Steam si aprono in Big Picture, comandabile col controller"
             onClick={() => void saveSettings({ ...settings, steamBigPicture: !settings.steamBigPicture })}

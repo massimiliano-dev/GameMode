@@ -36,6 +36,8 @@ export interface Settings {
   backupDir: string | null;
   keyboardAssist: boolean;
   steamBigPicture: boolean;
+  /** In Steam games Guide is left to Steam; Back+Start opens GameMode's overlay. */
+  steamGuide: boolean;
 }
 
 export interface ShellStatus {

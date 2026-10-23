@@ -334,14 +334,32 @@ static DESKTOP_WANTED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 /// Game Pass games need it), but its taskbar and desktop stay hidden until
 /// the user asks for the desktop. Explorer brings the taskbar back now and
 /// then, so this keeps checking.
-pub fn keep_desktop_hidden() {
-    std::thread::spawn(|| loop {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        if !DESKTOP_WANTED.load(std::sync::atomic::Ordering::SeqCst) && status().active && imp::explorer_running() {
-            imp::hide_desktop();
+///
+/// With the desktop hidden, nothing in front means a black screen (a game
+/// closed and GameMode didn't make it back): then GameMode comes back.
+pub fn keep_desktop_hidden(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let mut empty_for = 0;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if DESKTOP_WANTED.load(std::sync::atomic::Ordering::SeqCst) || !status().active {
+                empty_for = 0;
+                continue;
+            }
+            if imp::explorer_running() {
+                imp::hide_desktop();
+            }
+            empty_for = if crate::window::nothing_in_front() { empty_for + 1 } else { 0 };
+            if empty_for >= BLACK_SCREEN_SECS {
+                empty_for = 0;
+                crate::window::bring_to_front(&app);
+            }
         }
     });
 }
+
+/// Seconds of an empty screen before GameMode comes back by itself.
+const BLACK_SCREEN_SECS: u32 = 3;
 
 /// GameMode is back in front: in console mode, the desktop goes away again.
 pub fn console_in_front() {

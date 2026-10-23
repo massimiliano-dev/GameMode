@@ -317,7 +317,9 @@ fn set_muted(muted: bool) -> CmdResult<()> {
 fn overlay_hide(app: AppHandle, state: State<AppState>, resume: bool) {
     overlay::hide(&app);
     if resume {
-        window::resume_game(&app, &state.launcher.running_pids());
+        let pids = state.launcher.running_pids();
+        window::resume_game(&app, &pids);
+        overlay::after_resume(&app, pids);
     }
 }
 
@@ -700,7 +702,7 @@ pub fn run() {
             if console {
                 // GameMode is the shell: do Explorer's sign-in chores.
                 shell::spawn_watchdog();
-                shell::keep_desktop_hidden();
+                shell::keep_desktop_hidden(handle.clone());
                 // After an update the startup apps are already running.
                 if !shell::restarted_for_update() {
                     std::thread::spawn(shell::run_startup_apps);
