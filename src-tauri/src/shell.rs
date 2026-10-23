@@ -40,7 +40,11 @@ mod imp {
     use windows::core::{w, PCWSTR};
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE};
-    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, FindWindowW, GetClassNameW, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOWNA,
+    };
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
     use winreg::{RegKey, HKEY};
 
@@ -82,11 +86,60 @@ mod imp {
         Ok(())
     }
 
-    /// Starts Explorer; with no shell running it becomes the full desktop.
+    fn spawn_explorer() {
+        let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
+        let _ = std::process::Command::new(Path::new(&windir).join("explorer.exe")).spawn();
+    }
+
+    /// Opens the Windows desktop: starts Explorer (with no shell running it
+    /// becomes the full desktop), or shows what console mode hid.
     pub fn start_explorer() {
-        if !explorer_running() {
-            let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
-            let _ = std::process::Command::new(Path::new(&windir).join("explorer.exe")).spawn();
+        super::DESKTOP_WANTED.store(true, std::sync::atomic::Ordering::SeqCst);
+        if explorer_running() {
+            show_desktop();
+        } else {
+            spawn_explorer();
+        }
+    }
+
+    /// Explorer's own windows: the taskbars and the desktop with its icons.
+    fn desktop_windows() -> Vec<HWND> {
+        unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let found = unsafe { &mut *(lparam.0 as *mut Vec<HWND>) };
+            let mut class = [0u16; 64];
+            let len = unsafe { GetClassNameW(hwnd, &mut class) }.max(0) as usize;
+            let class = String::from_utf16_lossy(&class[..len]);
+            if matches!(class.as_str(), "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "Progman") {
+                found.push(hwnd);
+            }
+            BOOL(1)
+        }
+        let mut found: Vec<HWND> = Vec::new();
+        unsafe {
+            let _ = EnumWindows(Some(visit), LPARAM(&mut found as *mut Vec<HWND> as isize));
+        }
+        found
+    }
+
+    /// Hides the taskbars and desktop icons: Explorer keeps running for the
+    /// Xbox app and Game Pass games, but the console stays a console.
+    pub fn hide_desktop() {
+        for hwnd in desktop_windows() {
+            unsafe {
+                if IsWindowVisible(hwnd).as_bool() {
+                    let _ = ShowWindow(hwnd, SW_HIDE);
+                }
+            }
+        }
+    }
+
+    pub fn show_desktop() {
+        for hwnd in desktop_windows() {
+            unsafe {
+                if !IsWindowVisible(hwnd).as_bool() {
+                    let _ = ShowWindow(hwnd, SW_SHOWNA);
+                }
+            }
         }
     }
 
@@ -143,8 +196,14 @@ mod imp {
     /// start it in the background first, in console mode.
     pub fn ensure_explorer() {
         if !explorer_running() {
-            start_explorer();
-            std::thread::sleep(std::time::Duration::from_secs(3));
+            spawn_explorer();
+            // Hide the taskbar as soon as it shows up, while Explorer settles.
+            for _ in 0..30 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if !super::DESKTOP_WANTED.load(std::sync::atomic::Ordering::SeqCst) {
+                    hide_desktop();
+                }
+            }
         }
     }
 
@@ -257,6 +316,8 @@ mod imp {
 
     pub fn ensure_explorer() {}
 
+    pub fn hide_desktop() {}
+
     pub fn spawn_watchdog() {}
 
     pub fn run_watchdog(_pid: u32) {}
@@ -265,6 +326,30 @@ mod imp {
 }
 
 pub use imp::{ensure_explorer, run_startup_apps, run_watchdog, set, spawn_watchdog, start_explorer};
+
+/// The user asked for the Windows desktop ("Apri il desktop di Windows").
+static DESKTOP_WANTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// In console mode Explorer may run in the background (the Xbox app and
+/// Game Pass games need it), but its taskbar and desktop stay hidden until
+/// the user asks for the desktop. Explorer brings the taskbar back now and
+/// then, so this keeps checking.
+pub fn keep_desktop_hidden() {
+    std::thread::spawn(|| loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        if !DESKTOP_WANTED.load(std::sync::atomic::Ordering::SeqCst) && status().active && imp::explorer_running() {
+            imp::hide_desktop();
+        }
+    });
+}
+
+/// GameMode is back in front: in console mode, the desktop goes away again.
+pub fn console_in_front() {
+    if status().active {
+        DESKTOP_WANTED.store(false, std::sync::atomic::Ordering::SeqCst);
+        imp::hide_desktop();
+    }
+}
 
 /// How this GameMode process came up, fixed at the first check (during
 /// setup): Explorer started later in the background for the Xbox app or

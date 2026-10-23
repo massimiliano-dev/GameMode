@@ -23,6 +23,7 @@ pub fn apply_tv(app: &AppHandle) {
 }
 
 pub fn bring_to_front(app: &AppHandle) {
+    crate::shell::console_in_front();
     apply_tv(app);
     let Some(window) = main_window(app) else { return };
     let _ = window.unminimize();

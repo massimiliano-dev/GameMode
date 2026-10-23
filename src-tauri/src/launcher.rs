@@ -233,6 +233,8 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
     // The game window last handed the screen, and attempts at it so far.
     let mut handed: Option<isize> = None;
     let mut tries = 0;
+    // Since when the game's window is gone while its processes linger.
+    let mut window_gone: Option<Instant> = None;
     let mut update: Option<GameUpdate> = None;
     let mut relaunch_at: Option<Instant> = None;
     let mut dialogs = Dialogs::new();
@@ -316,6 +318,20 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
             if was_launching && running_since.is_some() {
                 if let Some(state) = state {
                     let _ = app.emit("game://state", &state);
+                }
+            }
+            // Quitting a game can leave background processes behind (crash
+            // reporters, launchers, services): once its window is gone for
+            // good, the game is over.
+            if let Some(since) = running_since.filter(|_| handed.is_some()) {
+                if window.is_some() {
+                    window_gone = None;
+                } else {
+                    let gone = *window_gone.get_or_insert_with(Instant::now);
+                    if gone.elapsed() > EXIT_GRACE {
+                        end(&app, generation, Phase::Exited, gone.duration_since(since).as_secs());
+                        return;
+                    }
                 }
             }
         } else {
