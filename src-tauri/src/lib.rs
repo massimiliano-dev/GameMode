@@ -56,6 +56,7 @@ mod capture_osd;
 mod companion;
 mod steam_direct;
 mod gamebar;
+mod webview2;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -1008,6 +1009,8 @@ fn storage_remeasure(app: AppHandle) {
 /// after a crash, or safe mode after crashes in a row.
 #[tauri::command]
 fn startup_info() -> diag::StartupInfo {
+    // The main window's script got this far: its WebView2 runtime works.
+    webview2::confirm();
     diag::startup_info(shell::recovered_count(), shell::safe_mode())
 }
 
@@ -1199,6 +1202,7 @@ pub fn run() {
                 }
             }
             autostart::repair(&handle);
+            webview2::spawn_install();
             if autostart::launched_at_login() {
                 // Explorer is still settling at login and tends to take the
                 // foreground back: claim it again once things calm down.
@@ -1393,7 +1397,7 @@ pub fn run() {
                 }
             }
         })
-        .build(context)
+        .build(webview2::prepare(context))
         .expect("error while running tauri application")
         .run(|app, event| {
             // Whatever ends GameMode (its own quit, a closed window, an

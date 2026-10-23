@@ -115,7 +115,7 @@ mod imp {
     /// Starts explorer.exe: with no shell running, it becomes the desktop.
     pub fn spawn_explorer() {
         let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
-        let _ = std::process::Command::new(Path::new(&windir).join("explorer.exe")).spawn();
+        let _ = crate::webview2::scrub(&mut std::process::Command::new(Path::new(&windir).join("explorer.exe"))).spawn();
     }
 
     /// Opens the Windows desktop: starts Explorer (with no shell running it
@@ -385,7 +385,7 @@ mod imp {
             }
             let expanded = expand_env(&cmd);
             let (program, args) = split_command(&expanded);
-            if let Err(err) = std::process::Command::new(&program).raw_arg(&args).spawn() {
+            if let Err(err) = crate::webview2::scrub(std::process::Command::new(&program).raw_arg(&args)).spawn() {
                 log::warn!("startup app {name}: {err}");
             }
         }
