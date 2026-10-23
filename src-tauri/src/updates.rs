@@ -39,8 +39,11 @@ impl GameUpdate {
 /// Updates for the given games, as far as their stores tell.
 pub fn all(games: &[Game]) -> Vec<GameUpdate> {
     let steam = steam_all();
-    games
+    // GameMode's own downloads first (also for games not installed yet).
+    let mut list = crate::direct::list();
+    let from_stores: Vec<GameUpdate> = games
         .iter()
+        .filter(|game| !list.iter().any(|u| u.game_id == game.id))
         .filter_map(|game| match game.store {
             Store::Steam => {
                 let appid = game.steam_appid?;
@@ -49,11 +52,16 @@ pub fn all(games: &[Game]) -> Vec<GameUpdate> {
             Store::Xbox => xbox_update(family(game)?).map(|u| with_id(&u, game)),
             _ => None,
         })
-        .collect()
+        .collect();
+    list.extend(from_stores);
+    list
 }
 
 /// The update of one game, looked at a bit harder (for the launch screen).
 pub fn for_game(game: &Game) -> Option<GameUpdate> {
+    if let Some(own) = crate::direct::get(&game.id) {
+        return Some(own);
+    }
     match game.store {
         Store::Steam => steam_one(game.steam_appid?).map(|u| with_id(&u, game)),
         Store::Xbox => {

@@ -35,7 +35,11 @@ pub fn uninstall(app: &AppHandle, game: &Game) -> Result<Outcome> {
             Ok(Outcome::Removed)
         }
         Store::Xbox => xbox(app, native_id(game)),
-        Store::Gog | Store::Ubisoft | Store::Ea | Store::Epic => registered_uninstaller(app, game),
+        Store::Gog => match crate::gog_store::uninstall(game)? {
+            Some(outcome) => Ok(outcome),
+            None => registered_uninstaller(app, game),
+        },
+        Store::Ubisoft | Store::Ea | Store::Epic => registered_uninstaller(app, game),
         Store::Emulator => bail!("Per toglierlo, elimina il file della ROM dalla sua cartella"),
         Store::Mock => bail!("Non disponibile per i giochi demo"),
         Store::App => bail!("Le app si disinstallano dalle Impostazioni di Windows"),

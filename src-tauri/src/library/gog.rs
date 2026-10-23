@@ -8,7 +8,10 @@ use anyhow::Result;
 use super::{LibraryProvider, Values};
 use crate::model::{Game, LaunchSpec, Store};
 
-pub struct GogProvider;
+pub struct GogProvider {
+    /// Folders holding games installed without Galaxy (`gog_info`).
+    pub roots: Vec<PathBuf>,
+}
 
 impl LibraryProvider for GogProvider {
     fn store(&self) -> Store {
@@ -21,10 +24,16 @@ impl LibraryProvider for GogProvider {
         let galaxy = registry::hklm_value(r"GOG.com\GalaxyClient\paths", "client")
             .map(|dir| PathBuf::from(dir).join("GalaxyClient.exe"))
             .filter(|p| p.is_file());
-        Ok(registry::hklm_software(r"GOG.com\Games")
+        let mut games: Vec<Game> = registry::hklm_software(r"GOG.com\Games")
             .iter()
             .filter_map(|(_, v)| game_from_entry(v, galaxy.as_deref()))
-            .collect())
+            .collect();
+        for game in super::gog_info::scan(&self.roots) {
+            if !games.iter().any(|g| g.id == game.id) {
+                games.push(game);
+            }
+        }
+        Ok(games)
     }
 
     #[cfg(not(windows))]

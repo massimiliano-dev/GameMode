@@ -22,6 +22,7 @@ import type {
   EmulatorStatus,
   Game,
   GameUpdate,
+  GogStatus,
   LibraryUpdate,
   ManualGame,
   MediaAction,
@@ -189,6 +190,12 @@ export const api = {
   companionFirewall: () => call<boolean>("companion_firewall"),
   /** The first screen is painted: the backend shows the window and drops the splash. */
   appReady: () => call<void>("app_ready"),
+  directInstallAvailable: (id: string) => call<boolean>("direct_install_available", { id }),
+  cancelDirectInstall: (id: string) => call<boolean>("cancel_direct_install", { id }),
+  gogStatus: () => call<GogStatus>("gog_status"),
+  gogLogin: () => call<boolean>("gog_login"),
+  gogLogout: () => call<void>("gog_logout"),
+  updateStoreGame: (id: string) => call<boolean>("update_store_game", { id }),
 };
 
 let readySent = false;

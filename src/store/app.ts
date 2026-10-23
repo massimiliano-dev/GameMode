@@ -9,6 +9,7 @@ import type {
   Collection,
   Controller,
   Game,
+  DirectDone,
   GameUpdate,
   LibraryUpdate,
   PowerEvent,
@@ -181,6 +182,12 @@ export const useApp = create<AppState>((set, get) => ({
     on<string>("uninstall://done", (name) => {
       set({ rescanOnReturn: false });
       get().toast(`${name} disinstallato`);
+    });
+    on<DirectDone>("direct://done", (d) => {
+      void get().refreshGameUpdates();
+      if (d.ok) get().toast(`${d.name} è installato: lo trovi in Libreria`);
+      else if (d.error) get().toast(d.error, "error");
+      else get().toast(`Download di ${d.name} annullato`);
     });
     on<string>("install://queued", () => {
       set({ rescanOnReturn: false });
@@ -392,6 +399,16 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   showGameUpdate: async (game) => {
+    if (game.store === "xbox" && get().settings?.msstoreDirect) {
+      // Through the Store's install service, without opening the Xbox app.
+      const started = await api.updateStoreGame(game.id).catch(() => null);
+      if (started) {
+        get().toast(`Aggiorno ${game.name}`);
+        void get().refreshGameUpdates();
+        return;
+      }
+      if (started === false) return get().toast(`Nessun aggiornamento per ${game.name}`);
+    }
     if (game.store !== "steam") return get().openStore(game.store, game.id);
     try {
       const what = "Apro i download di Steam.";
@@ -405,6 +422,13 @@ export const useApp = create<AppState>((set, get) => ({
 
   installFromCatalog: async (id, name) => {
     try {
+      // GOG with an account, Microsoft Store: GameMode downloads it itself.
+      if (await api.directInstallAvailable(id).catch(() => false)) {
+        get().toast(`Avvio il download di ${name}: lo segui in Scarica`);
+        await api.installCatalogItem(id);
+        void get().refreshGameUpdates();
+        return;
+      }
       if (!id.startsWith("cloud:")) {
         // Shown while GameMode is still on screen: it steps aside next.
         const what = `Apro l'installazione di ${name}.`;
@@ -421,7 +445,10 @@ export const useApp = create<AppState>((set, get) => ({
 
   uninstall: async (game, stay = false) => {
     try {
-      if (!["manual", "xbox", "mock"].includes(game.store)) {
+      if (game.store === "gog") {
+        // Silent uninstaller: only Windows' permission prompt shows up.
+        get().toast(`Disinstallo ${game.name}…`);
+      } else if (!["manual", "xbox", "mock"].includes(game.store)) {
         const what = `Apro la disinstallazione di ${game.name}.`;
         get().toast(game.store === "steam" && get().settings?.steamBigPicture ? nativeHint(what) : assistHint(get().settings, what));
         await sleep(HANDOFF_DELAY);

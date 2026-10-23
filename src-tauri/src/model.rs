@@ -340,6 +340,11 @@ pub struct Settings {
     /// In console mode the Xbox button opens GameMode: Game Bar's hold on it
     /// is switched off (and given back) by `gamebar.rs`.
     pub guide_to_gamemode: bool,
+    /// Where GameMode installs GOG games; `C:\GOG Games` when unset.
+    pub gog_install_dir: Option<PathBuf>,
+    /// Install and update Microsoft Store / Game Pass games through the
+    /// Store's install service, without opening the Xbox app.
+    pub msstore_direct: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -390,6 +395,8 @@ impl Default for Settings {
             hid_pads: true,
             gog_direct: true,
             guide_to_gamemode: true,
+            gog_install_dir: None,
+            msstore_direct: true,
         }
     }
 }
