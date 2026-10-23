@@ -22,7 +22,13 @@ export function StatusCluster() {
       {system && system.bluetooth.on && (
         <span
           className="status-item status-bt"
-          title={system.bluetooth.connected === 0 ? "Bluetooth attivo" : `Bluetooth: ${system.bluetooth.connected} dispositivi connessi`}
+          title={
+            system.bluetooth.connected === 0
+              ? "Bluetooth attivo"
+              : system.bluetooth.connected === 1
+                ? "Bluetooth: 1 dispositivo connesso"
+                : `Bluetooth: ${system.bluetooth.connected} dispositivi connessi`
+          }
         >
           <svg className="status-icon" viewBox="0 0 24 24" aria-hidden>
             <path d="M7 7l10 10-5 4V3l5 4L7 17" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />

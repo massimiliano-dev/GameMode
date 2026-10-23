@@ -571,22 +571,24 @@ function onControllers(list: Controller[], set: (partial: Partial<AppState>) => 
 /** Below this the PC battery gets a warning (once, when it crosses the line). */
 export const LOW_BATTERY = 10;
 
-/** Toast text for a status change, or null when nothing is worth saying. */
-export function systemAlert(before: SystemInfo | null, after: SystemInfo): string | null {
-  if (!before) return null;
-  if (before.network.internet && !after.network.internet) return "Connessione a internet persa";
+/** Toast texts for a status change (empty when nothing is worth saying). Each
+ *  condition is checked on its own: one debounced snapshot can carry both. */
+export function systemAlert(before: SystemInfo | null, after: SystemInfo): string[] {
+  if (!before) return [];
+  const alerts: string[] = [];
+  if (before.network.internet && !after.network.internet) alerts.push("Connessione a internet persa");
   const b = after.battery;
   const was = before.battery;
   if (b && !b.plugged && b.percent <= LOW_BATTERY && (!was || was.plugged || was.percent > LOW_BATTERY)) {
-    return `Batteria del PC al ${b.percent}%: collega l'alimentatore`;
+    alerts.push(`Batteria del PC al ${b.percent}%: collega l'alimentatore`);
   }
-  return null;
+  return alerts;
 }
 
 function onSystemStatus(info: SystemInfo, set: (partial: Partial<AppState>) => void, get: () => AppState) {
-  const alert = systemAlert(get().system, info);
+  const alerts = systemAlert(get().system, info);
   set({ system: info });
-  if (alert) get().toast(alert, "error");
+  for (const alert of alerts) get().toast(alert, "error");
 }
 
 export interface BackdropArt {
