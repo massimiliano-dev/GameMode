@@ -337,6 +337,9 @@ pub struct Settings {
     /// GOG games start from their own folder (`goggame-<id>.info`) instead
     /// of through Galaxy.
     pub gog_direct: bool,
+    /// In console mode the Xbox button opens GameMode: Game Bar's hold on it
+    /// is switched off (and given back) by `gamebar.rs`.
+    pub guide_to_gamemode: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -386,6 +389,7 @@ impl Default for Settings {
             companion_enabled: false,
             hid_pads: true,
             gog_direct: true,
+            guide_to_gamemode: true,
         }
     }
 }

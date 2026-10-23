@@ -652,7 +652,7 @@ fn boot_flag() -> std::path::PathBuf {
 /// A boot flag older than this is a restart that never happened.
 const BOOT_FLAG_MAX_AGE: i64 = 24 * 3600;
 
-/// `shutdown /r` doesn't force apps to close: one refusing to end the
+/// A restart doesn't force apps to close: one refusing to end the
 /// session cancels the restart. If this process is still alive after this
 /// long and the session isn't ending, the restart didn't happen and the
 /// flag must not outlive it.

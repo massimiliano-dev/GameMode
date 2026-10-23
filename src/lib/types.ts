@@ -105,6 +105,8 @@ export interface Settings {
   hidPads: boolean;
   /** GOG games start from their folder instead of through Galaxy. */
   gogDirect: boolean;
+  /** In console mode the Xbox button opens GameMode instead of Game Bar. */
+  guideToGamemode: boolean;
 }
 
 export interface ShellStatus {

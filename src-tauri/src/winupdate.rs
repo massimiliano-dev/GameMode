@@ -185,17 +185,8 @@ pub fn shutdown(restart: bool) -> Result<()> {
 #[cfg(windows)]
 mod imp {
     use anyhow::{Context, Result, anyhow};
-    use windows::Win32::Foundation::{CloseHandle, DECIMAL, HANDLE, LUID};
-    use windows::Win32::Security::{
-        AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED, SE_SHUTDOWN_NAME,
-        TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
-    };
+    use windows::Win32::Foundation::DECIMAL;
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
-    use windows::Win32::System::Shutdown::{
-        InitiateShutdownW, SHTDN_REASON_FLAG_PLANNED, SHTDN_REASON_MAJOR_OPERATINGSYSTEM, SHTDN_REASON_MINOR_UPGRADE,
-        SHUTDOWN_INSTALL_UPDATES, SHUTDOWN_POWEROFF, SHUTDOWN_RESTART,
-    };
-    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
     use windows::Win32::System::UpdateAgent::{
         ISystemInformation, IUpdateSession, SystemInformation, UpdateSession, orcSucceeded, orcSucceededWithErrors,
         utDriver,
@@ -263,44 +254,10 @@ mod imp {
     }
 
     pub fn shutdown(restart: bool) -> Result<()> {
-        let mode = if restart { SHUTDOWN_RESTART } else { SHUTDOWN_POWEROFF };
-        let flags = mode | SHUTDOWN_INSTALL_UPDATES;
-        let reason = SHTDN_REASON_MAJOR_OPERATINGSYSTEM | SHTDN_REASON_MINOR_UPGRADE | SHTDN_REASON_FLAG_PLANNED;
-        let code = unsafe {
-            // Without the privilege InitiateShutdown fails and shutdown.exe
-            // below still gets its turn.
-            if let Err(err) = enable_shutdown_privilege() {
-                eprintln!("windows update: cannot enable SeShutdownPrivilege: {err:#}");
-            }
-            InitiateShutdownW(None, None, 0, flags, reason)
-        };
-        if code == 0 {
-            return Ok(());
-        }
+        let Err(err) = crate::system::initiate_shutdown(restart, true) else { return Ok(()) };
         // Plan B: a plain restart still finishes what is already installed.
-        eprintln!("windows update: InitiateShutdown failed with {code}, falling back to shutdown.exe");
-        std::process::Command::new("shutdown").args([if restart { "/r" } else { "/s" }, "/t", "0"]).spawn()?;
-        Ok(())
-    }
-
-    /// The signed-in user holds SeShutdownPrivilege but it starts disabled.
-    unsafe fn enable_shutdown_privilege() -> Result<()> {
-        unsafe {
-            let mut token = HANDLE::default();
-            OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token)?;
-            let adjusted = (|| -> Result<()> {
-                let mut luid = LUID::default();
-                LookupPrivilegeValueW(None, SE_SHUTDOWN_NAME, &mut luid)?;
-                let privileges = TOKEN_PRIVILEGES {
-                    PrivilegeCount: 1,
-                    Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }],
-                };
-                AdjustTokenPrivileges(token, false, Some(&privileges), 0, None, None)?;
-                Ok(())
-            })();
-            let _ = CloseHandle(token);
-            adjusted
-        }
+        eprintln!("windows update: {err:#}, trying without installing updates");
+        crate::system::initiate_shutdown(restart, false)
     }
 }
 

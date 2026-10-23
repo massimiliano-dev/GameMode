@@ -55,6 +55,7 @@ mod capture;
 mod capture_osd;
 mod companion;
 mod steam_direct;
+mod gamebar;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -355,6 +356,7 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> 
     }
     companion::sync(&app);
     hidpad::set_enabled(settings.hid_pads);
+    gamebar::apply(&state.data_dir, gamebar::wanted(shell::status().enabled, settings.guide_to_gamemode));
     Ok(settings)
 }
 
@@ -561,8 +563,11 @@ fn get_console_mode() -> shell::ShellStatus {
 }
 
 #[tauri::command]
-fn set_console_mode(enabled: bool) -> CmdResult<shell::ShellStatus> {
-    shell::set_enabled(enabled).map_err(|e| format!("{e:#}"))
+fn set_console_mode(state: State<AppState>, enabled: bool) -> CmdResult<shell::ShellStatus> {
+    let status = shell::set_enabled(enabled).map_err(|e| format!("{e:#}"))?;
+    let setting = state.db.lock().settings.guide_to_gamemode;
+    gamebar::apply(&state.data_dir, gamebar::wanted(status.enabled, setting));
+    Ok(status)
 }
 
 #[tauri::command]
@@ -1148,6 +1153,13 @@ pub fn run() {
                 safe,
                 shell::restarted_for_update()
             );
+            // In console mode the Xbox button opens GameMode, not Game Bar
+            // (given back if console mode went off meanwhile).
+            {
+                let state = app.state::<AppState>();
+                let setting = state.db.lock().settings.guide_to_gamemode;
+                gamebar::apply(&state.data_dir, gamebar::wanted(shell::status().enabled, setting));
+            }
             if console {
                 // GameMode is the shell: do Explorer's sign-in chores.
                 shell::spawn_watchdog(&live_file);
