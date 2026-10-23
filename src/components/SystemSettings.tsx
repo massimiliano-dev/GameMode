@@ -62,7 +62,7 @@ export function SystemSettings({ settings }: { settings: Settings }) {
   const sleepActions: SheetAction[] = SLEEP_CHOICES.map(({ minutes, label }) => ({
     label,
     hint: minutes === settings.autoSleepMinutes ? "Scelta attuale" : undefined,
-    onSelect: () => void saveSettings({ ...settings, autoSleepMinutes: minutes }),
+    onSelect: () => void saveSettings({ ...settings, autoSleepMinutes: minutes }).catch((e) => toast(String(e), "error")),
   }));
 
   return (

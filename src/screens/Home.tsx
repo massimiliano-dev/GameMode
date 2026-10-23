@@ -1,10 +1,11 @@
 import { AnimatePresence } from "motion/react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ActionSheet } from "../components/ActionSheet";
 import { Cover, GameCard } from "../components/GameCard";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
+import { ensureFocus, focusElement } from "../input/focus";
 import { artUrl } from "../lib/api";
 import { formatLastPlayed, formatPlaytime, STORE_LABEL, STORES } from "../lib/format";
 import type { Collection, Game, SessionState, Store } from "../lib/types";
@@ -73,21 +74,49 @@ export function Home({ focusId }: { focusId?: string }) {
   const [sheet, setSheet] = useState<Game | null>(null);
   // The focus sits on the "In pausa" row, where A opens the options.
   const [onPausedRow, setOnPausedRow] = useState(false);
+  // The focus sits on the "Bentornato" card: X resumes the game left open.
+  const [onWakeRow, setOnWakeRow] = useState(false);
+  const wakeResume = useRef<HTMLButtonElement>(null);
+  const wokeId = wokeGame?.id;
 
   useScreenFocus(focusId, rows.length > 0 || paused.length > 0);
   useHints(
-    [
-      { button: "A", label: onPausedRow ? "Opzioni" : "Dettagli" },
-      { button: "X", label: "Gioca" },
-      { button: "Y", label: "Preferito" },
-    ],
-    [onPausedRow],
+    onWakeRow
+      ? [
+          { button: "A", label: "Seleziona" },
+          { button: "X", label: "Riprendi" },
+        ]
+      : [
+          { button: "A", label: onPausedRow ? "Opzioni" : "Dettagli" },
+          { button: "X", label: "Gioca" },
+          { button: "Y", label: "Preferito" },
+        ],
+    [onPausedRow, onWakeRow],
   );
+
+  // The card comes and goes while Home is up (a wake, the game ending):
+  // the focus goes to "Riprendi la partita", and back to the rows after.
+  const shownWake = useRef(wokeId);
+  useEffect(() => {
+    // On mount the screen's own focus (useScreenFocus) stands.
+    if (shownWake.current === wokeId) return;
+    shownWake.current = wokeId;
+    requestAnimationFrame(() => {
+      if (wokeId && wakeResume.current?.isConnected) focusElement(wakeResume.current);
+      else ensureFocus();
+    });
+  }, [wokeId]);
+  const onFocusWake = useCallback(() => {
+    if (wokeId) setBackdrop(wokeId);
+    setOnWakeRow(true);
+    setOnPausedRow(false);
+  }, [wokeId, setBackdrop]);
 
   const onFocus = useCallback(
     (g: Game) => {
       setBackdrop(g.id);
       setOnPausedRow(false);
+      setOnWakeRow(false);
     },
     [setBackdrop],
   );
@@ -95,6 +124,7 @@ export function Home({ focusId }: { focusId?: string }) {
     (g: Game) => {
       setBackdrop(g.id);
       setOnPausedRow(true);
+      setOnWakeRow(false);
     },
     [setBackdrop],
   );
@@ -104,6 +134,14 @@ export function Home({ focusId }: { focusId?: string }) {
 
   useAction((action, repeat) => {
     if (repeat || !featured || sheet) return;
+    if (onWakeRow && wokeGame) {
+      // The buttons speak for the game left open, not for the last card.
+      if (action === "x") {
+        void resumeAfterWake();
+        return true;
+      }
+      if (action === "y") return true;
+    }
     if (action === "x") {
       void launch(featured.id);
       return true;
@@ -132,10 +170,18 @@ export function Home({ focusId }: { focusId?: string }) {
                 <span className="wake-text">La partita è rimasta aperta durante la sospensione</span>
               </div>
               <div className="wake-actions">
-                <button type="button" className="btn btn-primary" data-nav data-nav-autofocus onClick={() => void resumeAfterWake()}>
+                <button
+                  ref={wakeResume}
+                  type="button"
+                  className="btn btn-primary"
+                  data-nav
+                  data-nav-autofocus
+                  onFocus={onFocusWake}
+                  onClick={() => void resumeAfterWake()}
+                >
                   Riprendi la partita
                 </button>
-                <button type="button" className="btn" data-nav onClick={() => useApp.setState({ wokeAt: null })}>
+                <button type="button" className="btn" data-nav onFocus={onFocusWake} onClick={() => useApp.setState({ wokeAt: null })}>
                   Resta qui
                 </button>
               </div>

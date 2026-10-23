@@ -43,7 +43,10 @@ pub enum PowerEvent {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Signal {
     Suspend,
+    /// Back from sleep, maybe unattended (a wake timer, maintenance).
     Resume,
+    /// Back from sleep because of the user (power button, keyboard, mouse).
+    ResumeByUser,
     Lock,
     Unlock,
     /// The console display went on (true) or off.
@@ -69,14 +72,22 @@ static HAD_SCREEN: AtomicBool = AtomicBool::new(false);
 static WOKE_LOCKED: AtomicBool = AtomicBool::new(false);
 /// Coalesces bursts of display-change messages.
 static DISPLAY_CHANGES: AtomicU64 = AtomicU64::new(0);
+/// Someone is in front of the PC: false from a suspend until the wake turns
+/// out to be the user's, so an unattended wake (Windows Update, a wake
+/// timer) is neither held awake nor answered with GameMode on screen.
+static PRESENT: AtomicBool = AtomicBool::new(true);
 
 /// How long after a wake or an unlock before GameMode comes back, and the
 /// later retries (TVs re-enumerate over HDMI slowly, DWM takes a moment).
 const COME_BACK_DELAYS: [u64; 3] = [2, 4, 6];
 /// Display changes settle for this long before TV mode is checked.
 const DISPLAY_SETTLE: Duration = Duration::from_millis(1500);
-/// How often the idle timer looks.
+/// How often the idle timer looks, at most; once the warning is up it
+/// looks every second, so the countdown and the cancel are on time.
 const IDLE_POLL: Duration = Duration::from_secs(30);
+const WARNED_POLL: Duration = Duration::from_secs(1);
+/// How often a wake waits for the user to show up.
+const PRESENCE_POLL: Duration = Duration::from_secs(1);
 /// Warning before the automatic sleep, in seconds.
 pub const WARN_BEFORE: u64 = 60;
 
@@ -106,6 +117,24 @@ pub fn wakes() -> u64 {
     WAKES.load(Ordering::SeqCst)
 }
 
+/// Someone is using the PC: never been to sleep, or since the last wake the
+/// user woke it, unlocked it or touched keyboard, mouse or pad.
+pub fn user_present() -> bool {
+    if PRESENT.load(Ordering::SeqCst) {
+        return true;
+    }
+    if suspended() {
+        return false;
+    }
+    let woke_at = WOKE_AT.load(Ordering::SeqCst);
+    let since_wake = (now() - woke_at).max(0) as u64;
+    let present = crate::gamepad::last_input() > woke_at || imp::system_idle_secs().is_some_and(|idle| idle + 2 < since_wake);
+    if present {
+        PRESENT.store(true, Ordering::SeqCst);
+    }
+    present
+}
+
 fn emit(event: PowerEvent) {
     if let Some(app) = APP.get() {
         let _ = app.emit("power://state", event);
@@ -118,6 +147,11 @@ pub fn signal(signal: Signal) {
     match signal {
         Signal::Suspend => on_suspend(app),
         Signal::Resume => on_resume(app),
+        Signal::ResumeByUser => {
+            // Usually right after the automatic one; alone on some systems.
+            on_resume(app);
+            PRESENT.store(true, Ordering::SeqCst);
+        }
         Signal::Lock => on_lock(app),
         Signal::Unlock => on_unlock(app),
         Signal::Display(on) => {
@@ -134,6 +168,7 @@ fn on_suspend(app: &AppHandle) {
         return;
     }
     SLEPT_AT.store(now(), Ordering::SeqCst);
+    PRESENT.store(false, Ordering::SeqCst);
     HAD_SCREEN.store(window::is_foreground(app) || overlay::is_open(), Ordering::SeqCst);
     overlay::hide(app);
     // The previous power plan comes back; the game is paused by the sleep anyway.
@@ -155,8 +190,9 @@ fn on_resume(app: &AppHandle) {
     launcher::after_sleep(app, slept);
     let state = app.state::<AppState>();
     let performance_mode = state.db.lock().settings.performance_mode;
-    if performance_mode && state.launcher.current().is_some() {
-        // `end` at suspend restored the old plan; the game is still there.
+    if performance_mode && !state.launcher.is_empty() {
+        // `end` at suspend restored the old plan; the games are still there
+        // (frozen ones too: resuming them doesn't set the plan again).
         performance::begin(&[]);
     }
     emit(PowerEvent::Resumed { slept });
@@ -164,7 +200,7 @@ fn on_resume(app: &AppHandle) {
         WOKE_LOCKED.store(true, Ordering::SeqCst);
         return;
     }
-    come_back(app, HAD_SCREEN.load(Ordering::SeqCst));
+    come_back(app, HAD_SCREEN.load(Ordering::SeqCst), true);
 }
 
 fn on_lock(app: &AppHandle) {
@@ -179,12 +215,14 @@ fn on_unlock(app: &AppHandle) {
     if !LOCKED.swap(false, Ordering::SeqCst) {
         return;
     }
+    // Only someone at the keyboard (or the pad) unlocks.
+    PRESENT.store(true, Ordering::SeqCst);
     emit(PowerEvent::Unlocked);
     let after_wake = WOKE_LOCKED.swap(false, Ordering::SeqCst);
     // A plain Win+L on the desktop: GameMode stays where it was, unless it
     // is the shell (nothing else draws the screen) or the lock covered a wake.
     if shell::status().active || after_wake {
-        come_back(app, after_wake && HAD_SCREEN.load(Ordering::SeqCst));
+        come_back(app, after_wake && HAD_SCREEN.load(Ordering::SeqCst), after_wake);
     }
 }
 
@@ -202,13 +240,27 @@ fn should_come_back(app: &AppHandle, had_screen: bool) -> bool {
 }
 
 /// Brings GameMode back on screen with TV mode and audio, retrying while
-/// displays and DWM settle.
-fn come_back(app: &AppHandle, had_screen: bool) {
+/// displays and DWM settle. After a wake (`wake`) it first waits for the
+/// user: an unattended wake goes back to sleep without GameMode moving.
+fn come_back(app: &AppHandle, had_screen: bool, wake: bool) {
     let app = app.clone();
+    let wakes_now = wakes();
     std::thread::spawn(move || {
+        while wake && !user_present() {
+            std::thread::sleep(PRESENCE_POLL);
+            // Asleep again, or a newer wake took over.
+            if suspended() || session_ending() || wakes() != wakes_now {
+                return;
+            }
+        }
         for (i, delay) in COME_BACK_DELAYS.iter().enumerate() {
             std::thread::sleep(Duration::from_secs(*delay));
             if !should_come_back(&app, had_screen) {
+                // The lock screen showed up after the wake (sign-in on wake):
+                // the unlock brings GameMode back instead.
+                if wake && locked() && !suspended() && !session_ending() {
+                    WOKE_LOCKED.store(true, Ordering::SeqCst);
+                }
                 return;
             }
             // The first pass always comes back; later ones only fix what is
@@ -237,15 +289,17 @@ fn on_display_change(app: &AppHandle) {
         if DISPLAY_CHANGES.load(Ordering::SeqCst) != generation || session_ending() || suspended() {
             return;
         }
+        // The overlay only opens over a game: it follows the screen,
+        // whatever the game did to it.
+        if overlay::is_open() {
+            overlay::fit_screen(&app);
+        }
         // Games change the display mode themselves: never fight them.
         if app.state::<AppState>().launcher.current().is_some() {
             return;
         }
         if tv_mode_off(&app) {
             window::apply_tv(&app);
-        }
-        if overlay::is_open() {
-            overlay::fit_screen(&app);
         }
     });
 }
@@ -321,16 +375,35 @@ pub fn idle_secs(system_idle: Option<u64>, pad_last: i64, woke_at: i64, at: i64)
     [system_idle, since(pad_last), since(woke_at)].into_iter().flatten().min().unwrap_or(0)
 }
 
+/// How long the idle timer waits before looking again: every second once
+/// the warning is up, otherwise until the warning is due (at most `IDLE_POLL`).
+pub fn next_poll(idle: u64, threshold: u64, warned: bool) -> Duration {
+    if warned {
+        return WARNED_POLL;
+    }
+    let until_warning = threshold.saturating_sub(WARN_BEFORE).saturating_sub(idle);
+    Duration::from_secs(until_warning.clamp(1, IDLE_POLL.as_secs()))
+}
+
+/// Whether the idle timer runs now: on, nobody asleep or locked out, no
+/// game up, nothing else asking Windows to stay awake (a film, a download,
+/// Windows Update) and GameMode is what's on screen, so the warning is seen.
+fn timer_applies(app: &AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    !(suspended() || locked() || session_ending() || state.launcher.current().is_some())
+        && (shell::status().active || window::is_foreground(app))
+        && !imp::others_keep_awake()
+}
+
 fn idle_loop(app: &AppHandle) {
     let mut warned = false;
+    let mut wait = IDLE_POLL;
     loop {
-        std::thread::sleep(IDLE_POLL);
-        let state = app.state::<AppState>();
-        let minutes = state.db.lock().settings.auto_sleep_minutes;
+        std::thread::sleep(wait);
+        wait = IDLE_POLL;
+        let minutes = app.state::<AppState>().db.lock().settings.auto_sleep_minutes;
         let threshold = minutes.filter(|m| *m > 0).map(|m| u64::from(m) * 60);
-        // Off, asleep, locked, signing out, or a game is up: no timer.
-        let busy = suspended() || locked() || session_ending() || state.launcher.current().is_some();
-        let Some(threshold) = threshold.filter(|_| !busy) else {
+        let Some(threshold) = threshold.filter(|_| timer_applies(app)) else {
             if std::mem::take(&mut warned) {
                 emit(PowerEvent::SleepCancelled);
             }
@@ -353,8 +426,10 @@ fn idle_loop(app: &AppHandle) {
                 if let Err(err) = system::power(system::PowerAction::Sleep) {
                     eprintln!("auto sleep: {err:#}");
                 }
+                continue;
             }
         }
+        wait = next_poll(idle, threshold, warned);
     }
 }
 
@@ -364,8 +439,9 @@ mod imp {
     use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Power::{
-        RegisterPowerSettingNotification, RegisterSuspendResumeNotification, SetThreadExecutionState,
-        ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, POWERBROADCAST_SETTING,
+        CallNtPowerInformation, RegisterPowerSettingNotification, RegisterSuspendResumeNotification,
+        SetThreadExecutionState, SystemExecutionState, ES_AWAYMODE_REQUIRED, ES_CONTINUOUS, ES_DISPLAY_REQUIRED,
+        ES_SYSTEM_REQUIRED, EXECUTION_STATE, POWERBROADCAST_SETTING,
     };
     use windows::Win32::System::RemoteDesktop::{WTSRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION};
     use windows::Win32::System::SystemInformation::GetTickCount;
@@ -373,7 +449,7 @@ mod imp {
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW, TranslateMessage,
-        DEVICE_NOTIFY_WINDOW_HANDLE, MSG, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PBT_APMSUSPEND,
+        DEVICE_NOTIFY_WINDOW_HANDLE, ENDSESSION_CLOSEAPP, MSG, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PBT_APMSUSPEND,
         PBT_POWERSETTINGCHANGE, WINDOW_EX_STYLE, WM_DISPLAYCHANGE, WM_ENDSESSION, WM_POWERBROADCAST,
         WM_QUERYENDSESSION, WM_WTSSESSION_CHANGE, WNDCLASSW, WS_OVERLAPPED, WTS_SESSION_LOCK, WTS_SESSION_UNLOCK,
     };
@@ -441,7 +517,8 @@ mod imp {
             WM_POWERBROADCAST => {
                 match wparam.0 as u32 {
                     PBT_APMSUSPEND => signal(Signal::Suspend),
-                    PBT_APMRESUMEAUTOMATIC | PBT_APMRESUMESUSPEND => signal(Signal::Resume),
+                    PBT_APMRESUMEAUTOMATIC => signal(Signal::Resume),
+                    PBT_APMRESUMESUSPEND => signal(Signal::ResumeByUser),
                     PBT_POWERSETTINGCHANGE => {
                         let setting = lparam.0 as *const POWERBROADCAST_SETTING;
                         if !setting.is_null() {
@@ -470,7 +547,9 @@ mod imp {
             WM_QUERYENDSESSION => LRESULT(1),
             WM_ENDSESSION => {
                 // Synchronous on purpose: the process is killed soon after.
-                if wparam.0 != 0 {
+                // ENDSESSION_CLOSEAPP is an installer's Restart Manager asking
+                // apps to close, not the session ending: GameMode stays as is.
+                if wparam.0 != 0 && (lparam.0 as u32 & ENDSESSION_CLOSEAPP) == 0 {
                     signal(Signal::SessionEnding);
                 }
                 LRESULT(0)
@@ -484,6 +563,27 @@ mod imp {
         unsafe {
             SetThreadExecutionState(flags);
         }
+    }
+
+    /// Some other program (a video player, a download, Windows Update)
+    /// asks Windows to stay awake. GameMode's own request only exists while
+    /// a game is up, when the idle timer isn't running anyway.
+    pub fn others_keep_awake() -> bool {
+        let mut state = EXECUTION_STATE(0);
+        let status = unsafe {
+            CallNtPowerInformation(
+                SystemExecutionState,
+                None,
+                0,
+                Some(&mut state as *mut EXECUTION_STATE as *mut core::ffi::c_void),
+                std::mem::size_of::<EXECUTION_STATE>() as u32,
+            )
+        };
+        // Unknown: better a PC left on than a film cut short.
+        if status.is_err() {
+            return true;
+        }
+        state.0 & (ES_SYSTEM_REQUIRED.0 | ES_DISPLAY_REQUIRED.0 | ES_AWAYMODE_REQUIRED.0) != 0
     }
 
     /// Seconds since the last keyboard or mouse input, as Windows counts it.
@@ -507,6 +607,10 @@ mod imp {
 
     pub fn system_idle_secs() -> Option<u64> {
         None
+    }
+
+    pub fn others_keep_awake() -> bool {
+        false
     }
 }
 
@@ -536,5 +640,17 @@ mod tests {
         assert_eq!(idle_secs(Some(3600), 0, 1_000_000 - 10, 1_000_000), 10);
         // Nothing known: never sleep on a guess.
         assert_eq!(idle_secs(None, 0, 0, 1_000_000), 0);
+    }
+
+    #[test]
+    fn the_countdown_matches_the_real_sleep() {
+        let threshold = 30 * 60;
+        // Far away: the usual pace.
+        assert_eq!(next_poll(0, threshold, false), IDLE_POLL);
+        // Close to the warning: wake up right when it's due.
+        assert_eq!(next_poll(threshold - 70, threshold, false), Duration::from_secs(10));
+        assert_eq!(next_poll(threshold - 60, threshold, false), Duration::from_secs(1));
+        // Warning up: every second, so the sleep lands at 0 and a touch cancels at once.
+        assert_eq!(next_poll(threshold - 30, threshold, true), WARNED_POLL);
     }
 }

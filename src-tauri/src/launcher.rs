@@ -203,7 +203,7 @@ impl Launcher {
         self.sessions.lock().unwrap().retain(|a| a.generation != generation);
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.sessions.lock().unwrap().is_empty()
     }
 
@@ -464,14 +464,16 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
     let mut relaunch_at: Option<Instant> = None;
     let mut dialogs = Dialogs::new();
     // Windows doesn't count controller input: this thread keeps the PC up
-    // while the game is starting or running (not while frozen).
+    // while the game is starting or running (not while frozen), and not
+    // after an unattended wake until the user shows up, so Windows can put
+    // a PC woken by a timer back to sleep.
     let mut awake = lifecycle::Awake::default();
     let mut wakes = lifecycle::wakes();
 
     loop {
         // A newer launch took over, or the session was closed.
         let Some(phase) = launcher.phase(generation) else { return };
-        awake.set(phase != Phase::Suspended);
+        awake.set(phase != Phase::Suspended && lifecycle::user_present());
         // Back from sleep: clocks jumped, the game (if still there) gets a
         // fresh grace period instead of being written off at once.
         let woke = lifecycle::wakes();

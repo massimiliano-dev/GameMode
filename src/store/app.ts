@@ -117,6 +117,8 @@ interface AppState {
 }
 
 let toastId = 0;
+/** The window had the focus after the wake: the "Bentornato" card was seen. */
+let wokeSeen = false;
 /** Time to read the controller hint before a store window takes over. */
 const HANDOFF_DELAY = 2200;
 /** How often to ask the stores about game updates. */
@@ -171,6 +173,14 @@ export const useApp = create<AppState>((set, get) => ({
       get().toast("Download avviato in Steam: lo trovi in Libreria quando ha finito");
     });
     on<PowerEvent>("power://state", (e) => onPowerEvent(e, set, get));
+    // The "Bentornato" card is done once the user has seen it and left
+    // GameMode (back to the game from anywhere, Alt+Tab included).
+    window.addEventListener("focus", () => {
+      if (get().wokeAt) wokeSeen = true;
+    });
+    window.addEventListener("blur", () => {
+      if (get().wokeAt && wokeSeen) set({ wokeAt: null });
+    });
     void api.getControllers().then((controllers) => set({ controllers })).catch(() => {});
 
     const [games, settings, session, suspended, profiles, collections, shell] = await Promise.all([
@@ -485,6 +495,7 @@ function onPowerEvent(e: PowerEvent, set: (partial: Partial<AppState>) => void, 
     case "resumed":
       // The game may have died in its sleep: the session is read again.
       void Promise.all([api.getSession(), api.getSuspended().catch(() => get().suspended)]).then(([session, suspended]) => {
+        wokeSeen = document.hasFocus();
         set({ session, suspended, wokeAt: session ? Date.now() : null, sleepSoon: null });
         get().toast(session ? "Bentornato: la partita ti aspetta" : "Bentornato");
       });

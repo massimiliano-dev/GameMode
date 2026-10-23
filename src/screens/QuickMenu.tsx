@@ -243,8 +243,11 @@ export function QuickMenu() {
               label,
               hint: minutes === settings.autoSleepMinutes ? "Scelta attuale" : undefined,
               onSelect: () => {
-                void saveSettings({ ...settings, autoSleepMinutes: minutes });
-                toast(minutes ? `Il PC si sospende dopo ${label.replace("Dopo ", "")} senza attività` : "Sospensione automatica disattivata");
+                saveSettings({ ...settings, autoSleepMinutes: minutes })
+                  .then(() =>
+                    toast(minutes ? `Il PC si sospende dopo ${label.replace("Dopo ", "")} senza attività` : "Sospensione automatica disattivata"),
+                  )
+                  .catch((e) => toast(String(e), "error"));
               },
             }))}
           />
