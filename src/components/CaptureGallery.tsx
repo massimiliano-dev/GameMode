@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { Priority, useAction } from "../input/dispatcher";
-import { ensureFocus } from "../input/focus";
+import { ensureFocus, focusElement } from "../input/focus";
 import { api, artUrl, on } from "../lib/api";
 import { formatLastPlayed } from "../lib/format";
 import type { Capture, Game } from "../lib/types";
@@ -74,8 +74,9 @@ export function CaptureGallery({ game }: { game: Game }) {
   );
 }
 
-/** Home row with the latest screenshots across all games. */
-export function CaptureRow() {
+/** Home row with the latest screenshots across all games. `onFocus` tells
+ * Home the focus is here, so its game actions (X, Y) stand down. */
+export function CaptureRow({ onFocus }: { onFocus?: () => void }) {
   const { captures, remove } = useCaptures();
   const setBackdrop = useApp((s) => s.setBackdrop);
   const [viewing, setViewing] = useState<number | null>(null);
@@ -98,7 +99,10 @@ export function CaptureRow() {
             data-nav
             data-nav-id={`captures:${c.path}`}
             aria-label={`${c.gameName}, ${formatTaken(c.takenAt)}`}
-            onFocus={() => setBackdrop(c.gameId)}
+            onFocus={() => {
+              setBackdrop(c.gameId);
+              onFocus?.();
+            }}
             onClick={() => setViewing(i)}
           >
             <img src={artUrl(c.path)} alt="" loading="lazy" decoding="async" draggable={false} />
@@ -131,11 +135,20 @@ export function CaptureViewer({ captures, index: start, onClose: close, onDelete
   const count = captures.length;
   const index = Math.min(i, count - 1);
   const current = captures[index];
+  // The thumbnail that opened the viewer. The delete dialog moves the focus
+  // away, so it has to be remembered rather than left in place.
+  const opener = useRef(document.activeElement as HTMLElement | null);
 
-  // Back on the thumbnail that opened the viewer.
+  // Back on that thumbnail; if it was deleted, on its row or grid.
   const onClose = () => {
+    const el = opener.current;
+    const group = el?.closest<HTMLElement>("[data-nav-group]");
     close();
-    requestAnimationFrame(ensureFocus);
+    requestAnimationFrame(() => {
+      const target = el?.isConnected ? el : group?.isConnected ? group.querySelector<HTMLElement>("[data-nav]") : null;
+      if (target) focusElement(target);
+      else ensureFocus();
+    });
   };
 
   const step = (dir: number) => {
@@ -182,7 +195,8 @@ export function CaptureViewer({ captures, index: start, onClose: close, onDelete
 
   if (!current) return null;
 
-  // In the body: scrolling rows (with their fade mask) must not clip it.
+  // Outside the scrolling rows (their fade mask would clip it) but inside
+  // the app, so the toasts still stack above it.
   return createPortal(
     <motion.div
       className="capture-viewer"
@@ -246,6 +260,6 @@ export function CaptureViewer({ captures, index: start, onClose: close, onDelete
         )}
       </AnimatePresence>
     </motion.div>,
-    document.body,
+    document.querySelector(".app") ?? document.body,
   );
 }

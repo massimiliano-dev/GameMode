@@ -2347,13 +2347,14 @@ html.is-osd body {
 .osd-root {
   position: fixed;
   inset: 0;
-  display: flex;
-  align-items: flex-end;
-  justify-content: flex-end;
+  display: grid;
+  align-content: end;
   padding: 0.4rem;
 }
 
+/* One cell for all cards: a new one fades in over the one leaving. */
 .osd-card {
+  grid-area: 1 / 1;
   display: flex;
   align-items: center;
   gap: 0.9rem;

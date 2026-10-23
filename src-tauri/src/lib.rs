@@ -722,9 +722,10 @@ async fn open_store(app: AppHandle, store: model::Store, game_id: Option<String>
     blocking(move || storefront::open(&handle, store, game.as_ref())).await
 }
 
-/// A screenshot of the running game (from the overlay or Settings).
+/// A screenshot of the running game, from the overlay. `None`: it failed and
+/// the in-game card already says why.
 #[tauri::command]
-async fn take_screenshot(app: AppHandle) -> CmdResult<capture::Capture> {
+async fn take_screenshot(app: AppHandle) -> CmdResult<Option<capture::Capture>> {
     let handle = app.clone();
     blocking(move || capture::take(&handle)).await
 }

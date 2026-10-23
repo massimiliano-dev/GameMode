@@ -4,6 +4,10 @@ import { useEffect, useState } from "react";
 import { api, artUrl, on } from "../lib/api";
 import type { OsdNotice } from "../lib/types";
 
+/** Just under the backend's SHOW_FOR (osd.rs): the card fades out before the
+ * window hides, and the next one starts from an empty window. */
+const SHOW_FOR = 2600;
+
 /** Runs in the small non-focusable window that pops over the game after a
  * screenshot. The backend positions, shows and hides the window; this only
  * draws the card. */
@@ -18,6 +22,12 @@ export function OsdApp() {
       .catch(() => {});
     return on<OsdNotice>("osd://show", (n) => setNotice({ ...n, at: Date.now() }));
   }, []);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), SHOW_FOR);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   return (
     <div className="osd-root">

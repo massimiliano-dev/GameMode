@@ -128,7 +128,9 @@ export function OverlayApp() {
             Torna al gioco
           </QmButton>
           {session?.phase === "running" && (
-            <QmButton onClick={() => void api.takeScreenshot().catch(() => {})}>Scatta una schermata</QmButton>
+            <QmButton onClick={() => void api.takeScreenshot().catch((e) => toast(String(e), "error"))}>
+              Scatta una schermata
+            </QmButton>
           )}
           {wand && game && (
             <>

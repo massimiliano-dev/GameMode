@@ -71,21 +71,26 @@ export function Home({ focusId }: { focusId?: string }) {
   const [sheet, setSheet] = useState<Game | null>(null);
   // The focus sits on the "In pausa" row, where A opens the options.
   const [onPausedRow, setOnPausedRow] = useState(false);
+  // The focus sits on "Le tue catture": A opens the picture, X/Y do nothing.
+  const [onCaptureRow, setOnCaptureRow] = useState(false);
 
   useScreenFocus(focusId, rows.length > 0 || paused.length > 0);
   useHints(
-    [
-      { button: "A", label: onPausedRow ? "Opzioni" : "Dettagli" },
-      { button: "X", label: "Gioca" },
-      { button: "Y", label: "Preferito" },
-    ],
-    [onPausedRow],
+    onCaptureRow
+      ? [{ button: "A", label: "Visualizza" }]
+      : [
+          { button: "A", label: onPausedRow ? "Opzioni" : "Dettagli" },
+          { button: "X", label: "Gioca" },
+          { button: "Y", label: "Preferito" },
+        ],
+    [onPausedRow, onCaptureRow],
   );
 
   const onFocus = useCallback(
     (g: Game) => {
       setBackdrop(g.id);
       setOnPausedRow(false);
+      setOnCaptureRow(false);
     },
     [setBackdrop],
   );
@@ -93,15 +98,20 @@ export function Home({ focusId }: { focusId?: string }) {
     (g: Game) => {
       setBackdrop(g.id);
       setOnPausedRow(true);
+      setOnCaptureRow(false);
     },
     [setBackdrop],
   );
+  const onFocusCapture = useCallback(() => {
+    setOnPausedRow(false);
+    setOnCaptureRow(true);
+  }, []);
   const onSelect = useCallback((g: Game) => open({ name: "detail", gameId: g.id }), [open]);
   const onSelectPaused = useCallback((g: Game) => setSheet(g), []);
   const sheetKnown = !!sheet && games.some((g) => g.id === sheet.id);
 
   useAction((action, repeat) => {
-    if (repeat || !featured || sheet) return;
+    if (repeat || !featured || sheet || onCaptureRow) return;
     if (action === "x") {
       void launch(featured.id);
       return true;
@@ -161,7 +171,7 @@ export function Home({ focusId }: { focusId?: string }) {
             </div>
           </section>
         ))}
-        <CaptureRow />
+        <CaptureRow onFocus={onFocusCapture} />
       </div>
       <AnimatePresence>
         {sheet && (

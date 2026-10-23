@@ -78,29 +78,47 @@ pub fn init(app: &AppHandle) {
 
 /// Takes a screenshot of the running game and tells the OSD and the
 /// launcher about it. Blocking: call it off the main thread.
-pub fn take(app: &AppHandle) -> Result<Capture> {
+///
+/// `Ok(None)` means the shot failed after GameMode's windows had already
+/// left the screen: the failure is on the OSD, the only thing still in
+/// view. `Err` is a failure before that (already busy, no game), for the
+/// caller to show where the request came from.
+pub fn take(app: &AppHandle) -> Result<Option<Capture>> {
     if BUSY.swap(true, Ordering::SeqCst) {
         bail!("Cattura già in corso");
     }
-    let out = take_inner(app);
+    let out = running(app).map(|game| match shoot(app, game) {
+        Ok(capture) => Some(capture),
+        Err(err) => {
+            eprintln!("screenshot failed: {err:#}");
+            osd::show_error(app, &format!("{err:#}"));
+            None
+        }
+    });
     BUSY.store(false, Ordering::SeqCst);
     out
 }
 
-/// `take` on its own thread; failures show up on the OSD.
+/// `take` on its own thread, for the controller combo. Early failures stay
+/// silent: "already busy" while a slow shot is still grabbing the screen
+/// would otherwise end up in that very picture.
 pub fn take_async(app: AppHandle) {
     std::thread::spawn(move || {
         if let Err(err) = take(&app) {
-            eprintln!("screenshot failed: {err:#}");
-            osd::show_error(&app, &format!("{err:#}"));
+            eprintln!("screenshot not taken: {err:#}");
         }
     });
 }
 
-fn take_inner(app: &AppHandle) -> Result<Capture> {
+/// The game being played: its id, name and processes.
+fn running(app: &AppHandle) -> Result<(String, String, Vec<u32>)> {
     let state = app.state::<AppState>();
     let session = state.launcher.current().filter(|s| s.phase == Phase::Running).context("Nessun gioco in corso")?;
-    let pids = state.launcher.running_pids();
+    Ok((session.game_id, session.game_name, state.launcher.running_pids()))
+}
+
+fn shoot(app: &AppHandle, (game_id, game_name, pids): (String, String, Vec<u32>)) -> Result<Capture> {
+    let state = app.state::<AppState>();
     let hwnd = window::game_window(&pids);
     // GameMode's own windows must not be in the picture.
     osd::hide(app);
@@ -111,12 +129,12 @@ fn take_inner(app: &AppHandle) -> Result<Capture> {
     }
     let frame = imp::grab(hwnd).context("Cattura dello schermo non riuscita")?;
     let root = root(&state.data_dir);
-    let dir = folder_for(&root, &session.game_id, &session.game_name)?;
+    let dir = folder_for(&root, &game_id, &game_name)?;
     let taken_at = now();
     let path = free_path(&dir, &stamp(taken_at));
     write_png(&path, &frame).with_context(|| format!("Salvataggio in {} non riuscito", path.display()))?;
     imp::shutter();
-    let capture = Capture { game_id: session.game_id, game_name: session.game_name, path, taken_at };
+    let capture = Capture { game_id, game_name, path, taken_at };
     let _ = app.emit("capture://saved", &capture);
     osd::show_saved(app, &capture, hwnd);
     Ok(capture)

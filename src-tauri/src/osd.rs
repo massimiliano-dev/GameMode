@@ -60,10 +60,7 @@ fn show(app: &AppHandle, notice: Notice, game_window: Option<isize>) {
         let Some(w) = window(app).or_else(|| imp::create(app)) else { return };
         imp::place(&w, game_window);
         let _ = app.emit_to(LABEL, "osd://show", &notice);
-        let _ = w.show();
-        if let Ok(h) = w.hwnd() {
-            crate::window::raise_topmost_raw(h.0 as isize);
-        }
+        imp::show(&w);
         let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
         let app = app.clone();
         std::thread::spawn(move || {
@@ -83,6 +80,9 @@ pub fn hide(app: &AppHandle) {
     GENERATION.fetch_add(1, Ordering::SeqCst);
     *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     if let Some(w) = window(app) {
+        #[cfg(windows)]
+        imp::hide(&w);
+        #[cfg(not(windows))]
         let _ = w.hide();
     }
 }
@@ -90,6 +90,7 @@ pub fn hide(app: &AppHandle) {
 #[cfg(windows)]
 mod imp {
     use tauri::{AppHandle, LogicalSize, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+    use windows::Win32::Foundation::HWND;
 
     use super::{HEIGHT, LABEL, MARGIN, WIDTH};
     use crate::capture::imp::{monitor_of, monitor_rect};
@@ -117,6 +118,29 @@ mod imp {
             Err(err) => {
                 eprintln!("osd window: {err}");
                 None
+            }
+        }
+    }
+
+    /// Shown without activation. Not `w.show()`: tao clears the "don't
+    /// focus" marker once the window exists and then shows with `SW_SHOW`,
+    /// which would take the foreground from the game.
+    pub fn show(w: &WebviewWindow) {
+        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+        let Ok(h) = w.hwnd() else { return };
+        unsafe {
+            let _ = ShowWindow(HWND(h.0), SW_SHOWNOACTIVATE);
+        }
+        crate::window::raise_topmost_raw(h.0 as isize);
+    }
+
+    /// The counterpart of `show`: tao never saw the window as visible, so
+    /// its own `hide()` would do nothing.
+    pub fn hide(w: &WebviewWindow) {
+        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+        if let Ok(h) = w.hwnd() {
+            unsafe {
+                let _ = ShowWindow(HWND(h.0), SW_HIDE);
             }
         }
     }
