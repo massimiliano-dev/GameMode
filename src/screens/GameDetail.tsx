@@ -142,9 +142,11 @@ export function GameDetail({ gameId }: { gameId: string }) {
               <button type="button" className="btn" data-nav onClick={() => void toggleFavorite(game)}>
                 {game.favorite ? "★ Preferito" : "☆ Preferito"}
               </button>
-              <button type="button" className="btn" data-nav onClick={() => setDialog("collections")}>
-                Raccolte
-              </button>
+              {!isApp && (
+                <button type="button" className="btn" data-nav onClick={() => setDialog("collections")}>
+                  Raccolte
+                </button>
+              )}
               <button type="button" className="btn" data-nav aria-label="Altre opzioni" onClick={() => setDialog("options")}>
                 ··· Opzioni
               </button>

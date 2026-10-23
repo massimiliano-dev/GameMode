@@ -108,6 +108,37 @@ pub fn install_dir_of(target: &Path, windows_dir: Option<&Path>) -> Option<PathB
     Some(PathBuf::from(parent))
 }
 
+/// Keeps the apps apart from the library's games. A shortcut into a game's
+/// folder is the game itself (EA and GOG installers add one) and goes. A
+/// launcher whose folder holds games (Steam, GOG Galaxy, Ubisoft Connect)
+/// loses its install folder and is followed by its own process only:
+/// otherwise its session would take in the games below it, and closing the
+/// app would close them too.
+pub fn separate_from_games(games: &mut Vec<Game>) {
+    use crate::launcher::normalize;
+    let game_dirs: Vec<String> = games
+        .iter()
+        .filter(|g| g.store != Store::App)
+        .filter_map(|g| g.install_dir.as_deref())
+        .map(normalize)
+        .filter(|d| d.len() > 3)
+        .collect();
+    let within = |path: &str, dir: &str| path == dir || path.starts_with(&format!("{dir}/"));
+    games.retain(|g| match (&g.store, &g.launch) {
+        (Store::App, LaunchSpec::Exe { path, .. }) => {
+            let exe = normalize(path);
+            !game_dirs.iter().any(|d| within(&exe, d))
+        }
+        _ => true,
+    });
+    for app in games.iter_mut().filter(|g| g.store == Store::App) {
+        let holds_games = app.install_dir.as_deref().map(normalize).is_some_and(|dir| game_dirs.iter().any(|d| within(d, &dir)));
+        if holds_games {
+            app.install_dir = None;
+        }
+    }
+}
+
 /// Lowercase file name, whatever the separator.
 fn file_name_lower(path: &Path) -> String {
     let text = path.to_string_lossy();
@@ -461,6 +492,37 @@ mod tests {
         // Control Panel, Run…: no executable to start.
         assert!(!is_wanted(&AppEntry { aumid: "Microsoft.Windows.ControlPanel".into(), name: "Pannello di controllo".into(), ..Default::default() }));
         assert!(!is_wanted(&AppEntry { aumid: "x".into(), name: "  ".into(), family: Some("f".into()), ..Default::default() }));
+    }
+
+    #[test]
+    fn apps_stay_apart_from_games() {
+        let steam_game = {
+            let mut g = Game::new(Store::Steam, "1", "Hades", LaunchSpec::Uri { uri: "steam://rungameid/1".into() });
+            g.install_dir = Some(PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Hades"));
+            g
+        };
+        let ea_game = {
+            let mut g = Game::new(Store::Ea, "2", "FC", LaunchSpec::Uri { uri: "origin2://x".into() });
+            g.install_dir = Some(PathBuf::from(r"C:\Program Files\EA Games\FC"));
+            g
+        };
+        let app = |name: &str, exe: &str| to_game(desktop(name, exe), None, Some(Path::new(r"C:\Windows")));
+        let mut games = vec![
+            steam_game,
+            ea_game,
+            app("Steam", r"C:\Program Files (x86)\Steam\steam.exe"),
+            app("FC", r"C:\Program Files\EA Games\FC\FC.exe"),
+            app("FC tools", r"C:\Program Files\EA Games\FC\Tools\tool.exe"),
+            app("VLC", r"C:\Program Files\VideoLAN\VLC\vlc.exe"),
+        ];
+        separate_from_games(&mut games);
+        let names: Vec<&str> = games.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, ["Hades", "FC", "Steam", "VLC"]);
+        // The launcher is followed by its process only, not by its folder.
+        assert_eq!(games[2].install_dir, None);
+        assert_eq!(games[3].install_dir, Some(PathBuf::from(r"C:\Program Files\VideoLAN\VLC")));
+        // The games keep theirs.
+        assert!(games[0].install_dir.is_some());
     }
 
     #[test]

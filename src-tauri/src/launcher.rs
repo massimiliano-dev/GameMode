@@ -206,6 +206,17 @@ impl Launcher {
     fn is_empty(&self) -> bool {
         self.sessions.lock().unwrap().is_empty()
     }
+
+    /// The session in the foreground (starting or running), if any.
+    fn foreground_generation(&self) -> Option<u64> {
+        self.sessions.lock().unwrap().iter().find(|a| a.state.phase != Phase::Suspended).map(|a| a.generation)
+    }
+
+    /// Processes frozen by sessions other than `generation`: never part of
+    /// another session (a launcher app whose folder holds a frozen game).
+    fn frozen_elsewhere(&self, generation: u64) -> Vec<u32> {
+        self.sessions.lock().unwrap().iter().filter(|a| a.generation != generation).flat_map(|a| a.frozen.iter().copied()).collect()
+    }
 }
 
 pub fn launch(app: &AppHandle, game: &Game) -> Result<()> {
@@ -217,21 +228,52 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<()> {
     crate::assist::disable();
     // An app over a running game keeps the game frozen (Quick Resume), as a
     // console does; a game over a game still replaces it.
-    if game.store == Store::App {
-        park_running_game(app);
-    }
+    let parked = if game.store == Store::App { park_running_game(app) } else { None };
     let settings = app.state::<AppState>().db.lock().settings.clone();
-    if settings.performance_mode {
+    // Apps don't get the performance plan, nor have their own windows closed.
+    if settings.performance_mode && game.store != Store::App {
         crate::performance::begin(&settings.close_apps);
     }
-    let spawned = spawn(app, &game.launch).with_context(|| format!("avvio di {}", game.name))?;
+    let spawned = match spawn(app, &game.launch) {
+        Ok(spawned) => spawned,
+        Err(err) => {
+            // The app didn't start: the game it made room for comes back.
+            if let Some(generation) = parked {
+                unpark(app, generation);
+            }
+            return Err(err.context(format!("avvio di {}", game.name)));
+        }
+    };
     // A spawned store client (Galaxy, Steam…) is not the game: follow the
     // spawned process only for hand-added executables, or when there is no
     // install folder to watch instead.
     let track_child = matches!(game.store, Store::Manual | Store::Mock | Store::App) || game.install_dir.is_none();
     let child_pid = spawned.filter(|_| track_child);
+    retire_foreground(app);
     track(app, game, child_pid, None, 0, None);
     Ok(())
+}
+
+/// Closes the foreground session a launch replaces without freezing it:
+/// its play time is recorded and the live-session file forgets it, while
+/// its processes are left alone (a game left running under an app, an app
+/// a game starts over).
+fn retire_foreground(app: &AppHandle) {
+    let launcher = &app.state::<AppState>().launcher;
+    let Some(generation) = launcher.foreground_generation() else { return };
+    let at = now();
+    let Some(session) = launcher.update(generation, |a| {
+        a.state.seconds = a.played(at);
+        a.state.phase = Phase::Exited;
+    }) else {
+        return;
+    };
+    launcher.finish(generation);
+    live::update(|l| l.remove(&session.game_id));
+    if session.seconds > 0 {
+        record(app, &session.game_id, session.started_at, at, session.seconds);
+    }
+    let _ = app.emit("game://state", &session);
 }
 
 /// Follows a game: creates its session and starts the monitor. With
@@ -451,7 +493,11 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
         let Some(phase) = launcher.phase(generation) else { return };
         sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
         probe.retain_alive(sys.processes());
-        let pids = game_pids(&sys, &mut probe, &target);
+        let mut pids = game_pids(&sys, &mut probe, &target);
+        if phase != Phase::Suspended {
+            let frozen = launcher.frozen_elsewhere(generation);
+            pids.retain(|pid| !frozen.contains(pid));
+        }
 
         if phase == Phase::Suspended {
             // Frozen: no window lookups (a frozen window answers nothing),
@@ -810,8 +856,14 @@ pub fn resume_suspended(app: &AppHandle, game_id: &str) -> Result<()> {
         if front.phase == Phase::Launching {
             anyhow::bail!("Aspetta che il gioco in avvio sia partito");
         }
-        // The list may be full right now: swapping keeps its size.
-        swap_out(app)?;
+        if front.game_id.starts_with("app:") {
+            // An app stays open as it is (a call, music): it just stops
+            // being followed, as when a game starts over it.
+            retire_foreground(app);
+        } else {
+            // The list may be full right now: swapping keeps its size.
+            swap_out(app)?;
+        }
     }
     thaw(app, generation)?;
     let pids = launcher.running_pids();
@@ -821,18 +873,38 @@ pub fn resume_suspended(app: &AppHandle, game_id: &str) -> Result<()> {
 
 /// Freezes the running game before an app takes the screen, when that is
 /// safe (no anti-cheat, room in the suspended list, the game is really up);
-/// otherwise the app simply takes over, as a new game would.
-fn park_running_game(app: &AppHandle) {
+/// otherwise the app simply takes over, as a new game would. Returns the
+/// frozen session.
+fn park_running_game(app: &AppHandle) -> Option<u64> {
     let launcher = &app.state::<AppState>().launcher;
-    let Some(front) = launcher.current() else { return };
+    let front = launcher.current()?;
     let parkable = front.phase == Phase::Running && !front.anti_cheat && !front.game_id.starts_with("app:");
     if !parkable || launcher.suspended().len() >= MAX_SUSPENDED {
+        return None;
+    }
+    let _transition = launcher.transition().ok()?;
+    let generation = launcher.foreground_generation()?;
+    match swap_out(app) {
+        Ok(()) => Some(generation),
+        Err(err) => {
+            eprintln!("{err:#}");
+            None
+        }
+    }
+}
+
+/// Undoes `park_running_game`: thaws the game and hands it the screen again.
+fn unpark(app: &AppHandle, generation: u64) {
+    let launcher = &app.state::<AppState>().launcher;
+    let _transition = launcher.transition_wait();
+    if launcher.phase(generation) != Some(Phase::Suspended) {
         return;
     }
-    let Ok(_transition) = launcher.transition() else { return };
-    if let Err(err) = swap_out(app) {
+    if let Err(err) = thaw(app, generation) {
         eprintln!("{err:#}");
     }
+    let pids = launcher.running_pids();
+    window::resume_game(app, &pids);
 }
 
 /// Freezes the foreground game to make room for another one.
@@ -1060,5 +1132,20 @@ mod tests {
         assert_eq!(launcher.generation_of("steam:2"), Some(2));
         launcher.finish(2);
         assert!(launcher.suspended().is_empty());
+    }
+
+    #[test]
+    fn frozen_processes_stay_with_their_session() {
+        let launcher = Launcher::default();
+        let mut frozen = active(Phase::Suspended);
+        frozen.frozen = vec![7, 8];
+        launcher.insert(frozen);
+        let mut app = active(Phase::Running);
+        app.generation = 2;
+        app.state.game_id = "app:spotify".into();
+        launcher.insert(app);
+        assert_eq!(launcher.foreground_generation(), Some(2));
+        assert_eq!(launcher.frozen_elsewhere(2), vec![7, 8]);
+        assert!(launcher.frozen_elsewhere(1).is_empty());
     }
 }

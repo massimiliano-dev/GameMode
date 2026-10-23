@@ -260,7 +260,7 @@ function FeaturedInfo({ game }: { game: Game }) {
         <StoreBadge store={game.store} />
         <span>{formatPlaytime(game.playtimeSecs)}</span>
         <span className="sep" />
-        <span>Ultima partita: {formatLastPlayed(game.lastPlayed)}</span>
+        <span>{game.store === "app" ? "Ultimo utilizzo" : "Ultima partita"}: {formatLastPlayed(game.lastPlayed)}</span>
       </div>
     </div>
   );

@@ -19,6 +19,7 @@ const VOLUME_STEP = 0.05;
 export function OverlayApp() {
   const session = useApp((s) => s.session);
   const game = useApp((s) => s.games.find((g) => g.id === s.session?.gameId));
+  const isApp = game?.store === "app";
   const controllers = useApp((s) => s.controllers);
   const toast = useApp((s) => s.toast);
   const now = useClock(1000);
@@ -91,7 +92,7 @@ export function OverlayApp() {
               <Cover game={game} />
             </div>
             <div className="qm-game-info">
-              <span className="qm-label">In gioco</span>
+              <span className="qm-label">{isApp ? "In uso" : "In gioco"}</span>
               <span className="qm-game-name">{game.name}</span>
               <span className="qm-sub">{formatPlaytime(elapsed)}</span>
             </div>
@@ -125,16 +126,16 @@ export function OverlayApp() {
 
         <div className="qm-list">
           <QmButton autofocus onClick={resume}>
-            Torna al gioco
+            {isApp ? "Torna all'app" : "Torna al gioco"}
           </QmButton>
-          {wand && game && (
+          {wand && game && !isApp && (
             <>
               <QmButton onClick={() => void api.openWandApp()}>App Wand: scegli le mod e premi Play</QmButton>
               <QmButton onClick={() => void api.openWand()}>Overlay di Wand</QmButton>
             </>
           )}
           <QmButton onClick={() => void api.overlayToLauncher()}>Vai a GameMode</QmButton>
-          {session?.phase === "running" && (
+          {session?.phase === "running" && !isApp && (
             <QmButton armed={suspendArmed} confirmText="Non consigliato per i giochi online · premi di nuovo" onClick={suspend}>
               Sospendi partita
             </QmButton>
@@ -145,18 +146,18 @@ export function OverlayApp() {
             onClick={() => {
               if (!armed) return setArmed(true);
               void api.closeGame().then((closed) => {
-                if (!closed) toast("Nessun gioco da chiudere");
+                if (!closed) toast(isApp ? "Nessuna app da chiudere" : "Nessun gioco da chiudere");
                 void api.overlayHide(false);
               });
             }}
           >
-            Chiudi gioco
+            {isApp ? "Chiudi app" : "Chiudi gioco"}
           </QmButton>
         </div>
 
         <div className="qm-hints">
           <span className="hint"><Glyph button="A" /> Seleziona</span>
-          <span className="hint"><Glyph button="B" /> Torna al gioco</span>
+          <span className="hint"><Glyph button="B" /> {isApp ? "Torna all'app" : "Torna al gioco"}</span>
           <span className="hint"><Glyph button="view" /><Glyph button="menu" /> Apri/chiudi</span>
         </div>
       </motion.aside>

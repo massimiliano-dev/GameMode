@@ -17,6 +17,7 @@ export function QuickMenu() {
   const close = () => useApp.getState().setQuickMenu(false);
   const session = useApp((s) => s.session);
   const game = useApp((s) => s.games.find((g) => g.id === s.session?.gameId));
+  const isApp = game?.store === "app";
   const paused = useApp((s) => s.suspended.length);
   const rescan = useApp((s) => s.rescan);
   const profiles = useApp((s) => s.profiles);
@@ -117,7 +118,7 @@ export function QuickMenu() {
               <Cover game={game} />
             </div>
             <div className="qm-game-info">
-              <span className="qm-label">{session.update ? "Aggiornamento in corso" : session.phase === "launching" ? "Avvio in corso" : "In gioco"}</span>
+              <span className="qm-label">{session.update ? "Aggiornamento in corso" : session.phase === "launching" ? "Avvio in corso" : isApp ? "In uso" : "In gioco"}</span>
               <span className="qm-game-name">{game.name}</span>
               <span className="qm-sub">{formatPlaytime(elapsed)}</span>
             </div>
@@ -126,13 +127,13 @@ export function QuickMenu() {
                 autofocus
                 onClick={async () => {
                   close();
-                  if (!(await api.resumeGame())) toast("Finestra del gioco non trovata");
+                  if (!(await api.resumeGame())) toast(isApp ? "Finestra dell'app non trovata" : "Finestra del gioco non trovata");
                 }}
               >
-                Torna al gioco
+                {isApp ? "Torna all'app" : "Torna al gioco"}
               </QmButton>
               <QmButton danger armed={armed === "close"} onClick={() => confirmTwice("close", () => void api.closeGame())}>
-                Chiudi gioco
+                {isApp ? "Chiudi app" : "Chiudi gioco"}
               </QmButton>
             </div>
           </div>

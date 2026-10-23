@@ -443,7 +443,10 @@ function onSessionEvent(
   const mine = get().session?.gameId === s.gameId;
   if (s.phase === "exited") {
     set({ suspended: others, ...(mine ? { session: null } : {}) });
-    if (s.seconds > 0) get().toast(`${name}: hai giocato ${formatPlaytime(s.seconds)}`);
+    if (s.seconds > 0) {
+      const used = s.gameId.startsWith("app:") ? "usata per" : "hai giocato";
+      get().toast(`${name}: ${used} ${formatPlaytime(s.seconds)}`);
+    }
   } else if (s.phase === "failed") {
     set({ suspended: others, ...(mine ? { session: null } : {}) });
     get().toast(`${name} non si è avviato (o non è stato rilevato)`, "error");

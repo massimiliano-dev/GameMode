@@ -97,8 +97,9 @@ export function Stats() {
   }, [setBackdrop, profile?.id]);
 
   const gameById = useMemo(() => new Map(games.map((g) => [g.id, g])), [games]);
-  // Time in apps (Netflix, Spotify…) isn't play time.
-  const played = useMemo(() => (sessions ?? []).filter((s) => gameById.get(s.gameId)?.store !== "app"), [sessions, gameById]);
+  // Time in apps (Netflix, Spotify…) isn't play time, even once the app is
+  // gone from the library: the id's store prefix tells.
+  const played = useMemo(() => (sessions ?? []).filter((s) => !s.gameId.startsWith("app:")), [sessions]);
   const stats = useStats(played);
   useScreenFocus(undefined, sessions !== null);
   useHints([{ button: "A", label: "Apri gioco" }]);

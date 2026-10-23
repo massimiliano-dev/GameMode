@@ -28,6 +28,17 @@ export function Apps({ focusId }: { focusId?: string }) {
   const loaded = useApp((s) => s.loaded);
   const scanning = useApp((s) => s.scanning);
   const settings = useApp((s) => s.settings);
+  const apps = useMemo(() => visibleGames(all).filter(isApp), [all]);
+  const disabled = !!settings?.disabledStores.includes("app");
+
+  useScreenFocus(focusId, apps.length > 0);
+
+  // Each state owns its hints and buttons: the grid's never outlive it.
+  if (!apps.length) return <EmptyApps loaded={loaded} scanning={scanning} disabled={disabled} />;
+  return <AppGrid apps={apps} />;
+}
+
+function AppGrid({ apps }: { apps: Game[] }) {
   const open = useApp((s) => s.open);
   const launch = useApp((s) => s.launch);
   const toggleFavorite = useApp((s) => s.toggleFavorite);
@@ -35,9 +46,9 @@ export function Apps({ focusId }: { focusId?: string }) {
   const sessionGame = useApp((s) => s.session?.gameId);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
-  const focused = useRef<Game | null>(null);
+  // Only the id: the store replaces the app object on every change.
+  const focusedId = useRef<string | null>(null);
 
-  const apps = useMemo(() => visibleGames(all).filter(isApp), [all]);
   const shown = useMemo(() => {
     const words = normalize(query).split(/\s+/).filter(Boolean);
     const list = apps.filter((a) => {
@@ -48,9 +59,7 @@ export function Apps({ focusId }: { focusId?: string }) {
     });
     return list.sort(filter === "recent" ? byRecent : byName);
   }, [apps, filter, query]);
-  const disabled = !!settings?.disabledStores.includes("app");
 
-  useScreenFocus(focusId, apps.length > 0);
   useHints([
     { button: "A", label: "Apri" },
     { button: "X", label: "Dettagli" },
@@ -60,6 +69,7 @@ export function Apps({ focusId }: { focusId?: string }) {
 
   const regroup = () => {
     // The grid content changes: start again from its first tile.
+    focusedId.current = null;
     forgetGroup("apps");
     requestAnimationFrame(() => {
       const first = document.querySelector<HTMLElement>(".apps-grid [data-nav]");
@@ -67,6 +77,13 @@ export function Apps({ focusId }: { focusId?: string }) {
       first?.scrollIntoView({ block: "nearest" });
       ensureFocus();
     });
+  };
+
+  /** The focused tile's app as the store has it now, if still on screen. */
+  const focusedApp = () => {
+    const id = focusedId.current;
+    if (!id || document.activeElement?.getAttribute("data-nav-id") !== `apps:${id}`) return undefined;
+    return useApp.getState().games.find((g) => g.id === id);
   };
 
   useAction((action, repeat) => {
@@ -77,26 +94,23 @@ export function Apps({ focusId }: { focusId?: string }) {
       regroup();
       return true;
     }
-    if (action === "x" && focused.current) {
-      open({ name: "detail", gameId: focused.current.id });
-      return true;
-    }
-    if (action === "y" && focused.current) {
-      void toggleFavorite(focused.current);
+    if (action === "x" || action === "y") {
+      const app = focusedApp();
+      if (!app) return;
+      if (action === "x") open({ name: "detail", gameId: app.id });
+      else void toggleFavorite(app);
       return true;
     }
   });
 
   const onFocus = useCallback(
     (a: Game) => {
-      focused.current = a;
+      focusedId.current = a.id;
       setBackdrop(a.id);
     },
     [setBackdrop],
   );
   const onSelect = useCallback((a: Game) => void launch(a.id), [launch]);
-
-  if (!apps.length) return <EmptyApps loaded={loaded} scanning={scanning} disabled={disabled} />;
 
   return (
     <div className="screen apps">
@@ -112,6 +126,7 @@ export function Apps({ focusId }: { focusId?: string }) {
           placeholder="Cerca un'app…"
           value={query}
           spellCheck={false}
+          onFocus={() => (focusedId.current = null)}
           onChange={(e) => {
             setQuery(e.target.value);
             forgetGroup("apps");

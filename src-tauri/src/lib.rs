@@ -73,7 +73,8 @@ fn scan(app: &AppHandle) -> LibraryUpdate {
     };
     let mut providers = library::providers(manual, &settings);
     providers.push(Box::new(library::apps::AppsProvider { icon_dir: library::apps::icon_dir(&state.data_dir) }));
-    let result = library::scan_all(providers, &settings.disabled_stores);
+    let mut result = library::scan_all(providers, &settings.disabled_stores);
+    library::apps::separate_from_games(&mut result.games);
     let games = state
         .db
         .update(|d| {
@@ -128,10 +129,13 @@ async fn rescan_library(app: AppHandle) -> CmdResult<LibraryUpdate> {
     result
 }
 
+/// Off the main thread: freezing the game an app makes room for, or
+/// starting Explorer, takes seconds.
 #[tauri::command]
-fn launch_game(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<()> {
-    let game = state.db.lock().game(&id).cloned().ok_or("Gioco non trovato")?;
-    launcher::launch(&app, &game).map_err(|e| format!("{e:#}"))
+async fn launch_game(app: AppHandle, id: String) -> CmdResult<()> {
+    let game = app.state::<AppState>().db.lock().game(&id).cloned().ok_or("Gioco non trovato")?;
+    let handle = app.clone();
+    blocking(move || launcher::launch(&handle, &game)).await
 }
 
 /// Changes the active profile's state about one game and returns its new view.
