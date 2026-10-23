@@ -422,8 +422,29 @@ pub fn status() -> ShellStatus {
         enabled,
         active: enabled && start.as_shell,
         after_update: start.after_update,
-        desktop_once: start.desktop_once,
+        // Console mode turned off in this session: the next sign-in is the
+        // desktop anyway, nothing to "go back" to.
+        desktop_once: enabled && start.desktop_once,
     }
+}
+
+/// Seconds given to Explorer to put up its taskbar in a "desktop once" sign-in.
+const DESKTOP_ONCE_WAIT_SECS: u32 = 20;
+
+/// "Desktop once": GameMode hid itself trusting Explorer to become the
+/// shell. If no taskbar shows up (explorer.exe didn't start, or crashed),
+/// the session has no shell and no window: GameMode comes back instead.
+pub fn guard_desktop_once(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        for _ in 0..DESKTOP_ONCE_WAIT_SECS {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if imp::explorer_running() {
+                return;
+            }
+        }
+        eprintln!("desktop once: Explorer never showed up, back to GameMode");
+        crate::window::bring_to_front(&app);
+    });
 }
 
 /// Console mode with nothing underneath GameMode: no desktop to step aside to.
@@ -479,23 +500,39 @@ fn boot_flag() -> std::path::PathBuf {
 /// A boot flag older than this is a restart that never happened.
 const BOOT_FLAG_MAX_AGE: i64 = 24 * 3600;
 
+/// `shutdown /r` doesn't force apps to close: one refusing to end the
+/// session cancels the restart. If this process is still alive after this
+/// long, the restart didn't happen and the flag must not outlive it.
+const BOOT_FLAG_GRACE: std::time::Duration = std::time::Duration::from_secs(90);
+
 /// Asks for the next sign-in to land on the Windows desktop instead of
 /// GameMode, once, without touching the shell registration. Written right
-/// before "Riavvia in modalità desktop" restarts the PC.
+/// before "Riavvia in modalità desktop" restarts the PC; taken back if the
+/// PC is still up (restart cancelled) after `BOOT_FLAG_GRACE`.
 pub fn request_desktop_boot() -> Result<()> {
     std::fs::write(boot_flag(), crate::model::now().to_string())?;
+    std::thread::spawn(|| {
+        std::thread::sleep(BOOT_FLAG_GRACE);
+        if std::fs::remove_file(boot_flag()).is_ok() {
+            eprintln!("restart to desktop didn't happen: flag withdrawn");
+        }
+    });
     Ok(())
 }
 
-/// Whether the flag's text (written by `request_desktop_boot`) still counts.
-fn boot_flag_valid(text: &str, now: i64) -> bool {
-    text.trim().parse::<i64>().is_ok_and(|at| now - at < BOOT_FLAG_MAX_AGE)
+/// Whether the flag's text (written by `request_desktop_boot`) still counts:
+/// written before this boot (so a restart really followed it, and a
+/// watchdog restart of GameMode in the same session doesn't see it) and
+/// not too long ago.
+fn boot_flag_valid(text: &str, boot_time: i64, now: i64) -> bool {
+    text.trim().parse::<i64>().is_ok_and(|at| at < boot_time && now - at < BOOT_FLAG_MAX_AGE)
 }
 
 /// Consumes the "desktop once" flag: true when a recent one was there.
 fn take_boot_flag() -> bool {
     let path = boot_flag();
-    let valid = std::fs::read_to_string(&path).is_ok_and(|t| boot_flag_valid(&t, crate::model::now()));
+    let boot_time = sysinfo::System::boot_time() as i64;
+    let valid = std::fs::read_to_string(&path).is_ok_and(|t| boot_flag_valid(&t, boot_time, crate::model::now()));
     let _ = std::fs::remove_file(path);
     valid
 }
@@ -545,10 +582,17 @@ mod tests {
 
     #[test]
     fn boot_flag_expires_and_rejects_garbage() {
-        assert!(boot_flag_valid("1000\n", 1000 + 60));
-        assert!(boot_flag_valid("1000", 1000 + BOOT_FLAG_MAX_AGE - 1));
-        assert!(!boot_flag_valid("1000", 1000 + BOOT_FLAG_MAX_AGE));
-        assert!(!boot_flag_valid("", 1000));
-        assert!(!boot_flag_valid("soon", 1000));
+        assert!(boot_flag_valid("1000\n", 1030, 1000 + 60));
+        assert!(boot_flag_valid("1000", 1030, 1000 + BOOT_FLAG_MAX_AGE - 1));
+        assert!(!boot_flag_valid("1000", 1030, 1000 + BOOT_FLAG_MAX_AGE));
+        assert!(!boot_flag_valid("", 1030, 1000));
+        assert!(!boot_flag_valid("soon", 1030, 1000));
+    }
+
+    #[test]
+    fn boot_flag_needs_a_boot_after_it() {
+        // Written in this very session (restart cancelled, GameMode restarted).
+        assert!(!boot_flag_valid("1000", 900, 1000 + 60));
+        assert!(!boot_flag_valid("1000", 1000, 1000 + 60));
     }
 }

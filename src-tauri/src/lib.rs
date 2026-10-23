@@ -776,8 +776,19 @@ pub fn run() {
                 // Signed in on the Windows desktop for once: GameMode waits
                 // in the tray until asked for.
                 tray::create(&handle);
+                shell::guard_desktop_once(handle.clone());
                 if let Some(w) = window::main_window(&handle) {
                     let _ = w.hide();
+                    // The X goes back to the tray, like any tray app: a
+                    // destroyed main window would leave the tray's "Apri
+                    // GameMode" with nothing to show.
+                    let hidden = w.clone();
+                    w.on_window_event(move |e| {
+                        if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+                            api.prevent_close();
+                            let _ = hidden.hide();
+                        }
+                    });
                 }
             }
             autostart::repair(&handle);
