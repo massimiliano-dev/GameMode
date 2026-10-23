@@ -4,6 +4,7 @@ import { formatClock } from "../lib/format";
 import { activeProfileOf, type Tab, useApp } from "../store/app";
 import { Logo } from "./Logo";
 import { Avatar } from "./ProfileSettings";
+import { StatusCluster } from "./StatusBar";
 import { Glyph, useClock } from "./common";
 
 const TABS: { tab: Tab; label: string }[] = [
@@ -58,6 +59,7 @@ export function TopBar() {
       <div className="topbar-right">
         <ProfileBadge />
         <Batteries />
+        <StatusCluster />
         {session && playing && (
           <span className="session-pill">
             <span className="pulse" />

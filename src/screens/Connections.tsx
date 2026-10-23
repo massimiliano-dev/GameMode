@@ -1,5 +1,5 @@
 import { AnimatePresence } from "motion/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ActionSheet } from "../components/ActionSheet";
 import { Row, Section } from "../components/SettingsRows";
@@ -33,6 +33,14 @@ export function Connections() {
     setBackdrop(null);
     void refresh();
   }, [refresh, setBackdrop]);
+  // A device connected or dropped (the top bar's counter moved): re-read the list.
+  const btConnected = useApp((s) => s.system?.bluetooth.connected ?? 0);
+  const btSeen = useRef(btConnected);
+  useEffect(() => {
+    if (btSeen.current === btConnected) return;
+    btSeen.current = btConnected;
+    if (radios?.bluetooth) void api.bluetoothDevices(false).then(setDevices).catch(() => {});
+  }, [btConnected, radios?.bluetooth]);
   useScreenFocus(undefined, radios !== null);
   useHints([
     { button: "A", label: "Seleziona" },

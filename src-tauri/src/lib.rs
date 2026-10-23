@@ -25,6 +25,7 @@ mod saves;
 mod shell;
 #[cfg(windows)]
 mod sqlite;
+mod status;
 mod steam_web;
 mod storefront;
 mod system;
@@ -490,6 +491,11 @@ fn get_controllers() -> Vec<gamepad::Controller> {
 }
 
 #[tauri::command]
+async fn get_system_status() -> status::SystemInfo {
+    tauri::async_runtime::spawn_blocking(status::snapshot).await.unwrap_or_default()
+}
+
+#[tauri::command]
 fn get_autostart(app: AppHandle) -> bool {
     autostart::is_enabled(&app).unwrap_or(false)
 }
@@ -790,6 +796,7 @@ pub fn run() {
             }
             overlay::create(&handle);
             updates::watch_packages();
+            status::start(handle.clone());
             let native = gamepad::start(handle.clone());
             app.state::<AppState>().native_gamepad.store(native, Ordering::SeqCst);
 
@@ -883,6 +890,7 @@ pub fn run() {
             add_collection,
             remove_collection,
             set_in_collection,
+            get_system_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

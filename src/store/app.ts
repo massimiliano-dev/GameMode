@@ -15,6 +15,7 @@ import type {
   SessionState,
   Settings,
   Store,
+  SystemInfo,
   UpdateInfo,
 } from "../lib/types";
 
@@ -71,6 +72,8 @@ interface AppState {
   collections: Collection[];
   /** Game updates the stores report, by game id. */
   gameUpdates: Record<string, GameUpdate>;
+  /** Network, PC battery and Bluetooth for the top bar; null until the backend says. */
+  system: SystemInfo | null;
 
   init: () => Promise<void>;
   refreshGameUpdates: () => Promise<void>;
@@ -141,6 +144,7 @@ export const useApp = create<AppState>((set, get) => ({
   update: null,
   collections: [],
   gameUpdates: {},
+  system: null,
 
   init: async () => {
     if (initialized) return;
@@ -161,7 +165,9 @@ export const useApp = create<AppState>((set, get) => ({
       set({ rescanOnReturn: false });
       get().toast("Download avviato in Steam: lo trovi in Libreria quando ha finito");
     });
+    on<SystemInfo>("system://status", (info) => onSystemStatus(info, set, get));
     void api.getControllers().then((controllers) => set({ controllers })).catch(() => {});
+    void api.getSystemStatus().then((system) => set({ system })).catch(() => {});
 
     const [games, settings, session, suspended, profiles, collections, shell] = await Promise.all([
       api.getLibrary(),
@@ -559,6 +565,27 @@ function onControllers(list: Controller[], set: (partial: Partial<AppState>) => 
     }
   }
   set({ controllers: list });
+}
+
+/** Below this the PC battery gets a warning (once, when it crosses the line). */
+export const LOW_BATTERY = 10;
+
+/** Toast text for a status change, or null when nothing is worth saying. */
+export function systemAlert(before: SystemInfo | null, after: SystemInfo): string | null {
+  if (!before) return null;
+  if (before.network.internet && !after.network.internet) return "Connessione a internet persa";
+  const b = after.battery;
+  const was = before.battery;
+  if (b && !b.plugged && b.percent <= LOW_BATTERY && (!was || was.plugged || was.percent > LOW_BATTERY)) {
+    return `Batteria del PC al ${b.percent}%: collega l'alimentatore`;
+  }
+  return null;
+}
+
+function onSystemStatus(info: SystemInfo, set: (partial: Partial<AppState>) => void, get: () => AppState) {
+  const alert = systemAlert(get().system, info);
+  set({ system: info });
+  if (alert) get().toast(alert, "error");
 }
 
 export interface BackdropArt {
