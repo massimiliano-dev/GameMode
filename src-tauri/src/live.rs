@@ -34,6 +34,12 @@ impl LiveSession {
         ((self.last_seen - self.started_at).max(0) as u64).saturating_sub(self.paused_secs)
     }
 
+    /// Seconds not played by `at`: a frozen game stayed frozen since the
+    /// last heartbeat, a running one kept playing.
+    pub fn paused_until(&self, at: i64) -> u64 {
+        self.paused_secs + if self.suspended { (at - self.last_seen).max(0) as u64 } else { 0 }
+    }
+
     /// Whether any of the remembered processes is still the same one.
     pub fn alive(&self, start_time_of: impl Fn(u32) -> Option<u64>) -> bool {
         self.pids.iter().any(|(pid, start)| start_time_of(*pid) == Some(*start))
@@ -58,10 +64,6 @@ impl LiveState {
 
     pub fn remove(&mut self, game_id: &str) {
         self.sessions.retain(|s| s.game_id != game_id);
-    }
-
-    pub fn get_mut(&mut self, game_id: &str) -> Option<&mut LiveSession> {
-        self.sessions.iter_mut().find(|s| s.game_id == game_id)
     }
 }
 
@@ -117,8 +119,23 @@ pub fn snapshot() -> LiveState {
     guard.get_or_insert_with(|| read_from(path)).clone()
 }
 
-pub fn power_scheme() -> Option<String> {
-    snapshot().previous_power_scheme
+/// Thaws the games a dead GameMode left frozen, straight from its file
+/// (run by the watchdog process, which has no app state).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn thaw_frozen_in(path: &Path) {
+    let mut state = read_from(path);
+    let mut changed = false;
+    for session in state.sessions.iter_mut().filter(|s| s.suspended) {
+        let pids: Vec<u32> = session.pids.iter().map(|(pid, _)| *pid).collect();
+        if let Err(err) = crate::freeze::resume(&crate::freeze::family(&pids)) {
+            eprintln!("thawing {} failed: {err:#}", session.game_id);
+        }
+        session.suspended = false;
+        changed = true;
+    }
+    if changed {
+        write_to(path, &state);
+    }
 }
 
 pub fn set_power_scheme(scheme: Option<String>) {
@@ -172,6 +189,18 @@ mod tests {
     fn played_excludes_pauses() {
         assert_eq!(session("x").played(), 500);
         assert_eq!(LiveSession { paused_secs: 5000, ..session("x") }.played(), 0);
+    }
+
+    #[test]
+    fn a_frozen_game_stays_frozen_after_the_last_heartbeat() {
+        // Running: the time since the heartbeat was played.
+        assert_eq!(session("x").paused_until(5000), 100);
+        // Frozen: it wasn't.
+        let frozen = LiveSession { suspended: true, ..session("x") };
+        assert_eq!(frozen.paused_until(5000), 100 + 3400);
+        assert_eq!(frozen.paused_until(1000), 100);
+        // Reattached as suspended at 5000: play time is still what the heartbeat saw.
+        assert_eq!((5000 - frozen.started_at) as u64 - frozen.paused_until(5000), frozen.played());
     }
 
     #[test]

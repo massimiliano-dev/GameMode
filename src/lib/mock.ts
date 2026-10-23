@@ -51,6 +51,7 @@ let games: Game[] = SEED.map(([store, name, appid], i) => ({
 let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
+let suspended: SessionState[] = [];
 let volume: Volume = { level: 0.6, muted: false };
 let autostart = false;
 let retroarch: string | null = null;
@@ -112,7 +113,10 @@ function update(id: string, patch: Partial<Game>): Game {
 }
 
 function fakeLaunch(id: string) {
-  session = { gameId: id, phase: "launching", startedAt: now(), seconds: 0 };
+  const paused = suspended.find((s) => s.gameId === id);
+  if (paused) return fakeResume(paused);
+  const name = games.find((g) => g.id === id)?.name ?? id;
+  session = { gameId: id, gameName: name, phase: "launching", startedAt: now(), seconds: 0, antiCheat: id.endsWith("-14") };
   emit("game://state", session);
   setTimeout(() => {
     if (session?.gameId !== id) return;
@@ -127,6 +131,28 @@ function fakeLaunch(id: string) {
     emit("game://state", { ...session, phase: "exited", seconds: played });
     session = null;
   }, 9000);
+}
+
+function fakeSuspend() {
+  if (!session || session.phase !== "running") throw "Nessun gioco in corso";
+  if (suspended.length >= 3) throw "Puoi tenere in pausa al massimo 3 giochi: chiudine uno";
+  freeze();
+}
+
+/** Freezes the running game, no questions asked (a swap keeps the list's size). */
+function freeze() {
+  if (!session) return;
+  const paused: SessionState = { ...session, phase: "suspended", suspendedAt: now() };
+  suspended = [...suspended, paused];
+  session = null;
+  emit("game://state", paused);
+}
+
+function fakeResume(paused: SessionState) {
+  if (session) freeze();
+  suspended = suspended.filter((s) => s.gameId !== paused.gameId);
+  session = { ...paused, phase: "running", suspendedAt: null };
+  emit("game://state", session);
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -164,6 +190,19 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         return;
       case "get_session":
         return session;
+      case "get_suspended":
+        return suspended;
+      case "suspend_game":
+        return fakeSuspend();
+      case "resume_suspended":
+        return fakeResume(suspended.find((s) => s.gameId === args.gameId) ?? (() => { throw "Questo gioco non è in pausa"; })());
+      case "close_suspended": {
+        const paused = suspended.find((s) => s.gameId === args.gameId);
+        if (!paused) throw "Questo gioco non è in pausa";
+        suspended = suspended.filter((s) => s.gameId !== args.gameId);
+        emit("game://state", { ...paused, phase: "exited", seconds: 15 * 60 });
+        return;
+      }
       case "close_game":
         if (session) {
           emit("game://state", { ...session, phase: "exited", seconds: 60 });
@@ -417,10 +456,10 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         backups = backups.filter((b) => b.id !== args.backupId);
         return;
       case "get_console_mode":
-        return { enabled: consoleMode, active: false };
+        return { enabled: consoleMode, active: false, afterUpdate: false };
       case "set_console_mode":
         consoleMode = args.enabled;
-        return { enabled: consoleMode, active: false };
+        return { enabled: consoleMode, active: false, afterUpdate: false };
       case "check_update":
         await wait(700);
         return { version: "0.2.1", notes: "Correzioni e miglioramenti" };

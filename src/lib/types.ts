@@ -51,6 +51,8 @@ export interface ShellStatus {
   enabled: boolean;
   /** This session started in console mode (no Explorer). */
   active: boolean;
+  /** This GameMode was restarted by an update. */
+  afterUpdate: boolean;
 }
 
 export interface UpdateInfo {
@@ -199,15 +201,21 @@ export interface ManualGame {
   args: string[];
 }
 
-export type Phase = "launching" | "running" | "exited" | "failed";
+export type Phase = "launching" | "running" | "suspended" | "exited" | "failed";
 
 export interface SessionState {
   gameId: string;
+  /** Kept with the session, so a frozen game shows even when the library lost it. */
+  gameName: string;
   phase: Phase;
   startedAt: number;
   seconds: number;
   /** The game is being updated before it can start. */
   update?: GameUpdate | null;
+  /** Unix seconds since when the game is frozen (Quick Resume). */
+  suspendedAt?: number | null;
+  /** An anti-cheat was found: suspending may get the player kicked. */
+  antiCheat?: boolean;
 }
 
 export type UpdateState = "available" | "downloading" | "installing" | "paused";

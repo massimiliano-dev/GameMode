@@ -21,6 +21,7 @@ export function TopBar() {
   const setTab = useApp((s) => s.setTab);
   const session = useApp((s) => s.session);
   const playing = useApp((s) => s.games.find((g) => g.id === s.session?.gameId));
+  const paused = useApp((s) => s.suspended.length);
 
   return (
     <header className="topbar">
@@ -61,6 +62,11 @@ export function TopBar() {
           <span className="session-pill">
             <span className="pulse" />
             {session.update ? "Aggiornamento" : session.phase === "launching" ? "Avvio" : "In gioco"}: {playing.name}
+          </span>
+        )}
+        {paused > 0 && (
+          <span className="session-pill is-paused">
+            {paused === 1 ? "1 gioco in pausa" : `${paused} giochi in pausa`}
           </span>
         )}
         <span className="clock">{formatClock(now)}</span>

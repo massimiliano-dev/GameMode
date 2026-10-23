@@ -24,6 +24,8 @@ export function OverlayApp() {
   const now = useClock(1000);
   const [volume, setVolume] = useState<Volume | null>(null);
   const [armed, setArmed] = useState(false);
+  const [suspendArmed, setSuspendArmed] = useState(false);
+  const [suspending, setSuspending] = useState(false);
   const [openedAt, setOpenedAt] = useState(0);
   const [wand, setWand] = useState(false);
 
@@ -35,6 +37,8 @@ export function OverlayApp() {
       void api.getSession().then((s) => useApp.setState({ session: s }));
       void api.wandInstalled().then(setWand).catch(() => setWand(false));
       setArmed(false);
+      setSuspendArmed(false);
+      setSuspending(false);
       setOpenedAt(Date.now());
       requestAnimationFrame(() => focusInitial());
     };
@@ -43,6 +47,18 @@ export function OverlayApp() {
   }, []);
 
   const resume = () => void api.overlayHide(true);
+  const suspend = () => {
+    if (suspending) return;
+    // Online games kick a frozen player: ask first when an anti-cheat is around.
+    if (session?.antiCheat && !suspendArmed) return setSuspendArmed(true);
+    setSuspending(true);
+    // On success the backend hides the overlay itself; on failure it stays
+    // up, so the toast saying why can be read.
+    void useApp.getState().suspendGame().then((ok) => {
+      setSuspending(false);
+      if (!ok) setSuspendArmed(false);
+    });
+  };
 
   useAction((action, repeat) => {
     if (repeat) return true;
@@ -118,6 +134,11 @@ export function OverlayApp() {
             </>
           )}
           <QmButton onClick={() => void api.overlayToLauncher()}>Vai a GameMode</QmButton>
+          {session?.phase === "running" && (
+            <QmButton armed={suspendArmed} confirmText="Non consigliato per i giochi online · premi di nuovo" onClick={suspend}>
+              Sospendi partita
+            </QmButton>
+          )}
           <QmButton
             danger
             armed={armed}

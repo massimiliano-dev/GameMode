@@ -21,6 +21,8 @@ import type {
 export type Tab = "home" | "library" | "downloads" | "stores" | "stats" | "settings";
 export type Screen = { name: Tab } | { name: "detail"; gameId: string } | { name: "search" } | { name: "connections" };
 
+const TABS: Tab[] = ["home", "library", "downloads", "stores", "stats", "settings"];
+
 interface Entry {
   screen: Screen;
   /** Focus to restore when coming back to this screen. */
@@ -49,6 +51,8 @@ interface AppState {
   stack: Entry[];
   quickMenu: boolean;
   session: SessionState | null;
+  /** Games frozen by Quick Resume, oldest first. */
+  suspended: SessionState[];
   /** Game whose art fills the background. */
   backdropId: string | null;
   /** Art for things that aren't installed games (catalog entries). */
@@ -83,6 +87,13 @@ interface AppState {
   toggleFavorite: (game: Game) => Promise<void>;
   toggleHidden: (game: Game) => Promise<void>;
   launch: (id: string) => Promise<void>;
+  /** Quick Resume: freezes the running game and comes back here. */
+  suspendGame: () => Promise<boolean>;
+  resumeSuspended: (gameId: string) => Promise<void>;
+  closeSuspended: (gameId: string) => Promise<void>;
+  /** Closes GameMode; the saved screen is forgotten. */
+  quit: () => Promise<void>;
+  exitToDesktop: () => Promise<void>;
   openStore: (store: Store, gameId?: string) => Promise<void>;
   /** Steam's downloads, or the game's page in the Xbox app. */
   showGameUpdate: (game: Game) => Promise<void>;
@@ -105,6 +116,8 @@ const HANDOFF_DELAY = 2200;
 const GAME_UPDATES_EVERY = 20_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let initialized = false;
+/** The overlay window shares this store but never owns the screen stack. */
+const isOverlayWindow = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("overlay");
 
 export const useApp = create<AppState>((set, get) => ({
   games: [],
@@ -115,6 +128,7 @@ export const useApp = create<AppState>((set, get) => ({
   stack: [{ screen: { name: "home" } }],
   quickMenu: false,
   session: null,
+  suspended: [],
   backdropId: null,
   backdropArt: null,
   hints: [],
@@ -133,7 +147,11 @@ export const useApp = create<AppState>((set, get) => ({
     initialized = true;
     on<LibraryUpdate>("library://updated", (u) => set({ games: u.games, scanErrors: u.errors, loaded: true }));
     on<Game>("library://game", (g) => get().upsertGame(g));
-    on<SessionState>("game://state", (s) => onSessionEvent(s, set, get));
+    on<SessionState>("game://state", (s) => {
+      onSessionEvent(s, set, get);
+      // Keeps the saved screen fresh through a long game.
+      persistStack(get().stack);
+    });
     on<Controller[]>("gamepad://controllers", (list) => onControllers(list, set, get));
     on<string>("uninstall://done", (name) => {
       set({ rescanOnReturn: false });
@@ -145,14 +163,23 @@ export const useApp = create<AppState>((set, get) => ({
     });
     void api.getControllers().then((controllers) => set({ controllers })).catch(() => {});
 
-    const [games, settings, session, profiles, collections] = await Promise.all([
+    const [games, settings, session, suspended, profiles, collections, shell] = await Promise.all([
       api.getLibrary(),
       api.getSettings(),
       api.getSession(),
+      api.getSuspended().catch(() => []),
       api.getProfiles(),
       api.getCollections(),
+      api.getConsoleMode().catch(() => null),
     ]);
-    set({ profiles: profiles.profiles, activeProfile: profiles.active, collections });
+    set({ profiles: profiles.profiles, activeProfile: profiles.active, collections, suspended });
+    // Back where the user was: after a quick restart (a crash) or an update.
+    if (!isOverlayWindow) {
+      const stack = loadStack(!!shell?.afterUpdate);
+      if (stack) set({ stack });
+      // Idle on one screen for long: still the screen to come back to.
+      setInterval(() => persistStack(get().stack), STACK_REFRESH_EVERY);
+    }
     // An empty saved library means first run: wait for the initial scan.
     setSoundsEnabled(settings.uiSounds);
     setTimeout(() => void announceDeals(get().toast), 10_000);
@@ -195,22 +222,26 @@ export const useApp = create<AppState>((set, get) => ({
     const top = get().stack.at(-1)!;
     if (top.screen.name === tab) return;
     set({ stack: [{ screen: { name: tab } }] });
+    persistStack(get().stack);
   },
 
   open: (screen) => {
     const stack = [...get().stack];
     stack[stack.length - 1] = { ...stack[stack.length - 1], focusId: currentFocusId() };
     set({ stack: [...stack, { screen }] });
+    persistStack(get().stack);
   },
 
   back: () => {
     const stack = get().stack;
     if (stack.length > 1) {
       set({ stack: stack.slice(0, -1) });
+      persistStack(get().stack);
       return true;
     }
     if (stack[0].screen.name !== "home") {
       set({ stack: [{ screen: { name: "home" } }] });
+      persistStack(get().stack);
       return true;
     }
     return false;
@@ -252,6 +283,42 @@ export const useApp = create<AppState>((set, get) => ({
     } catch (e) {
       get().toast(String(e), "error");
     }
+  },
+
+  suspendGame: async () => {
+    try {
+      await api.suspendGame();
+      return true;
+    } catch (e) {
+      get().toast(String(e), "error");
+      return false;
+    }
+  },
+
+  resumeSuspended: async (gameId) => {
+    try {
+      await api.resumeSuspended(gameId);
+    } catch (e) {
+      get().toast(String(e), "error");
+    }
+  },
+
+  closeSuspended: async (gameId) => {
+    try {
+      await api.closeSuspended(gameId);
+    } catch (e) {
+      get().toast(String(e), "error");
+    }
+  },
+
+  quit: async () => {
+    forgetStack();
+    await api.quit();
+  },
+
+  exitToDesktop: async () => {
+    forgetStack();
+    await api.exitToDesktop();
   },
 
   openStore: async (store, gameId) => {
@@ -370,15 +437,85 @@ function onSessionEvent(
   get: () => AppState,
 ) {
   const name = get().games.find((g) => g.id === s.gameId)?.name ?? "Il gioco";
+  const others = get().suspended.filter((p) => p.gameId !== s.gameId);
+  // Only the game in the foreground owns `session`: a frozen one that ends
+  // in the background leaves it alone.
+  const mine = get().session?.gameId === s.gameId;
   if (s.phase === "exited") {
-    set({ session: null });
+    set({ suspended: others, ...(mine ? { session: null } : {}) });
     if (s.seconds > 0) get().toast(`${name}: hai giocato ${formatPlaytime(s.seconds)}`);
   } else if (s.phase === "failed") {
-    set({ session: null });
+    set({ suspended: others, ...(mine ? { session: null } : {}) });
     get().toast(`${name} non si è avviato (o non è stato rilevato)`, "error");
+  } else if (s.phase === "suspended") {
+    set({ suspended: [...others, s], ...(mine ? { session: null } : {}) });
+    get().toast(`${name} in pausa: lo riprendi dalla Home`);
   } else {
-    set({ session: s });
+    set({ session: s, suspended: others });
   }
+}
+
+/* ---------- Where the user was ---------- */
+
+const STACK_KEY = "gm-stack";
+/** A stack older than this is a fresh start, not a comeback after a crash. */
+const STACK_MAX_AGE = 15 * 60_000;
+const STACK_SAVE_DELAY = 300;
+/** How often the saved stack is refreshed while GameMode sits on a screen. */
+const STACK_REFRESH_EVERY = 60_000;
+let stackSaveTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Saves the screen stack (debounced) so a restart lands on the same screen. */
+function persistStack(stack: Entry[]) {
+  if (isOverlayWindow) return;
+  clearTimeout(stackSaveTimer);
+  stackSaveTimer = setTimeout(() => {
+    // The top screen remembers its focus too, so a restart lands on the same card.
+    const top = { ...stack[stack.length - 1], focusId: currentFocusId() ?? stack[stack.length - 1]?.focusId };
+    try {
+      localStorage.setItem(STACK_KEY, JSON.stringify({ stack: [...stack.slice(0, -1), top], savedAt: Date.now() }));
+    } catch {
+      // Storage unavailable: the next start begins at Home.
+    }
+  }, STACK_SAVE_DELAY);
+}
+
+function forgetStack() {
+  clearTimeout(stackSaveTimer);
+  try {
+    localStorage.removeItem(STACK_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/** The saved stack, when it is recent (or the restart was for an update) and well formed. */
+export function loadStack(afterUpdate: boolean, now = Date.now()): Entry[] | null {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(STACK_KEY);
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    const saved = JSON.parse(raw) as { stack?: unknown; savedAt?: unknown };
+    if (typeof saved.savedAt !== "number" || (!afterUpdate && now - saved.savedAt > STACK_MAX_AGE)) return null;
+    const stack = Array.isArray(saved.stack) ? saved.stack.filter(isEntry) : [];
+    if (!stack.length || stack[0].screen.name === "detail") return null;
+    return stack;
+  } catch {
+    return null;
+  }
+}
+
+function isEntry(value: unknown): value is Entry {
+  if (!value || typeof value !== "object") return false;
+  const { screen, focusId } = value as { screen?: { name?: unknown; gameId?: unknown }; focusId?: unknown };
+  if (!screen || typeof screen !== "object" || typeof screen.name !== "string") return false;
+  if (focusId !== undefined && typeof focusId !== "string") return false;
+  if (screen.name === "detail") return typeof screen.gameId === "string";
+  return (TABS as string[]).includes(screen.name) || screen.name === "search" || screen.name === "connections";
 }
 
 /** How to drive a store window GameMode just opened. */

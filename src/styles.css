@@ -221,6 +221,11 @@ dd {
   text-overflow: ellipsis;
 }
 
+.session-pill.is-paused {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-dim);
+}
+
 .pulse {
   flex: none;
   width: 0.5rem;
@@ -1344,6 +1349,20 @@ button.chip {
 .update-pill.is-active {
   background: var(--accent);
   color: var(--accent-ink);
+}
+
+.playing-pill.is-paused {
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--text);
+}
+
+.qm-paused {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.8rem 1rem;
+  border-radius: 0.9rem;
+  background: var(--surface);
 }
 
 .detail-update {

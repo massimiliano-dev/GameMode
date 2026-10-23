@@ -9,6 +9,9 @@ use serde::Serialize;
 
 /// Passed to the watchdog copy of GameMode: `--watchdog <pid>`.
 pub const WATCHDOG_ARG: &str = "--watchdog";
+/// Also passed to the watchdog: `--live <live-session file>`, so it can thaw
+/// games GameMode left frozen (Quick Resume) if it dies.
+pub const LIVE_ARG: &str = "--live";
 
 #[derive(Serialize, Clone, Copy, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -17,6 +20,8 @@ pub struct ShellStatus {
     pub enabled: bool,
     /// This session started without Explorer (GameMode is the shell now).
     pub active: bool,
+    /// This process is the new version started by an update.
+    pub after_update: bool,
 }
 
 /// Splits a `Run` value into program and arguments (same rules as uninstallers).
@@ -145,10 +150,11 @@ mod imp {
 
     /// Starts a detached copy of GameMode that brings the desktop back if
     /// this process dies, so a crash never leaves a black screen.
-    pub fn spawn_watchdog() {
+    pub fn spawn_watchdog(live_file: &Path) {
         if let Ok(exe) = exe() {
             let _ = std::process::Command::new(exe)
-                .args([WATCHDOG_ARG, &std::process::id().to_string()])
+                .args([WATCHDOG_ARG, &std::process::id().to_string(), super::LIVE_ARG])
+                .arg(live_file)
                 .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
                 .spawn();
         }
@@ -174,6 +180,10 @@ mod imp {
                 }
             }
             super::clear_update_flag();
+        }
+        // A crash can leave a game frozen by Quick Resume: thaw it.
+        if let Some(live_file) = super::watchdog_live_file() {
+            crate::live::thaw_frozen_in(&live_file);
         }
         // A clean exit to the desktop already started Explorer.
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -318,7 +328,7 @@ mod imp {
 
     pub fn hide_desktop() {}
 
-    pub fn spawn_watchdog() {}
+    pub fn spawn_watchdog(_live_file: &std::path::Path) {}
 
     pub fn run_watchdog(_pid: u32) {}
 
@@ -388,7 +398,7 @@ fn start() -> &'static Start {
 
 pub fn status() -> ShellStatus {
     let enabled = imp::enabled();
-    ShellStatus { enabled, active: enabled && start().as_shell }
+    ShellStatus { enabled, active: enabled && start().as_shell, after_update: start().after_update }
 }
 
 /// Console mode with nothing underneath GameMode: no desktop to step aside to.
@@ -454,6 +464,14 @@ pub fn watchdog_pid() -> Option<u32> {
     let args: Vec<String> = std::env::args().collect();
     let i = args.iter().position(|a| a == WATCHDOG_ARG)?;
     args.get(i + 1)?.parse().ok()
+}
+
+/// `--live <file>` on the watchdog's command line.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn watchdog_live_file() -> Option<std::path::PathBuf> {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let i = args.iter().position(|a| a == LIVE_ARG)?;
+    args.get(i + 1).map(std::path::PathBuf::from)
 }
 
 pub fn set_enabled(enabled: bool) -> Result<ShellStatus> {

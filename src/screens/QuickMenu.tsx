@@ -17,6 +17,7 @@ export function QuickMenu() {
   const close = () => useApp.getState().setQuickMenu(false);
   const session = useApp((s) => s.session);
   const game = useApp((s) => s.games.find((g) => g.id === s.session?.gameId));
+  const paused = useApp((s) => s.suspended.length);
   const rescan = useApp((s) => s.rescan);
   const profiles = useApp((s) => s.profiles);
   const activeProfile = useApp((s) => s.activeProfile);
@@ -68,6 +69,8 @@ export function QuickMenu() {
   };
 
   const elapsed = session ? Math.max(0, Math.floor(Date.now() / 1000) - session.startedAt) : 0;
+  const pausedNote = paused ? `${paused === 1 ? "Il gioco in pausa viene chiuso" : `I ${paused} giochi in pausa vengono chiusi`} · premi di nuovo` : undefined;
+  const pausedQuitNote = paused ? `${paused === 1 ? "Il gioco in pausa riprende sul desktop" : "I giochi in pausa riprendono sul desktop"} · premi di nuovo` : undefined;
 
   return (
     <div className="quickmenu" data-nav-layer="quickmenu">
@@ -135,6 +138,13 @@ export function QuickMenu() {
           </div>
         )}
 
+        {paused > 0 && (
+          <div className="qm-paused">
+            <span className="qm-label">In pausa</span>
+            <span className="qm-sub">{paused === 1 ? "Un gioco è in pausa: lo riprendi dalla Home" : `${paused} giochi in pausa: li riprendi dalla Home`}</span>
+          </div>
+        )}
+
         {volume && (
           <VolumeRow
             volume={volume}
@@ -171,14 +181,25 @@ export function QuickMenu() {
             Cerca di nuovo i giochi
           </QmButton>
           <QmButton onClick={() => void api.toggleFullscreen()}>Schermo intero sì/no</QmButton>
-          <QmButton onClick={() => { close(); void api.exitToDesktop(); }}>{consoleMode ? "Apri il desktop di Windows" : "Vai al desktop"}</QmButton>
+          <QmButton
+            armed={armed === "desktop" && paused > 0}
+            confirmText={pausedQuitNote}
+            onClick={() => {
+              if (paused > 0 && armed !== "desktop") return setArmed("desktop");
+              setArmed(null);
+              close();
+              void useApp.getState().exitToDesktop();
+            }}
+          >
+            {consoleMode ? "Apri il desktop di Windows" : "Vai al desktop"}
+          </QmButton>
         </div>
 
         <div className="qm-list qm-power">
           <QmButton armed={armed === "sleep"} onClick={power("sleep")}>Sospendi</QmButton>
-          <QmButton armed={armed === "restart"} onClick={power("restart")}>Riavvia</QmButton>
-          <QmButton danger armed={armed === "shutdown"} onClick={power("shutdown")}>Spegni</QmButton>
-          <QmButton armed={armed === "quit"} onClick={() => confirmTwice("quit", () => void api.quit())}>
+          <QmButton armed={armed === "restart"} confirmText={pausedNote} onClick={power("restart")}>Riavvia</QmButton>
+          <QmButton danger armed={armed === "shutdown"} confirmText={pausedNote} onClick={power("shutdown")}>Spegni</QmButton>
+          <QmButton armed={armed === "quit"} confirmText={pausedQuitNote} onClick={() => confirmTwice("quit", () => void useApp.getState().quit())}>
             {consoleMode ? "Chiudi GameMode e apri il desktop" : "Chiudi GameMode"}
           </QmButton>
         </div>
@@ -215,6 +236,8 @@ export function QmButton(props: {
   autofocus?: boolean;
   danger?: boolean;
   armed?: boolean;
+  /** What the second press means, when it isn't a plain confirmation. */
+  confirmText?: string;
 }) {
   return (
     <button
@@ -225,7 +248,7 @@ export function QmButton(props: {
       onClick={props.onClick}
     >
       {props.children}
-      {props.armed && <span className="qm-confirm">Premi di nuovo per confermare</span>}
+      {props.armed && <span className="qm-confirm">{props.confirmText ?? "Premi di nuovo per confermare"}</span>}
     </button>
   );
 }

@@ -2,24 +2,29 @@
 //! process themselves, so a game is "running" while any process whose
 //! executable lives inside its install folder is alive — or, for Xbox /
 //! Game Pass titles, any process running with the game's package identity.
+//!
+//! One game is in the foreground at a time; others can be frozen in place
+//! (Quick Resume, see `freeze`) and kept in a short list of suspended
+//! sessions, each still followed by its own monitor thread.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
+use crate::live::LiveSession;
 use crate::procinfo::{ProcInfo, Probe};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::model::{now, Game, LaunchSpec, Session, Store};
 use crate::updates::GameUpdate;
-use crate::{window, AppState};
+use crate::{freeze, live, window, AppState};
 
 const POLL: Duration = Duration::from_secs(2);
 /// How long a store client may take before the game process shows up
@@ -37,6 +42,10 @@ const HANDOFF_TRIES: u32 = 15;
 const DIALOG_SETTLE: Duration = Duration::from_secs(6);
 /// After a Game Pass update, how long to wait before starting the game again.
 const RELAUNCH_AFTER_UPDATE: Duration = Duration::from_secs(15);
+/// How often the live-session file hears that the game is still there.
+const HEARTBEAT: Duration = Duration::from_secs(30);
+/// How many games can be kept frozen at once.
+pub const MAX_SUSPENDED: usize = 3;
 /// Store clients and helpers whose windows (sign-in, updates, errors, EULAs)
 /// a launch may wait on.
 const LAUNCHERS: &[&str] = &[
@@ -62,6 +71,8 @@ const EXIT_GRACE: Duration = Duration::from_secs(10);
 pub enum Phase {
     Launching,
     Running,
+    /// Frozen in place (Quick Resume): alive, off screen, not counting play time.
+    Suspended,
     Exited,
     Failed,
 }
@@ -70,50 +81,139 @@ pub enum Phase {
 #[serde(rename_all = "camelCase")]
 pub struct SessionState {
     pub game_id: String,
+    /// The game's name, so a frozen game stays visible even once the
+    /// library no longer lists it.
+    pub game_name: String,
     pub phase: Phase,
     pub started_at: i64,
     pub seconds: u64,
     /// The game is being updated before it can start.
     pub update: Option<GameUpdate>,
+    /// Unix seconds since when the game is frozen.
+    pub suspended_at: Option<i64>,
+    /// An anti-cheat lives in the install folder: freezing an online game
+    /// gets the player kicked, so the UI asks first.
+    pub anti_cheat: bool,
 }
 
 struct Active {
     generation: u64,
     state: SessionState,
     pids: Vec<u32>,
+    /// `(pid, start time)` of the same processes, for the live-session file.
+    live_pids: Vec<(u32, u64)>,
+    /// Unix seconds since the game was first seen running.
+    running_since: Option<i64>,
+    /// Seconds spent frozen so far: not play time.
+    paused_secs: u64,
+    /// The processes frozen by Quick Resume (the game and its children).
+    frozen: Vec<u32>,
+}
+
+impl Active {
+    /// Play time so far, pauses excluded.
+    fn played(&self, at: i64) -> u64 {
+        let since = self.running_since.map_or(0, |s| (at - s).max(0) as u64);
+        let paused = self.paused_secs + self.state.suspended_at.map_or(0, |s| (at - s).max(0) as u64);
+        since.saturating_sub(paused)
+    }
+
+    /// What the live-session file keeps about this session, once it runs.
+    fn live_record(&self, at: i64) -> Option<LiveSession> {
+        Some(LiveSession {
+            game_id: self.state.game_id.clone(),
+            started_at: self.running_since?,
+            last_seen: at,
+            pids: self.live_pids.clone(),
+            suspended: self.state.phase == Phase::Suspended,
+            paused_secs: self.paused_secs + self.state.suspended_at.map_or(0, |s| (at - s).max(0) as u64),
+        })
+    }
 }
 
 #[derive(Default)]
 pub struct Launcher {
-    active: Mutex<Option<Active>>,
+    sessions: Mutex<Vec<Active>>,
     generation: AtomicU64,
+    /// Held while a game is frozen, thawed or closed: suspending the same
+    /// game twice would need two thaws.
+    transition: Mutex<()>,
 }
 
 impl Launcher {
+    /// Claims the right to change a session's state, or says that another
+    /// change is still under way.
+    fn transition(&self) -> Result<MutexGuard<'_, ()>> {
+        match self.transition.try_lock() {
+            Ok(guard) => Ok(guard),
+            Err(TryLockError::Poisoned(e)) => Ok(e.into_inner()),
+            Err(TryLockError::WouldBlock) => anyhow::bail!("Un attimo: un altro gioco sta cambiando stato"),
+        }
+    }
+
+    /// Like `transition`, waiting for any change under way to finish.
+    fn transition_wait(&self) -> MutexGuard<'_, ()> {
+        self.transition.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The game in the foreground (starting or running), if any.
     pub fn current(&self) -> Option<SessionState> {
-        self.active.lock().unwrap().as_ref().map(|a| a.state.clone())
+        self.sessions.lock().unwrap().iter().find(|a| a.state.phase != Phase::Suspended).map(|a| a.state.clone())
+    }
+
+    /// The games frozen by Quick Resume.
+    pub fn suspended(&self) -> Vec<SessionState> {
+        self.sessions.lock().unwrap().iter().filter(|a| a.state.phase == Phase::Suspended).map(|a| a.state.clone()).collect()
     }
 
     pub fn running_pids(&self) -> Vec<u32> {
-        self.active.lock().unwrap().as_ref().map(|a| a.pids.clone()).unwrap_or_default()
+        self.sessions.lock().unwrap().iter().find(|a| a.state.phase != Phase::Suspended).map(|a| a.pids.clone()).unwrap_or_default()
+    }
+
+    fn phase(&self, generation: u64) -> Option<Phase> {
+        self.sessions.lock().unwrap().iter().find(|a| a.generation == generation).map(|a| a.state.phase)
+    }
+
+    fn generation_of(&self, game_id: &str) -> Option<u64> {
+        self.sessions.lock().unwrap().iter().find(|a| a.state.game_id == game_id).map(|a| a.generation)
+    }
+
+    fn with<T>(&self, generation: u64, f: impl FnOnce(&mut Active) -> T) -> Option<T> {
+        let mut guard = self.sessions.lock().unwrap();
+        let active = guard.iter_mut().find(|a| a.generation == generation)?;
+        Some(f(active))
     }
 
     fn update(&self, generation: u64, f: impl FnOnce(&mut Active)) -> Option<SessionState> {
-        let mut guard = self.active.lock().unwrap();
-        let active = guard.as_mut().filter(|a| a.generation == generation)?;
-        f(active);
-        Some(active.state.clone())
+        self.with(generation, |a| {
+            f(a);
+            a.state.clone()
+        })
+    }
+
+    /// Adds a foreground session; it supersedes the previous foreground
+    /// one (its monitor stops), never the suspended ones.
+    fn insert(&self, active: Active) {
+        let mut guard = self.sessions.lock().unwrap();
+        guard.retain(|a| a.state.phase == Phase::Suspended);
+        guard.push(active);
     }
 
     fn finish(&self, generation: u64) {
-        let mut guard = self.active.lock().unwrap();
-        if guard.as_ref().is_some_and(|a| a.generation == generation) {
-            *guard = None;
-        }
+        self.sessions.lock().unwrap().retain(|a| a.generation != generation);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.sessions.lock().unwrap().is_empty()
     }
 }
 
 pub fn launch(app: &AppHandle, game: &Game) -> Result<()> {
+    // A frozen game is brought back, not started twice.
+    let launcher = &app.state::<AppState>().launcher;
+    if launcher.generation_of(&game.id).is_some_and(|g| launcher.phase(g) == Some(Phase::Suspended)) {
+        return resume_suspended(app, &game.id);
+    }
     crate::assist::disable();
     let settings = app.state::<AppState>().db.lock().settings.clone();
     if settings.performance_mode {
@@ -125,26 +225,111 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<()> {
     // install folder to watch instead.
     let track_child = matches!(game.store, Store::Manual | Store::Mock) || game.install_dir.is_none();
     let child_pid = spawned.filter(|_| track_child);
+    track(app, game, child_pid, None, 0, None);
+    Ok(())
+}
 
+/// Follows a game: creates its session and starts the monitor. With
+/// `running_since` the game is already up (reattached after a restart) and
+/// its play time counts from there; with `frozen` it is up but suspended,
+/// and those are its frozen processes.
+fn track(app: &AppHandle, game: &Game, child_pid: Option<u32>, running_since: Option<i64>, paused_secs: u64, frozen: Option<Vec<u32>>) {
     let launcher = &app.state::<AppState>().launcher;
-    // Starting a new game supersedes tracking of the previous one.
     let generation = launcher.generation.fetch_add(1, Ordering::SeqCst) + 1;
-    let state =
-        SessionState { game_id: game.id.clone(), phase: Phase::Launching, started_at: now(), seconds: 0, update: None };
-    *launcher.active.lock().unwrap() = Some(Active { generation, state: state.clone(), pids: Vec::new() });
+    let phase = match (running_since, &frozen) {
+        (Some(_), Some(_)) => Phase::Suspended,
+        (Some(_), None) => Phase::Running,
+        (None, _) => Phase::Launching,
+    };
+    let state = SessionState {
+        game_id: game.id.clone(),
+        game_name: game.name.clone(),
+        phase,
+        started_at: running_since.unwrap_or_else(now),
+        seconds: 0,
+        update: None,
+        suspended_at: (phase == Phase::Suspended).then(now),
+        anti_cheat: game.install_dir.as_deref().is_some_and(freeze::anti_cheat_in),
+    };
+    launcher.insert(Active {
+        generation,
+        state: state.clone(),
+        pids: Vec::new(),
+        live_pids: Vec::new(),
+        running_since,
+        paused_secs,
+        frozen: frozen.unwrap_or_default(),
+    });
     let _ = app.emit("game://state", &state);
 
     let timeout = if game.store == Store::Xbox { LAUNCH_TIMEOUT_XBOX } else { LAUNCH_TIMEOUT };
-    let target = Target {
-        dir: game.install_dir.as_deref().map(normalize).filter(|d| d.len() > 3),
-        // Xbox game ids are `xbox:<PackageFamilyName>`.
-        family: (game.store == Store::Xbox).then(|| native_id(game).to_lowercase()),
-        child_pid,
-    };
+    let target = Target::of(game, child_pid);
     let app = app.clone();
     let game = game.clone();
-    std::thread::spawn(move || monitor(app, generation, game, target, timeout));
-    Ok(())
+    std::thread::spawn(move || monitor(app, generation, game, target, timeout, running_since.is_some()));
+}
+
+/// After a restart (crash, update): picks up the games the live-session
+/// file remembers. A game still alive is followed again, frozen ones as
+/// suspended (the user resumes them from Home); a dead one gets its play
+/// time recorded. One game at a time has the foreground: a second running
+/// one (the watchdog thaws frozen games when GameMode dies) is frozen again.
+pub fn reattach(app: &AppHandle) {
+    let mut remembered = live::snapshot().sessions;
+    if remembered.is_empty() {
+        // A crash mid-game may have left the performance power plan on.
+        crate::performance::end();
+        return;
+    }
+    // Frozen games first: the foreground goes to the first running one.
+    remembered.sort_by_key(|s| !s.suspended);
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet));
+    let mut probe = Probe::default();
+    let state = app.state::<AppState>();
+    let at = now();
+    let mut foreground_taken = false;
+    for s in remembered {
+        let game = state.db.lock().game(&s.game_id).cloned();
+        let same_pids = s.alive(|pid| sys.process(Pid::from_u32(pid)).map(|p| p.start_time()));
+        let found = game.as_ref().map(|g| game_pids(&sys, &mut probe, &Target::of(g, None))).unwrap_or_default();
+        match game {
+            Some(game) if same_pids || !found.is_empty() => {
+                let remembered_pids: Vec<u32> = s.pids.iter().map(|(pid, _)| *pid).collect();
+                let pids = if found.is_empty() { remembered_pids } else { found };
+                let frozen = if s.suspended {
+                    Some(freeze::family(&pids))
+                } else if foreground_taken {
+                    // Running, but another game already has the screen.
+                    let family = freeze::family(&pids);
+                    match freeze::suspend(&family, window::game_window(&pids)) {
+                        Ok(()) => Some(family),
+                        Err(err) => {
+                            eprintln!("freezing {} again failed: {err:#}", game.name);
+                            live::update(|l| l.remove(&s.game_id));
+                            if s.played() > 0 {
+                                record(app, &s.game_id, s.started_at, s.last_seen, s.played());
+                            }
+                            continue;
+                        }
+                    }
+                } else {
+                    foreground_taken = true;
+                    None
+                };
+                track(app, &game, None, Some(s.started_at), s.paused_until(at), frozen);
+            }
+            _ => {
+                live::update(|l| l.remove(&s.game_id));
+                if s.played() > 0 {
+                    record(app, &s.game_id, s.started_at, s.last_seen, s.played());
+                }
+            }
+        }
+    }
+    if state.launcher.is_empty() {
+        crate::performance::end();
+    }
 }
 
 fn native_id(game: &Game) -> &str {
@@ -161,6 +346,15 @@ struct Target {
 }
 
 impl Target {
+    fn of(game: &Game, child_pid: Option<u32>) -> Self {
+        Target {
+            dir: game.install_dir.as_deref().map(normalize).filter(|d| d.len() > 3),
+            // Xbox game ids are `xbox:<PackageFamilyName>`.
+            family: (game.store == Store::Xbox).then(|| native_id(game).to_lowercase()),
+            child_pid,
+        }
+    }
+
     fn matches(&self, pid: u32, info: &ProcInfo) -> bool {
         let helper = info.exe.as_deref().and_then(Path::file_name).is_some_and(|name| {
             NOT_THE_GAME.contains(&name.to_string_lossy().to_lowercase().as_str())
@@ -215,7 +409,7 @@ fn spawn(app: &AppHandle, spec: &LaunchSpec) -> Result<Option<u32>> {
     }
 }
 
-fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout: Duration) {
+fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout: Duration, reattached: bool) {
     let launcher = &app.state::<AppState>().launcher;
     let refresh = ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet);
     let mut sys = System::new();
@@ -227,12 +421,15 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
     // kept running for a while. Before that, store helpers (Game Pass's
     // launch helper, licence checks, updaters) come and go without ending
     // the launch.
-    let mut running_since: Option<Instant> = None;
+    let mut running_since: Option<Instant> = reattached.then(Instant::now);
     let mut alive_since: Option<Instant> = None;
     let mut last_seen = Instant::now();
+    let mut last_heartbeat = Instant::now();
     // The game window last handed the screen, and attempts at it so far.
     let mut handed: Option<isize> = None;
     let mut tries = 0;
+    // A reattached game already has the screen: its window is adopted, not handed over again.
+    let mut adopt_window = reattached;
     // Since when the game's window is gone while its processes linger.
     let mut window_gone: Option<Instant> = None;
     let mut update: Option<GameUpdate> = None;
@@ -240,14 +437,44 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
     let mut dialogs = Dialogs::new();
 
     loop {
-        // A newer launch took over.
-        if launcher.update(generation, |_| {}).is_none() {
-            return;
-        }
+        // A newer launch took over, or the session was closed.
+        let Some(phase) = launcher.phase(generation) else { return };
         sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
         probe.retain_alive(sys.processes());
         let pids = game_pids(&sys, &mut probe, &target);
+
+        if phase == Phase::Suspended {
+            // Frozen: no window lookups (a frozen window answers nothing),
+            // no play time; only whether its processes are still there.
+            // Its window is minimized, not gone.
+            window_gone = None;
+            if pids.is_empty() {
+                if last_seen.elapsed() > EXIT_GRACE {
+                    end(&app, generation, Phase::Exited, 0);
+                    return;
+                }
+            } else {
+                last_seen = Instant::now();
+                let live_pids = pids_with_start(&sys, &pids);
+                launcher.with(generation, |a| {
+                    a.pids = pids;
+                    a.live_pids = live_pids;
+                });
+                if last_heartbeat.elapsed() >= HEARTBEAT {
+                    last_heartbeat = Instant::now();
+                    heartbeat(launcher, generation);
+                }
+            }
+            std::thread::sleep(POLL);
+            continue;
+        }
+
         let window = if pids.is_empty() { None } else { window::game_window(&pids) };
+        if adopt_window && !pids.is_empty() {
+            adopt_window = false;
+            handed = window;
+            tries = HANDOFF_TRIES;
+        }
         // The game's window keeps it alive even when its processes can't be
         // read any more (anti-cheat, a launcher that started it).
         let window_alive = running_since.is_some() && handed.is_some_and(window::window_alive);
@@ -310,29 +537,47 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
                 running_since = Some(last_seen);
                 dialogs.done();
             }
-            let state = launcher.update(generation, |a| {
+            let at = now();
+            let live_pids = pids_with_start(&sys, &pids);
+            let state = launcher.with(generation, |a| {
+                // Frozen during this poll (Quick Resume): leave it as it is,
+                // the next poll follows it as suspended.
+                if a.state.phase == Phase::Suspended {
+                    return None;
+                }
                 a.pids = pids;
-                if let Some(since) = running_since {
+                a.live_pids = live_pids;
+                if running_since.is_some() {
                     a.state.phase = Phase::Running;
-                    a.state.seconds = since.elapsed().as_secs();
+                    a.running_since.get_or_insert(at);
+                    a.state.seconds = a.played(at);
                     a.state.update = None;
                 }
+                Some(a.state.clone())
             });
+            let Some(Some(state)) = state else {
+                std::thread::sleep(POLL);
+                continue;
+            };
             if was_launching && running_since.is_some() {
-                if let Some(state) = state {
-                    let _ = app.emit("game://state", &state);
-                }
+                let _ = app.emit("game://state", &state);
+                // From now on the session survives a restart of GameMode.
+                last_heartbeat = Instant::now();
+                heartbeat(launcher, generation);
+            } else if running_since.is_some() && last_heartbeat.elapsed() >= HEARTBEAT {
+                last_heartbeat = Instant::now();
+                heartbeat(launcher, generation);
             }
             // Quitting a game can leave background processes behind (crash
             // reporters, launchers, services): once its window is gone for
             // good, the game is over.
-            if let Some(since) = running_since.filter(|_| handed.is_some()) {
+            if running_since.is_some() && handed.is_some() {
                 if window.is_some() || window_alive {
                     window_gone = None;
                 } else {
                     let gone = *window_gone.get_or_insert_with(Instant::now);
                     if gone.elapsed() > EXIT_GRACE {
-                        end(&app, generation, Phase::Exited, gone.duration_since(since).as_secs());
+                        end(&app, generation, Phase::Exited, gone.elapsed().as_secs());
                         return;
                     }
                 }
@@ -349,15 +594,21 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
                     end(&app, generation, Phase::Failed, 0);
                     return;
                 }
-                Some(since) if last_seen.elapsed() > EXIT_GRACE => {
-                    let seconds = last_seen.duration_since(since).as_secs();
-                    end(&app, generation, Phase::Exited, seconds);
+                Some(_) if last_seen.elapsed() > EXIT_GRACE => {
+                    end(&app, generation, Phase::Exited, last_seen.elapsed().as_secs());
                     return;
                 }
                 _ => {}
             }
         }
         std::thread::sleep(POLL);
+    }
+}
+
+/// Writes the session to the live-session file.
+fn heartbeat(launcher: &Launcher, generation: u64) {
+    if let Some(Some(record)) = launcher.with(generation, |a| a.live_record(now())) {
+        live::update(|l| l.upsert(record));
     }
 }
 
@@ -431,42 +682,63 @@ fn game_pids(sys: &System, probe: &mut Probe, target: &Target) -> Vec<u32> {
         .collect()
 }
 
+fn pids_with_start(sys: &System, pids: &[u32]) -> Vec<(u32, u64)> {
+    pids.iter().filter_map(|&pid| sys.process(Pid::from_u32(pid)).map(|p| (pid, p.start_time()))).collect()
+}
+
 /// Case- and separator-insensitive path string, as Windows compares paths.
 pub(crate) fn normalize(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/").trim_end_matches('/').to_lowercase()
 }
 
-fn end(app: &AppHandle, generation: u64, phase: Phase, seconds: u64) {
+/// Adds a finished session to the library and tells the frontend.
+fn record(app: &AppHandle, game_id: &str, start: i64, end: i64, seconds: u64) {
     let state = app.state::<AppState>();
-    let Some(session) = state.launcher.update(generation, |a| {
+    let record = Session { game_id: game_id.to_string(), profile_id: String::new(), start, end, seconds };
+    match state.db.update(|d| {
+        d.record_session(record);
+        d.view_game(game_id)
+    }) {
+        Ok(Some(game)) => {
+            let _ = app.emit("library://game", &game);
+        }
+        Ok(None) => {}
+        Err(err) => eprintln!("saving session failed: {err:#}"),
+    }
+}
+
+/// Ends a session. `grace` is how long ago the game really went away.
+fn end(app: &AppHandle, generation: u64, phase: Phase, grace: u64) {
+    let state = app.state::<AppState>();
+    let at = now();
+    let Some((session, foreground, frozen)) = state.launcher.with(generation, |a| {
+        let foreground = a.state.phase != Phase::Suspended;
         a.state.phase = phase;
-        a.state.seconds = seconds;
+        a.state.seconds = if phase == Phase::Exited { a.played(at).saturating_sub(grace) } else { 0 };
+        a.state.suspended_at = None;
+        (a.state.clone(), foreground, std::mem::take(&mut a.frozen))
     }) else {
         return;
     };
     state.launcher.finish(generation);
+    live::update(|l| l.remove(&session.game_id));
+    // Windows remembers an app's mute: a game that died frozen would start
+    // silent next time.
+    if !frozen.is_empty() {
+        freeze::unmute(&frozen);
+    }
 
-    if phase == Phase::Exited && seconds > 0 {
-        let record = Session {
-            game_id: session.game_id.clone(),
-            profile_id: String::new(),
-            start: session.started_at,
-            end: now(),
-            seconds,
-        };
-        match state.db.update(|d| {
-            d.record_session(record);
-            d.view_game(&session.game_id)
-        }) {
-            Ok(Some(game)) => {
-                let _ = app.emit("library://game", &game);
-            }
-            Ok(None) => {}
-            Err(err) => eprintln!("saving session failed: {err:#}"),
-        }
+    if phase == Phase::Exited && session.seconds > 0 {
+        record(app, &session.game_id, session.started_at, at, session.seconds);
     }
     let _ = app.emit("game://state", &session);
-    crate::performance::end();
+    if state.launcher.is_empty() {
+        crate::performance::end();
+    }
+    // A frozen game that died in the background changes nothing on screen.
+    if !foreground {
+        return;
+    }
     crate::overlay::hide(app);
     crate::wand::forget();
     // A failed launch leaves GameMode where it is, unless it stepped aside;
@@ -474,6 +746,150 @@ fn end(app: &AppHandle, generation: u64, phase: Phase, seconds: u64) {
     if (phase == Phase::Exited || window::is_minimized(app)) && !window::fullscreen_app_in_front(app) {
         window::bring_to_front(app);
     }
+}
+
+/// Quick Resume: freezes the foreground game and brings GameMode back.
+pub fn suspend_current(app: &AppHandle) -> Result<()> {
+    let launcher = &app.state::<AppState>().launcher;
+    let _transition = launcher.transition()?;
+    let session = launcher.current().context("Nessun gioco in corso")?;
+    if session.phase != Phase::Running {
+        anyhow::bail!("Aspetta che il gioco sia partito");
+    }
+    if launcher.suspended().len() >= MAX_SUSPENDED {
+        anyhow::bail!("Puoi tenere in pausa al massimo {MAX_SUSPENDED} giochi: chiudine uno");
+    }
+    let generation = launcher.generation_of(&session.game_id).context("Nessun gioco in corso")?;
+    let pids = launcher.running_pids();
+    let family = freeze::family(&pids);
+    if family.is_empty() {
+        anyhow::bail!("Questo gioco non si può sospendere: processi non trovati");
+    }
+    // Wand may hold the game frozen on its own count: let it go first.
+    crate::wand::forget();
+    let hwnd = window::game_window(&pids);
+    freeze::suspend(&family, hwnd).map_err(|e| anyhow::anyhow!("Questo gioco non si può sospendere: {e:#}"))?;
+    let at = now();
+    let Some(state) = launcher.update(generation, |a| {
+        a.state.seconds = a.played(at);
+        a.state.phase = Phase::Suspended;
+        a.state.suspended_at = Some(at);
+        a.frozen = family.clone();
+    }) else {
+        // The game ended meanwhile: don't leave its processes frozen.
+        let _ = freeze::resume(&family);
+        anyhow::bail!("Il gioco si è chiuso");
+    };
+    heartbeat(launcher, generation);
+    let _ = app.emit("game://state", &state);
+    crate::overlay::hide(app);
+    window::bring_to_front(app);
+    Ok(())
+}
+
+/// Thaws a frozen game and hands it the screen. A game in the foreground
+/// is frozen first, so one game at a time has the screen.
+pub fn resume_suspended(app: &AppHandle, game_id: &str) -> Result<()> {
+    let launcher = &app.state::<AppState>().launcher;
+    let _transition = launcher.transition()?;
+    let generation = launcher.generation_of(game_id).context("Questo gioco non è in pausa")?;
+    if launcher.phase(generation) != Some(Phase::Suspended) {
+        anyhow::bail!("Questo gioco non è in pausa");
+    }
+    if let Some(front) = launcher.current() {
+        if front.phase == Phase::Launching {
+            anyhow::bail!("Aspetta che il gioco in avvio sia partito");
+        }
+        // The list may be full right now: swapping keeps its size.
+        swap_out(app)?;
+    }
+    thaw(app, generation)?;
+    let pids = launcher.running_pids();
+    window::resume_game(app, &pids);
+    Ok(())
+}
+
+/// Freezes the foreground game to make room for another one.
+fn swap_out(app: &AppHandle) -> Result<()> {
+    let launcher = &app.state::<AppState>().launcher;
+    let session = launcher.current().context("Nessun gioco in corso")?;
+    let generation = launcher.generation_of(&session.game_id).context("Nessun gioco in corso")?;
+    let pids = launcher.running_pids();
+    let family = freeze::family(&pids);
+    crate::wand::forget();
+    let hwnd = window::game_window(&pids);
+    freeze::suspend(&family, hwnd).map_err(|e| anyhow::anyhow!("Il gioco in corso non si può sospendere: {e:#}"))?;
+    let at = now();
+    if let Some(state) = launcher.update(generation, |a| {
+        a.state.seconds = a.played(at);
+        a.state.phase = Phase::Suspended;
+        a.state.suspended_at = Some(at);
+        a.frozen = family;
+    }) {
+        heartbeat(launcher, generation);
+        let _ = app.emit("game://state", &state);
+    }
+    Ok(())
+}
+
+/// Thaws one frozen session and marks it running again.
+fn thaw(app: &AppHandle, generation: u64) -> Result<()> {
+    let launcher = &app.state::<AppState>().launcher;
+    let frozen = launcher.with(generation, |a| a.frozen.clone()).unwrap_or_default();
+    let result = freeze::resume(&frozen);
+    let at = now();
+    if let Some(state) = launcher.update(generation, |a| {
+        if let Some(since) = a.state.suspended_at.take() {
+            a.paused_secs += (at - since).max(0) as u64;
+        }
+        a.frozen.clear();
+        a.state.phase = Phase::Running;
+        a.state.seconds = a.played(at);
+    }) {
+        heartbeat(launcher, generation);
+        let _ = app.emit("game://state", &state);
+    }
+    result.map_err(|e| anyhow::anyhow!("Il gioco non è ripartito del tutto: {e:#}"))
+}
+
+/// Thaws every frozen game, e.g. before GameMode quits or the PC shuts
+/// down: nothing may stay frozen behind GameMode's back.
+pub fn thaw_all(app: &AppHandle) {
+    let launcher = &app.state::<AppState>().launcher;
+    let _transition = launcher.transition_wait();
+    for session in launcher.suspended() {
+        if let Some(generation) = launcher.generation_of(&session.game_id) {
+            if let Err(err) = thaw(app, generation) {
+                eprintln!("{err:#}");
+            }
+        }
+    }
+}
+
+/// Ends a frozen game without thawing it (a frozen process can be killed).
+pub fn close_suspended(app: &AppHandle, game_id: &str) -> Result<()> {
+    let launcher = &app.state::<AppState>().launcher;
+    let _transition = launcher.transition()?;
+    let generation = launcher.generation_of(game_id).context("Questo gioco non è in pausa")?;
+    if launcher.phase(generation) != Some(Phase::Suspended) {
+        anyhow::bail!("Questo gioco non è in pausa");
+    }
+    let frozen = launcher.with(generation, |a| a.frozen.clone()).unwrap_or_default();
+    // The audio engine, not the frozen game, answers this: safe before the kill.
+    freeze::unmute(&frozen);
+    if !kill(&frozen) {
+        anyhow::bail!("Non riesco a chiudere il gioco: riprendilo e chiudilo da lì");
+    }
+    end(app, generation, Phase::Exited, 0);
+    Ok(())
+}
+
+/// Terminates `pids`; true when every one that still exists went down.
+fn kill(pids: &[u32]) -> bool {
+    let mut sys = System::new();
+    let targets: Vec<Pid> = pids.iter().map(|p| Pid::from_u32(*p)).collect();
+    sys.refresh_processes(ProcessesToUpdate::Some(&targets), true);
+    targets.into_iter().filter_map(|pid| sys.process(pid)).all(|process| process.kill())
 }
 
 #[cfg(windows)]
@@ -524,21 +940,14 @@ pub fn close_running(app: &AppHandle) -> bool {
     let pids = launcher.running_pids();
     if pids.is_empty() {
         // Still starting: stop waiting for it.
-        let generation = launcher.active.lock().unwrap().as_ref().map(|a| a.generation);
+        let generation = launcher.current().and_then(|s| launcher.generation_of(&s.game_id));
         if let Some(generation) = generation {
             end(app, generation, Phase::Exited, 0);
             return true;
         }
         return false;
     }
-    let mut sys = System::new();
-    let targets: Vec<Pid> = pids.iter().map(|p| Pid::from_u32(*p)).collect();
-    sys.refresh_processes(ProcessesToUpdate::Some(&targets), true);
-    for pid in targets {
-        if let Some(process) = sys.process(pid) {
-            process.kill();
-        }
-    }
+    kill(&pids);
     true
 }
 
@@ -568,5 +977,62 @@ mod tests {
     #[test]
     fn normalizes_windows_paths() {
         assert_eq!(normalize(Path::new(r"C:\Games\Hades\")), "c:/games/hades");
+    }
+
+    fn active(phase: Phase) -> Active {
+        Active {
+            generation: 1,
+            state: SessionState {
+                game_id: "steam:1".into(),
+                game_name: "One".into(),
+                phase,
+                started_at: 1000,
+                seconds: 0,
+                update: None,
+                suspended_at: None,
+                anti_cheat: false,
+            },
+            pids: vec![7],
+            live_pids: vec![(7, 99)],
+            running_since: Some(1000),
+            paused_secs: 60,
+            frozen: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn play_time_skips_pauses() {
+        let mut a = active(Phase::Running);
+        assert_eq!(a.played(1300), 240);
+        a.state.phase = Phase::Suspended;
+        a.state.suspended_at = Some(1300);
+        // Frozen: the clock stops.
+        assert_eq!(a.played(1900), 240);
+        let record = a.live_record(1900).unwrap();
+        assert!(record.suspended);
+        assert_eq!(record.paused_secs, 660);
+        assert_eq!(record.played(), 240);
+        a.running_since = None;
+        assert!(a.live_record(1900).is_none());
+    }
+
+    #[test]
+    fn a_new_launch_keeps_the_frozen_games() {
+        let launcher = Launcher::default();
+        launcher.insert(active(Phase::Running));
+        let mut frozen = active(Phase::Suspended);
+        frozen.generation = 2;
+        frozen.state.game_id = "steam:2".into();
+        launcher.insert(frozen);
+        let mut next = active(Phase::Launching);
+        next.generation = 3;
+        next.state.game_id = "steam:3".into();
+        launcher.insert(next);
+        assert_eq!(launcher.current().map(|s| s.game_id).as_deref(), Some("steam:3"));
+        assert_eq!(launcher.suspended().len(), 1);
+        assert_eq!(launcher.phase(1), None);
+        assert_eq!(launcher.generation_of("steam:2"), Some(2));
+        launcher.finish(2);
+        assert!(launcher.suspended().is_empty());
     }
 }

@@ -1,11 +1,13 @@
-import { useCallback, useMemo } from "react";
+import { AnimatePresence } from "motion/react";
+import { useCallback, useMemo, useState } from "react";
 
+import { ActionSheet } from "../components/ActionSheet";
 import { Cover, GameCard } from "../components/GameCard";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
 import { artUrl } from "../lib/api";
 import { formatLastPlayed, formatPlaytime, STORE_LABEL, STORES } from "../lib/format";
-import type { Collection, Game } from "../lib/types";
+import type { Collection, Game, SessionState, Store } from "../lib/types";
 import { useApp, visibleGames } from "../store/app";
 
 interface Row {
@@ -59,20 +61,46 @@ export function Home({ focusId }: { focusId?: string }) {
   const setBackdrop = useApp((s) => s.setBackdrop);
   const featured = useApp((s) => s.games.find((g) => g.id === s.backdropId));
   const sessionGame = useApp((s) => s.session?.gameId);
+  const suspended = useApp((s) => s.suspended);
+  const resumeSuspended = useApp((s) => s.resumeSuspended);
+  const closeSuspended = useApp((s) => s.closeSuspended);
   const rows = useMemo(() => buildRows(games, collections), [games, collections]);
+  // Frozen games (Quick Resume), with their sessions.
+  const paused = useMemo(() => pausedGames(games, suspended), [games, suspended]);
+  const [sheet, setSheet] = useState<Game | null>(null);
+  // The focus sits on the "In pausa" row, where A opens the options.
+  const [onPausedRow, setOnPausedRow] = useState(false);
 
-  useScreenFocus(focusId, rows.length > 0);
-  useHints([
-    { button: "A", label: "Dettagli" },
-    { button: "X", label: "Gioca" },
-    { button: "Y", label: "Preferito" },
-  ]);
+  useScreenFocus(focusId, rows.length > 0 || paused.length > 0);
+  useHints(
+    [
+      { button: "A", label: onPausedRow ? "Opzioni" : "Dettagli" },
+      { button: "X", label: "Gioca" },
+      { button: "Y", label: "Preferito" },
+    ],
+    [onPausedRow],
+  );
 
-  const onFocus = useCallback((g: Game) => setBackdrop(g.id), [setBackdrop]);
+  const onFocus = useCallback(
+    (g: Game) => {
+      setBackdrop(g.id);
+      setOnPausedRow(false);
+    },
+    [setBackdrop],
+  );
+  const onFocusPaused = useCallback(
+    (g: Game) => {
+      setBackdrop(g.id);
+      setOnPausedRow(true);
+    },
+    [setBackdrop],
+  );
   const onSelect = useCallback((g: Game) => open({ name: "detail", gameId: g.id }), [open]);
+  const onSelectPaused = useCallback((g: Game) => setSheet(g), []);
+  const sheetKnown = !!sheet && games.some((g) => g.id === sheet.id);
 
   useAction((action, repeat) => {
-    if (repeat || !featured) return;
+    if (repeat || !featured || sheet) return;
     if (action === "x") {
       void launch(featured.id);
       return true;
@@ -83,12 +111,33 @@ export function Home({ focusId }: { focusId?: string }) {
     }
   });
 
-  if (!rows.length) return <EmptyLibrary loaded={loaded} />;
+  if (!rows.length && !paused.length) return <EmptyLibrary loaded={loaded} />;
 
   return (
     <div className="screen home">
       <section className="home-hero">{featured && <FeaturedInfo game={featured} />}</section>
       <div className="rows">
+        {paused.length > 0 && (
+          <section className="row" data-nav-group="row:paused">
+            <h2 className="row-title">
+              In pausa
+              <span className="row-count">{paused.length}</span>
+            </h2>
+            <div className="row-scroll">
+              {paused.map(({ game }, i) => (
+                <GameCard
+                  key={game.id}
+                  game={game}
+                  navId={`paused:${game.id}`}
+                  onFocus={onFocusPaused}
+                  onSelect={onSelectPaused}
+                  paused
+                  autofocus={i === 0}
+                />
+              ))}
+            </div>
+          </section>
+        )}
         {rows.map((row, rowIndex) => (
           <section key={row.key} className="row" data-nav-group={`row:${row.key}`}>
             <h2 className="row-title">
@@ -104,15 +153,62 @@ export function Home({ focusId }: { focusId?: string }) {
                   onFocus={onFocus}
                   onSelect={onSelect}
                   playing={sessionGame === g.id}
-                  autofocus={rowIndex === 0 && i === 0}
+                  paused={suspended.some((p) => p.gameId === g.id)}
+                  autofocus={!paused.length && rowIndex === 0 && i === 0}
                 />
               ))}
             </div>
           </section>
         ))}
       </div>
+      <AnimatePresence>
+        {sheet && (
+          <ActionSheet
+            key="paused"
+            title={sheet.name}
+            onClose={() => setSheet(null)}
+            actions={[
+              { label: "Riprendi", hint: pausedFor(paused.find((p) => p.game.id === sheet.id)?.session), onSelect: () => void resumeSuspended(sheet.id) },
+              // A game the library lost (store disabled, rescan) has no page to open.
+              ...(sheetKnown ? [{ label: "Dettagli", onSelect: () => onSelect(sheet) }] : []),
+              { label: "Chiudi gioco", danger: true, onSelect: () => void closeSuspended(sheet.id) },
+            ]}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
+}
+
+/** The frozen games, oldest pause first. One the library no longer lists
+ * (store disabled, rescan) still shows, so it can be resumed or closed. */
+function pausedGames(games: Game[], suspended: SessionState[]): { game: Game; session: SessionState }[] {
+  return suspended.map((session) => ({ session, game: games.find((g) => g.id === session.gameId) ?? placeholderGame(session) }));
+}
+
+function placeholderGame(session: SessionState): Game {
+  const prefix = session.gameId.split(":")[0];
+  const store = (STORES as string[]).includes(prefix) ? (prefix as Store) : "manual";
+  return {
+    id: session.gameId,
+    store,
+    name: session.gameName || session.gameId,
+    installDir: null,
+    steamAppid: null,
+    artwork: {},
+    artworkCheckedAt: null,
+    favorite: false,
+    hidden: false,
+    addedAt: 0,
+    lastPlayed: null,
+    playtimeSecs: 0,
+  };
+}
+
+function pausedFor(session?: SessionState): string | undefined {
+  if (!session?.suspendedAt) return undefined;
+  const secs = Math.max(0, Math.floor(Date.now() / 1000) - session.suspendedAt);
+  return secs < 60 ? "In pausa da meno di un minuto" : `In pausa da ${formatPlaytime(secs)}`;
 }
 
 function FeaturedInfo({ game }: { game: Game }) {

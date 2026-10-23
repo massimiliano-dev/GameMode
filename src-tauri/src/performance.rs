@@ -1,25 +1,23 @@
 //! Performance mode while a game runs: the "High performance" power plan and
 //! politely closing apps the user listed (browsers, chat apps…). Everything
-//! is undone when the game ends.
-
-use std::sync::Mutex;
-
-/// The power plan that was active before the game, restored afterwards.
-static PREVIOUS_SCHEME: Mutex<Option<String>> = Mutex::new(None);
+//! is undone when the game ends. The previous power plan is remembered in
+//! the live-session file, so it comes back even after a crash.
 
 const HIGH_PERFORMANCE: &str = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
 
 pub fn begin(close_apps: &[String]) {
     if let Some(current) = active_scheme() {
         if !current.eq_ignore_ascii_case(HIGH_PERFORMANCE) && powercfg(&["/setactive", HIGH_PERFORMANCE]) {
-            *PREVIOUS_SCHEME.lock().unwrap() = Some(current);
+            crate::live::set_power_scheme(Some(current));
         }
     }
     close_windows_of(close_apps);
 }
 
+/// Restores the previous power plan, if one was changed (also by a crashed
+/// GameMode, whose plan survives in the live-session file).
 pub fn end() {
-    if let Some(previous) = PREVIOUS_SCHEME.lock().unwrap().take() {
+    if let Some(previous) = crate::live::take_power_scheme() {
         powercfg(&["/setactive", &previous]);
     }
 }

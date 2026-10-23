@@ -19,6 +19,9 @@ type Dialog = "options" | "collections" | "saves" | "uninstall" | null;
 export function GameDetail({ gameId }: { gameId: string }) {
   const game = useApp((s) => s.games.find((g) => g.id === gameId));
   const session = useApp((s) => s.session);
+  const pausedSession = useApp((s) => s.suspended.find((p) => p.gameId === gameId));
+  const resumeSuspended = useApp((s) => s.resumeSuspended);
+  const closeSuspended = useApp((s) => s.closeSuspended);
   const collections = useApp((s) => s.collections);
   const launch = useApp((s) => s.launch);
   const toggleFavorite = useApp((s) => s.toggleFavorite);
@@ -112,6 +115,15 @@ export function GameDetail({ gameId }: { gameId: string }) {
                     {mine.phase === "launching" ? "Avvio in corso…" : "Torna al gioco"}
                   </button>
                   <button type="button" className="btn" data-nav onClick={() => void api.closeGame()}>
+                    Chiudi gioco
+                  </button>
+                </>
+              ) : pausedSession ? (
+                <>
+                  <button type="button" className="btn btn-primary btn-play" data-nav data-nav-autofocus onClick={() => void resumeSuspended(game.id)}>
+                    <span className="play-icon" aria-hidden>▶</span> Riprendi
+                  </button>
+                  <button type="button" className="btn" data-nav onClick={() => void closeSuspended(game.id)}>
                     Chiudi gioco
                   </button>
                 </>

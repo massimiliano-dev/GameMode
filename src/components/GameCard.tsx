@@ -11,10 +11,12 @@ interface Props {
   onFocus?: (game: Game) => void;
   onSelect: (game: Game) => void;
   playing?: boolean;
+  /** Frozen by Quick Resume. */
+  paused?: boolean;
   autofocus?: boolean;
 }
 
-export const GameCard = memo(function GameCard({ game, navId, onFocus, onSelect, playing, autofocus }: Props) {
+export const GameCard = memo(function GameCard({ game, navId, onFocus, onSelect, playing, paused, autofocus }: Props) {
   const update = useApp((s) => s.gameUpdates[game.id]);
   return (
     <button
@@ -32,7 +34,8 @@ export const GameCard = memo(function GameCard({ game, navId, onFocus, onSelect,
         <StoreBadge store={game.store} compact />
         {game.favorite && <span className="fav-star" aria-label="Preferito">★</span>}
         {playing && <span className="playing-pill">In gioco</span>}
-        {!playing && update && (
+        {!playing && paused && <span className="playing-pill is-paused">In pausa</span>}
+        {!playing && !paused && update && (
           <span className={`update-pill ${update.state === "available" ? "" : "is-active"}`}>
             {update.state === "available"
               ? "Aggiornamento"

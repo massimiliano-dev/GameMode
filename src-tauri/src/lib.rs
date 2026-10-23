@@ -12,9 +12,11 @@ mod catalog;
 mod db;
 mod devices;
 mod display;
+mod freeze;
 mod gamepad;
 mod launcher;
 mod library;
+mod live;
 mod model;
 mod overlay;
 mod performance;
@@ -298,6 +300,31 @@ fn get_session(state: State<AppState>) -> Option<SessionState> {
     state.launcher.current()
 }
 
+/// The games frozen by Quick Resume.
+#[tauri::command]
+fn get_suspended(state: State<AppState>) -> Vec<SessionState> {
+    state.launcher.suspended()
+}
+
+/// Quick Resume: freezes the running game and comes back to GameMode.
+#[tauri::command]
+async fn suspend_game(app: AppHandle) -> CmdResult<()> {
+    let handle = app.clone();
+    blocking(move || launcher::suspend_current(&handle)).await
+}
+
+#[tauri::command]
+async fn resume_suspended(app: AppHandle, game_id: String) -> CmdResult<()> {
+    let handle = app.clone();
+    blocking(move || launcher::resume_suspended(&handle, &game_id)).await
+}
+
+#[tauri::command]
+async fn close_suspended(app: AppHandle, game_id: String) -> CmdResult<()> {
+    let handle = app.clone();
+    blocking(move || launcher::close_suspended(&handle, &game_id)).await
+}
+
 #[tauri::command]
 fn resume_game(app: AppHandle, state: State<AppState>) -> bool {
     window::resume_game(&app, &state.launcher.running_pids())
@@ -309,7 +336,11 @@ fn close_game(app: AppHandle) -> bool {
 }
 
 #[tauri::command]
-fn power(action: system::PowerAction) -> CmdResult<()> {
+fn power(app: AppHandle, action: system::PowerAction) -> CmdResult<()> {
+    // Frozen games can't answer the shutdown: let them go first.
+    if !matches!(action, system::PowerAction::Sleep) {
+        launcher::thaw_all(&app);
+    }
     system::power(action).map_err(err)
 }
 
@@ -348,6 +379,8 @@ fn overlay_to_launcher(app: AppHandle) {
 
 #[tauri::command]
 fn exit_to_desktop(app: AppHandle) {
+    // Nothing stays frozen behind GameMode's back.
+    launcher::thaw_all(&app);
     // In console mode there is no desktop until Explorer runs.
     shell::start_explorer();
     window::exit_to_desktop(&app);
@@ -372,6 +405,7 @@ fn toggle_fullscreen(app: AppHandle) {
 fn quit_app(app: AppHandle) {
     // Never leave a game frozen behind.
     wand::forget();
+    launcher::thaw_all(&app);
     display::reset_mode();
     shell::start_explorer();
     app.exit(0);
@@ -702,6 +736,8 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![autostart::ARG])))
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
+            live::init(&data_dir);
+            let live_file = live::file_in(&data_dir);
             let db = Db::open(&data_dir)?;
             db.update(|d| d.upgrade_artwork(artwork::PIPELINE_VERSION))?;
             app.manage(AppState {
@@ -719,7 +755,7 @@ pub fn run() {
             let console = shell::status().active;
             if console {
                 // GameMode is the shell: do Explorer's sign-in chores.
-                shell::spawn_watchdog();
+                shell::spawn_watchdog(&live_file);
                 shell::keep_desktop_hidden(handle.clone());
                 // After an update the startup apps are already running.
                 if !shell::restarted_for_update() {
@@ -757,8 +793,10 @@ pub fn run() {
             let native = gamepad::start(handle.clone());
             app.state::<AppState>().native_gamepad.store(native, Ordering::SeqCst);
 
-            // The saved library shows instantly; the fresh scan replaces it.
+            // Games left running by a crash or an update come first; then the
+            // saved library shows instantly and the fresh scan replaces it.
             std::thread::spawn(move || {
+                launcher::reattach(&handle);
                 let state = handle.state::<AppState>();
                 if !state.scanning.swap(true, Ordering::SeqCst) {
                     scan(&handle);
@@ -779,6 +817,10 @@ pub fn run() {
             add_manual_game,
             remove_manual_game,
             get_session,
+            get_suspended,
+            suspend_game,
+            resume_suspended,
+            close_suspended,
             resume_game,
             get_game_updates,
             wand_installed,
@@ -842,6 +884,13 @@ pub fn run() {
             remove_collection,
             set_in_collection,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // Whatever ends GameMode (its own quit, a closed window, the
+            // session ending): nothing stays frozen behind it.
+            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
+                launcher::thaw_all(app);
+            }
+        });
 }

@@ -336,7 +336,7 @@ pub fn focus_process(pids: &[u32]) -> bool {
 }
 
 #[cfg(windows)]
-mod win {
+pub(crate) mod win {
     use windows::core::BOOL;
     use windows::Win32::Foundation::{HWND, LPARAM, RECT};
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};

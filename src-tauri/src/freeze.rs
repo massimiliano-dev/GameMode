@@ -82,12 +82,19 @@ pub fn resume(pids: &[u32]) -> Result<()> {
     imp::resume(pids)
 }
 
+/// Unmutes the audio sessions of `pids` without thawing them: Windows
+/// remembers an app's mute, so a game closed while frozen would start
+/// silent next time.
+pub fn unmute(pids: &[u32]) {
+    imp::unmute(pids)
+}
+
 #[cfg(windows)]
 mod imp {
     use std::time::{Duration, Instant};
 
     use anyhow::{anyhow, Context, Result};
-    use windows::core::{s, w, PCSTR};
+    use windows::core::{s, w, Interface, PCSTR};
     use windows::Win32::Foundation::{CloseHandle, HANDLE, NTSTATUS};
     use windows::Win32::Media::Audio::{
         eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator, ISimpleAudioVolume,
@@ -197,6 +204,10 @@ mod imp {
         if failed.is_empty() { Ok(()) } else { Err(anyhow!("processi non ripresi: {failed:?}")) }
     }
 
+    pub fn unmute(pids: &[u32]) {
+        set_muted(pids, false);
+    }
+
     /// Mutes (or unmutes) the audio sessions of `pids` on every active
     /// output, so a frozen game's last buffer doesn't loop.
     fn set_muted(pids: &[u32], muted: bool) {
@@ -238,6 +249,8 @@ mod imp {
     pub fn resume(_pids: &[u32]) -> Result<()> {
         Ok(())
     }
+
+    pub fn unmute(_pids: &[u32]) {}
 }
 
 #[cfg(test)]

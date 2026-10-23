@@ -27,6 +27,7 @@ export function Library({ focusId }: { focusId?: string }) {
   const launch = useApp((s) => s.launch);
   const setBackdrop = useApp((s) => s.setBackdrop);
   const sessionGame = useApp((s) => s.session?.gameId);
+  const suspended = useApp((s) => s.suspended);
   const collections = useApp((s) => s.collections);
   // "all", a store, or `c:<collection id>`.
   const [filter, setFilter] = useState<string>("all");
@@ -128,6 +129,7 @@ export function Library({ focusId }: { focusId?: string }) {
               onFocus={onFocus}
               onSelect={onSelect}
               playing={sessionGame === g.id}
+              paused={suspended.some((p) => p.gameId === g.id)}
                   autofocus={i === 0}
             />
           ))}
