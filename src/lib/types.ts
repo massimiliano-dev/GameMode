@@ -59,6 +59,8 @@ export interface Settings {
   idleAction: PowerAction;
   /** Inactivity never sleeps the PC while a game downloads or updates. */
   idleWaitDownloads: boolean;
+  /** The system keyboard opens by itself on text fields in store windows. */
+  keyboardAuto: boolean;
 }
 
 export interface ShellStatus {
@@ -429,3 +431,6 @@ export interface PowerCountdown {
   action: PowerAction;
   secondsLeft: number;
 }
+
+/** Keys the system keyboard sends besides text. */
+export type TypedKey = "enter" | "backspace" | "escape" | "tab" | "space";

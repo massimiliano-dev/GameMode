@@ -249,6 +249,9 @@ pub struct Settings {
     pub idle_action: crate::system::PowerAction,
     /// Inactivity never sleeps the PC while a game is downloading or updating.
     pub idle_wait_downloads: bool,
+    /// The on-screen keyboard opens by itself when a text field takes the
+    /// focus in a store window during a hand-off.
+    pub keyboard_auto: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -290,6 +293,7 @@ impl Default for Settings {
             idle_sleep_min: 60,
             idle_action: crate::system::PowerAction::Sleep,
             idle_wait_downloads: true,
+            keyboard_auto: true,
         }
     }
 }

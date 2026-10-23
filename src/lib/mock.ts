@@ -48,7 +48,7 @@ let games: Game[] = SEED.map(([store, name, appid], i) => ({
   playtimeSecs: i % 3 === 0 ? (i + 1) * 5400 : 0,
 }));
 
-let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true };
+let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true, keyboardAuto: true };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
 let suspended: SessionState[] = [];
@@ -621,6 +621,13 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         return;
       case "set_app_muted":
         appVolumes = appVolumes.map((v) => (v.key === args.key ? { ...v, muted: args.muted } : v));
+        return;
+      case "type_text":
+      case "type_key":
+        console.info(`[mock] ${cmd}`, args);
+        return;
+      case "overlay_keyboard":
+      case "keyboard_hide":
         return;
       default:
         // power, exit_to_desktop, toggle_fullscreen, quit_app, refresh_artwork

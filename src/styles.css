@@ -2646,3 +2646,43 @@ html.is-osd body {
   flex-direction: column;
   gap: 0.5rem;
 }
+
+/* ---------- System keyboard window ---------- */
+
+html.is-keyboard,
+html.is-keyboard body {
+  background: transparent;
+}
+
+/* The window is half the screen's height: on screens wider than 16:9 the
+   width-based scale would overflow it, so the height caps it too. */
+html.is-keyboard {
+  font-size: clamp(12px, min(1.05vw, 3.6vh), 34px);
+}
+
+/* The window is sized to the keyboard: nothing to dim behind it. */
+html.is-keyboard .osk-scrim {
+  background: transparent;
+}
+
+html.is-keyboard .osk {
+  margin-bottom: 0.6rem;
+  padding: 0.8rem;
+}
+
+html.is-keyboard .osk-key {
+  height: 2.8rem;
+}
+
+/* The window never has system focus, so :focus never matches here. */
+html.is-keyboard .osk-key[data-nav-current] {
+  background: var(--text);
+  color: var(--bg);
+  transform: scale(1.06);
+}
+
+html.is-keyboard .osk-done[data-nav-current] {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 0 0 0.18rem var(--focus);
+}

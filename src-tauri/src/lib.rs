@@ -16,6 +16,7 @@ mod display;
 mod freeze;
 mod gamepad;
 mod haptics;
+mod keyboard;
 mod launcher;
 mod library;
 mod live;
@@ -34,6 +35,7 @@ mod steam_web;
 mod storefront;
 mod system;
 mod tray;
+mod uia;
 mod uninstall;
 mod updates;
 mod wand;
@@ -455,6 +457,32 @@ fn overlay_hide(app: AppHandle, state: State<AppState>, resume: bool) {
 fn overlay_to_launcher(app: AppHandle) {
     overlay::hide(&app);
     window::bring_to_front(&app);
+}
+
+/// From the overlay: the system keyboard over the game.
+#[tauri::command]
+fn overlay_keyboard(app: AppHandle, state: State<AppState>) {
+    let pids = state.launcher.running_pids();
+    keyboard::open_over_game(&app, pids);
+}
+
+#[tauri::command]
+fn keyboard_hide(app: AppHandle) {
+    keyboard::dismiss(&app);
+}
+
+/// The system keyboard types into the focused window.
+#[tauri::command]
+fn type_text(text: String) {
+    keyboard::type_text(&text);
+}
+
+/// `key`: enter, backspace, escape, tab or space.
+#[tauri::command]
+fn type_key(key: String) -> CmdResult<()> {
+    let key = keyboard::key_named(&key).ok_or_else(|| format!("unknown key: {key}"))?;
+    assist::press(key);
+    Ok(())
 }
 
 #[tauri::command]
@@ -958,6 +986,8 @@ pub fn run() {
             media::init(&handle);
             osd::create(&handle);
             audio_events::start(handle.clone());
+            keyboard::create(&handle);
+            keyboard::watch(handle.clone());
             updates::watch_packages();
             status::start(handle.clone());
             let native = gamepad::start(handle.clone());
@@ -1074,6 +1104,10 @@ pub fn run() {
             rest_mode,
             idle_wake,
             touch_input,
+            overlay_keyboard,
+            keyboard_hide,
+            type_text,
+            type_key,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

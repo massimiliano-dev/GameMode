@@ -137,7 +137,7 @@ mod xinput {
 
     use super::{Action, Controller, NavEvent, Repeater, CONTROLLERS};
     use crate::assist::{self, Key};
-    use crate::{overlay, window};
+    use crate::{keyboard, overlay, window};
 
     const DPAD_UP: u32 = 0x0001;
     const DPAD_DOWN: u32 = 0x0002;
@@ -330,6 +330,14 @@ mod xinput {
                     }
                 }
                 let wand = target.is_none() && crate::wand::is_open();
+                // The system keyboard is up over another window: it takes
+                // the controller, whatever mode is on underneath (it isn't
+                // a target itself: that would end assist and Wand modes).
+                // GameMode in front has its own in-page keyboard instead.
+                if keyboard::is_open() && target.is_some() {
+                    keyboard::hide(&app);
+                }
+                let typing = target.is_none() && keyboard::is_open();
                 for (bit, repeat) in repeater.step(buttons, DIRECTIONS, now) {
                     let Some(&(_, action)) = MAPPING.iter().find(|(b, _)| *b == bit) else { continue };
                     // View held + D-pad up/down during a game: volume, with
@@ -339,7 +347,14 @@ mod xinput {
                         crate::osd::nudge(&app, if bit == DPAD_UP { crate::osd::PAD_STEP } else { -crate::osd::PAD_STEP });
                         continue;
                     }
-                    if wand {
+                    // Guide closes the keyboard and keeps its meaning
+                    // underneath: leaving Wand, or summoning GameMode.
+                    if typing && action != Action::Guide {
+                        let _ = app.emit_to(keyboard::LABEL, "gamepad://nav", NavEvent { action, repeat });
+                    } else if wand {
+                        if typing {
+                            keyboard::hide(&app);
+                        }
                         wand_key(&app, action);
                     } else if action == Action::Guide {
                         summon(&app, target, true);
@@ -443,7 +458,8 @@ mod xinput {
     }
 
     /// Drives Wand (overlay or app): A = Enter, D-pad = arrows,
-    /// LB/RB = Shift+Tab/Tab, X = Space, B = back; View or Guide leave.
+    /// LB/RB = Shift+Tab/Tab, X = Space, Y = on-screen keyboard, B = back;
+    /// View or Guide leave.
     fn wand_key(app: &AppHandle, action: Action) {
         let key = match action {
             Action::Back => {
@@ -462,12 +478,17 @@ mod xinput {
             Action::Rb => Key::Tab,
             Action::Lb => Key::ShiftTab,
             Action::X => Key::Space,
+            Action::Y => {
+                keyboard::show(app);
+                return;
+            }
             _ => return,
         };
         assist::press(key);
     }
 
-    /// Drives a store dialog with the keys it understands; View goes back.
+    /// Drives a store dialog with the keys it understands; Y opens the
+    /// on-screen keyboard, View goes back.
     fn assist_key(app: &AppHandle, action: Action) {
         let key = match action {
             Action::Confirm => Key::Enter,
@@ -483,6 +504,10 @@ mod xinput {
                 crate::storefront::return_to_gamemode(app);
                 return;
             }
+            Action::Y => {
+                keyboard::show(app);
+                return;
+            }
             _ => return,
         };
         assist::press(key);
@@ -491,6 +516,8 @@ mod xinput {
     /// Guide: toggles the overlay over a running game, otherwise brings
     /// GameMode back and opens its quick menu.
     fn summon(app: &AppHandle, target: Option<&str>, from_guide: bool) {
+        // Whatever comes up next, the keyboard goes.
+        keyboard::hide(app);
         let guide = NavEvent { action: Action::Guide, repeat: false };
         if let Some(label) = target {
             let _ = app.emit_to(label, "gamepad://nav", guide);

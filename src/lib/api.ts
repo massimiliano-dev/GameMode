@@ -38,6 +38,7 @@ import type {
   SteamExtras,
   Storefront,
   SystemInfo,
+  TypedKey,
   UpdateInfo,
   UninstallOutcome,
   Volume,
@@ -154,6 +155,10 @@ export const api = {
   restMode: () => call<void>("rest_mode"),
   idleWake: () => call<void>("idle_wake"),
   touchInput: () => call<void>("touch_input"),
+  overlayKeyboard: () => call<void>("overlay_keyboard"),
+  keyboardHide: () => call<void>("keyboard_hide"),
+  typeText: (text: string) => call<void>("type_text", { text }),
+  typeKey: (key: TypedKey) => call<void>("type_key", { key }),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */
