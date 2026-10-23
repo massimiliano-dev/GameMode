@@ -2,6 +2,8 @@
 //! inert so development never shuts down the dev machine.
 
 use anyhow::Result;
+#[cfg(windows)]
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -72,14 +74,14 @@ pub fn power(action: PowerAction) -> Result<()> {
         LockWorkStation, EWX_FORCEIFHUNG, EWX_LOGOFF, EWX_POWEROFF, EWX_REBOOT, EWX_SHUTDOWN,
     };
     match action {
-        PowerAction::Shutdown => exit_windows(EWX_SHUTDOWN | EWX_POWEROFF | EWX_FORCEIFHUNG, &["/s", "/t", "0"]),
-        PowerAction::Restart => exit_windows(EWX_REBOOT | EWX_FORCEIFHUNG, &["/r", "/t", "0"]),
+        PowerAction::Shutdown => end_session(EWX_SHUTDOWN | EWX_POWEROFF | EWX_FORCEIFHUNG, Some(false)),
+        PowerAction::Restart => end_session(EWX_REBOOT | EWX_FORCEIFHUNG, Some(true)),
         PowerAction::RestartToDesktop => {
             // Only the flag differs: the shell registration is left alone.
             crate::shell::request_desktop_boot()?;
-            exit_windows(EWX_REBOOT | EWX_FORCEIFHUNG, &["/r", "/t", "0"])
+            end_session(EWX_REBOOT | EWX_FORCEIFHUNG, Some(true))
         }
-        PowerAction::Logoff => exit_windows(EWX_LOGOFF | EWX_FORCEIFHUNG, &["/l"]),
+        PowerAction::Logoff => end_session(EWX_LOGOFF | EWX_FORCEIFHUNG, None),
         PowerAction::Sleep => unsafe {
             if !SetSuspendState(false, false, false) {
                 anyhow::bail!("sospensione non riuscita");
@@ -102,20 +104,54 @@ pub fn power(action: PowerAction) -> Result<()> {
 }
 
 /// Ends the session through ExitWindowsEx, so Windows asks every app
-/// (GameMode included) to close first; `shutdown.exe` is the fallback.
-/// EWX_FORCEIFHUNG only pushes apps that stopped answering, never EWX_FORCE.
+/// (GameMode included) to close first. EWX_FORCEIFHUNG only pushes apps that
+/// stopped answering, never EWX_FORCE: InitiateShutdown has no such flag, so
+/// it is only the fallback for a shutdown or restart (`restart`), the same
+/// call `shutdown.exe` would make. A sign-out has no other way.
 #[cfg(windows)]
-fn exit_windows(flags: windows::Win32::System::Shutdown::EXIT_WINDOWS_FLAGS, fallback: &[&str]) -> Result<()> {
+fn end_session(flags: windows::Win32::System::Shutdown::EXIT_WINDOWS_FLAGS, restart: Option<bool>) -> Result<()> {
     use windows::Win32::System::Shutdown::{ExitWindowsEx, SHTDN_REASON_FLAG_PLANNED, SHTDN_REASON_MAJOR_APPLICATION};
     if let Err(err) = enable_shutdown_privilege() {
         eprintln!("shutdown privilege: {err}");
     }
     let result = unsafe { ExitWindowsEx(flags, SHTDN_REASON_MAJOR_APPLICATION | SHTDN_REASON_FLAG_PLANNED) };
-    if let Err(err) = result {
-        eprintln!("ExitWindowsEx: {err}; falling back to shutdown.exe");
-        std::process::Command::new("shutdown").args(fallback).spawn()?;
+    match (result, restart) {
+        (Ok(()), _) => Ok(()),
+        (Err(err), Some(restart)) => {
+            eprintln!("ExitWindowsEx: {err}; falling back to InitiateShutdown");
+            initiate_shutdown(restart, false)
+        }
+        (Err(err), None) => Err(err.into()),
     }
-    Ok(())
+}
+
+/// Powers off or restarts Windows through InitiateShutdown, without forcing
+/// anyone: apps get WM_QUERYENDSESSION as usual. `install_updates`: like
+/// "Update and restart" in the Start menu.
+#[cfg(windows)]
+pub(crate) fn initiate_shutdown(restart: bool, install_updates: bool) -> Result<()> {
+    use windows::Win32::Foundation::ERROR_SHUTDOWN_IN_PROGRESS;
+    use windows::Win32::System::Shutdown::{
+        InitiateShutdownW, SHTDN_REASON_FLAG_PLANNED, SHTDN_REASON_MAJOR_APPLICATION, SHTDN_REASON_MAJOR_OPERATINGSYSTEM,
+        SHTDN_REASON_MINOR_UPGRADE, SHUTDOWN_INSTALL_UPDATES, SHUTDOWN_POWEROFF, SHUTDOWN_RESTART,
+    };
+    // Without the privilege the call below fails and says so.
+    if let Err(err) = enable_shutdown_privilege() {
+        eprintln!("shutdown privilege: {err}");
+    }
+    let mut flags = if restart { SHUTDOWN_RESTART } else { SHUTDOWN_POWEROFF };
+    let reason = if install_updates {
+        flags |= SHUTDOWN_INSTALL_UPDATES;
+        SHTDN_REASON_MAJOR_OPERATINGSYSTEM | SHTDN_REASON_MINOR_UPGRADE | SHTDN_REASON_FLAG_PLANNED
+    } else {
+        SHTDN_REASON_MAJOR_APPLICATION | SHTDN_REASON_FLAG_PLANNED
+    };
+    let code = unsafe { InitiateShutdownW(None, None, 0, flags, reason) };
+    // Already on its way (a second press, or Windows itself): nothing to do.
+    if code == 0 || code == ERROR_SHUTDOWN_IN_PROGRESS.0 {
+        return Ok(());
+    }
+    Err(std::io::Error::from_raw_os_error(code as i32)).context("InitiateShutdown")
 }
 
 /// Every interactive user holds SeShutdownPrivilege, disabled: enabling it

@@ -1,0 +1,39 @@
+{
+    "buildId": "51483297580264224",
+    "clientId": "51424838563226816",
+    "gameId": "1207664643",
+    "language": "English",
+    "languages": [
+        "en-US"
+    ],
+    "name": "The Witcher 3: Wild Hunt",
+    "playTasks": [
+        {
+            "category": "document",
+            "isPrimary": false,
+            "name": "Manual",
+            "path": "manual.pdf",
+            "type": "FileTask"
+        },
+        {
+            "arguments": "-skipIntro -config \"my settings.ini\"",
+            "category": "game",
+            "isPrimary": true,
+            "languages": [
+                "en-US"
+            ],
+            "name": "The Witcher 3: Wild Hunt",
+            "path": "bin\\x64\\witcher3.exe",
+            "type": "FileTask",
+            "workingDir": "bin\\x64"
+        },
+        {
+            "category": "game",
+            "name": "REDkit",
+            "path": "REDkit\\bin\\r4Editor.exe",
+            "type": "FileTask"
+        }
+    ],
+    "rootGameId": "1207664643",
+    "version": 1
+}

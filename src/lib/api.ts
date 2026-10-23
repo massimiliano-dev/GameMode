@@ -25,6 +25,7 @@ import type {
   InstallTarget,
   LegendaryJob,
   LegendaryStatus,
+  GogStatus,
   LibraryUpdate,
   ManualGame,
   MediaAction,
@@ -204,7 +205,25 @@ export const api = {
   legendaryGameAction: (id: string, action: "update" | "repair") => call<void>("legendary_game_action", { id, action }),
   legendaryCancel: (jobId: number) => call<void>("legendary_cancel", { jobId }),
   legendaryInstallTargets: () => call<InstallTarget[]>("legendary_install_targets"),
+  /** The first screen is painted: the backend shows the window and drops the splash. */
+  appReady: () => call<void>("app_ready"),
+  directInstallAvailable: (id: string) => call<boolean>("direct_install_available", { id }),
+  cancelDirectInstall: (id: string) => call<boolean>("cancel_direct_install", { id }),
+  gogStatus: () => call<GogStatus>("gog_status"),
+  gogLogin: () => call<boolean>("gog_login"),
+  gogLogout: () => call<void>("gog_logout"),
+  updateStoreGame: (id: string) => call<boolean>("update_store_game", { id }),
 };
+
+let readySent = false;
+
+/** Tells the backend the first screen is up (once), after the browser had a moment to paint it. */
+export function signalAppReady() {
+  if (readySent) return;
+  readySent = true;
+  // Timers, not animation frames: those may not run while the window is still hidden.
+  setTimeout(() => void api.appReady().catch(() => {}), 50);
+}
 
 /** Like `on`, but only for events sent to this window (controller input). */
 export function onWindow<T>(event: string, handler: (payload: T) => void): () => void {

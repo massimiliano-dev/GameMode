@@ -27,11 +27,13 @@ mod metadata;
 mod mixer;
 mod model;
 mod overlay;
+mod overlay_pause;
 mod performance;
 mod procinfo;
 mod saves;
 mod shell;
 mod shutdown;
+mod splash;
 #[cfg(windows)]
 mod sqlite;
 mod status;
@@ -54,6 +56,12 @@ mod capture;
 mod capture_osd;
 mod companion;
 mod legendary;
+mod steam_direct;
+mod gamebar;
+mod webview2;
+mod direct;
+mod gog_store;
+mod msstore;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -355,6 +363,7 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> 
     companion::sync(&app);
     hidpad::set_enabled(settings.hid_pads);
     legendary::set_enabled(settings.epic_legendary);
+    gamebar::apply(&state.data_dir, gamebar::wanted(shell::status().enabled, settings.guide_to_gamemode));
     Ok(settings)
 }
 
@@ -561,8 +570,11 @@ fn get_console_mode() -> shell::ShellStatus {
 }
 
 #[tauri::command]
-fn set_console_mode(enabled: bool) -> CmdResult<shell::ShellStatus> {
-    shell::set_enabled(enabled).map_err(|e| format!("{e:#}"))
+fn set_console_mode(state: State<AppState>, enabled: bool) -> CmdResult<shell::ShellStatus> {
+    let status = shell::set_enabled(enabled).map_err(|e| format!("{e:#}"))?;
+    let setting = state.db.lock().settings.guide_to_gamemode;
+    gamebar::apply(&state.data_dir, gamebar::wanted(status.enabled, setting));
+    Ok(status)
 }
 
 #[tauri::command]
@@ -736,6 +748,11 @@ async fn install_catalog_item(app: AppHandle, id: String) -> CmdResult<()> {
 /// Opens a catalog item's install dialog in its store, with the controller
 /// hand-off; shared with the phone companion.
 pub(crate) async fn install_catalog(app: &AppHandle, id: String) -> CmdResult<()> {
+    // GameMode installs it by itself when it can (GOG account, Microsoft Store).
+    let name = app.state::<AppState>().catalog.name_of(&id).unwrap_or_else(|| id.clone());
+    if let Some(result) = direct::start(app, &id, &name).await {
+        return result;
+    }
     // Cloud games run in Edge, which handles the controller itself and needs
     // View for the game; the Xbox app and Store handle the controller too.
     if !id.starts_with("cloud:") {
@@ -748,6 +765,46 @@ pub(crate) async fn install_catalog(app: &AppHandle, id: String) -> CmdResult<()
     // Launching may wait on Windows (WinRT launcher): keep it off the main thread.
     let handle = app.clone();
     blocking(move || catalog::install(&handle, &id)).await
+}
+
+/// Whether GameMode downloads and installs this catalog item itself
+/// (no store window to hand off to).
+#[tauri::command]
+fn direct_install_available(app: AppHandle, id: String) -> bool {
+    direct::available(&app, &id)
+}
+
+#[tauri::command]
+fn cancel_direct_install(id: String) -> bool {
+    direct::cancel(&id)
+}
+
+#[tauri::command]
+fn gog_status(app: AppHandle) -> gog_store::GogStatus {
+    gog_store::status(&app)
+}
+
+/// Opens GOG's login page; false when the user closed it.
+#[tauri::command]
+async fn gog_login(app: AppHandle) -> CmdResult<bool> {
+    gog_store::login(&app).await.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn gog_logout(app: AppHandle) {
+    gog_store::logout(&app).await;
+}
+
+/// Starts a Store game's update through the Store's install service; false
+/// when there is none (or it isn't available).
+#[tauri::command]
+async fn update_store_game(app: AppHandle, id: String) -> CmdResult<bool> {
+    let game = app.state::<AppState>().db.lock().game(&id).cloned().ok_or("Gioco non trovato")?;
+    if !app.state::<AppState>().db.lock().settings.msstore_direct {
+        return Ok(false);
+    }
+    let handle = app.clone();
+    blocking(move || msstore::update(&handle, &game)).await
 }
 
 #[tauri::command]
@@ -1003,6 +1060,8 @@ fn storage_remeasure(app: AppHandle) {
 /// after a crash, or safe mode after crashes in a row.
 #[tauri::command]
 fn startup_info() -> diag::StartupInfo {
+    // The main window's script got this far: its WebView2 runtime works.
+    webview2::confirm();
     diag::startup_info(shell::recovered_count(), shell::safe_mode())
 }
 
@@ -1166,6 +1225,14 @@ async fn legendary_install_targets() -> Vec<legendary::InstallTarget> {
     tauri::async_runtime::spawn_blocking(legendary::install_targets).await.unwrap_or_default()
 }
 
+/// The launcher painted its first screen: show it, drop the splash.
+#[tauri::command]
+fn app_ready(app: AppHandle, window: tauri::WebviewWindow) {
+    if window.label() == "main" {
+        splash::ready(&app);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // The console-mode watchdog is this same executable with `--watchdog`.
@@ -1182,6 +1249,9 @@ pub fn run() {
         env!("CARGO_PKG_VERSION"),
         std::env::args().skip(1).collect::<Vec<_>>()
     );
+    let context = tauri::generate_context!();
+    // Before anything slow: the screen must not stay black at sign-in.
+    splash::begin(&context.config().identifier);
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // On the desktop for once, Explorer runs the `Run` entries itself,
@@ -1199,6 +1269,7 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             live::init(&data_dir);
+            overlay_pause::recover();
             let live_file = live::file_in(&data_dir);
             let db = Db::open(&data_dir)?;
             legendary::init(&data_dir, db.lock().settings.epic_legendary);
@@ -1225,6 +1296,13 @@ pub fn run() {
                 safe,
                 shell::restarted_for_update()
             );
+            // In console mode the Xbox button opens GameMode, not Game Bar
+            // (given back if console mode went off meanwhile).
+            {
+                let state = app.state::<AppState>();
+                let setting = state.db.lock().settings.guide_to_gamemode;
+                gamebar::apply(&state.data_dir, gamebar::wanted(shell::status().enabled, setting));
+            }
             if console {
                 // GameMode is the shell: do Explorer's sign-in chores.
                 shell::spawn_watchdog(&live_file);
@@ -1245,6 +1323,7 @@ pub fn run() {
                     // After an update the user was looking at GameMode.
                     if !shell::restarted_for_update() {
                         let _ = w.hide();
+                        splash::stay_hidden();
                     }
                     // The X goes back to the tray, like any tray app: a
                     // destroyed main window would leave the tray's "Apri
@@ -1263,11 +1342,14 @@ pub fn run() {
                 }
             }
             autostart::repair(&handle);
+            webview2::spawn_install();
             if autostart::launched_at_login() {
                 // Explorer is still settling at login and tends to take the
                 // foreground back: claim it again once things calm down.
                 let h = handle.clone();
                 std::thread::spawn(move || {
+                    // The window only shows once the first screen is up.
+                    splash::wait_settled();
                     for delay in [3, 8] {
                         std::thread::sleep(std::time::Duration::from_secs(delay));
                         if !window::is_foreground(&h) {
@@ -1285,7 +1367,7 @@ pub fn run() {
             }
             // Safe mode starts as little as possible besides GameMode itself.
             if !safe && app.state::<AppState>().db.lock().settings.preload_steam {
-                std::thread::spawn(launcher::preload_steam);
+                splash::after_startup(launcher::preload_steam);
             }
             overlay::create(&handle);
             media::init(&handle);
@@ -1297,8 +1379,13 @@ pub fn run() {
             lifecycle::start(&handle);
             capture::init(&handle);
             companion::sync(&handle);
-            updates::watch_packages();
-            legendary::start(&handle);
+            splash::after_startup(updates::watch_packages);
+            {
+                // Its first refresh waits a minute anyway: counting starts
+                // once the first screen is up.
+                let h = handle.clone();
+                splash::after_startup(move || legendary::start(&h));
+            }
             status::start(handle.clone());
             winupdate::watch(handle.clone());
             hidpad::set_enabled(app.state::<AppState>().db.lock().settings.hid_pads);
@@ -1308,8 +1395,12 @@ pub fn run() {
 
             // Games left running by a crash or an update come first; then the
             // saved library shows instantly and the fresh scan replaces it.
+            splash::watch(&handle);
             std::thread::spawn(move || {
                 launcher::reattach(&handle);
+                // The scan (and the artwork and metadata after it) waits for
+                // the first screen: the saved library is enough until then.
+                splash::wait_settled();
                 let state = handle.state::<AppState>();
                 if !state.scanning.swap(true, Ordering::SeqCst) {
                     scan(&handle);
@@ -1449,6 +1540,13 @@ pub fn run() {
             legendary_game_action,
             legendary_cancel,
             legendary_install_targets,
+            app_ready,
+            direct_install_available,
+            cancel_direct_install,
+            gog_status,
+            gog_login,
+            gog_logout,
+            update_store_game,
         ])
         .on_window_event(|window, event| {
             // Alt+F4 on the launcher: the hidden overlay window would keep
@@ -1462,7 +1560,7 @@ pub fn run() {
                 }
             }
         })
-        .build(tauri::generate_context!())
+        .build(webview2::prepare(context))
         .expect("error while running tauri application")
         .run(|app, event| {
             // Whatever ends GameMode (its own quit, a closed window, an

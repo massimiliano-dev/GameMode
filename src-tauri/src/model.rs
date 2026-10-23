@@ -286,6 +286,8 @@ pub struct Settings {
     pub close_apps: Vec<String>,
     /// Guide during a game opens the overlay instead of the launcher.
     pub overlay_enabled: bool,
+    /// The game is frozen while the overlay is open, so it ignores the pad.
+    pub overlay_pause: bool,
     /// Where save backups go; the app data folder when unset.
     pub backup_dir: Option<PathBuf>,
     /// The controller types Enter/Esc/arrows in store windows GameMode opens.
@@ -337,6 +339,17 @@ pub struct Settings {
     /// Epic games are installed, updated and launched through legendary
     /// instead of the Epic Games Launcher (`legendary`).
     pub epic_legendary: bool,
+    /// GOG games start from their own folder (`goggame-<id>.info`) instead
+    /// of through Galaxy.
+    pub gog_direct: bool,
+    /// In console mode the Xbox button opens GameMode: Game Bar's hold on it
+    /// is switched off (and given back) by `gamebar.rs`.
+    pub guide_to_gamemode: bool,
+    /// Where GameMode installs GOG games; `C:\GOG Games` when unset.
+    pub gog_install_dir: Option<PathBuf>,
+    /// Install and update Microsoft Store / Game Pass games through the
+    /// Store's install service, without opening the Xbox app.
+    pub msstore_direct: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -363,6 +376,7 @@ impl Default for Settings {
             performance_mode: false,
             close_apps: Vec::new(),
             overlay_enabled: true,
+            overlay_pause: true,
             backup_dir: None,
             keyboard_assist: true,
             steam_big_picture: true,
@@ -386,6 +400,10 @@ impl Default for Settings {
             companion_enabled: false,
             hid_pads: true,
             epic_legendary: false,
+            gog_direct: true,
+            guide_to_gamemode: true,
+            gog_install_dir: None,
+            msstore_direct: true,
         }
     }
 }

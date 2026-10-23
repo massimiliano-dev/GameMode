@@ -40,8 +40,11 @@ impl GameUpdate {
 pub fn all(games: &[Game]) -> Vec<GameUpdate> {
     let steam = steam_all();
     let epic = crate::legendary::updates();
-    let mut list: Vec<GameUpdate> = games
+    // GameMode's own downloads first (also for games not installed yet).
+    let mut list = crate::direct::list();
+    let from_stores: Vec<GameUpdate> = games
         .iter()
+        .filter(|game| !list.iter().any(|u| u.game_id == game.id))
         .filter_map(|game| match game.store {
             Store::Steam => {
                 let appid = game.steam_appid?;
@@ -52,6 +55,7 @@ pub fn all(games: &[Game]) -> Vec<GameUpdate> {
             _ => None,
         })
         .collect();
+    list.extend(from_stores);
     // legendary installs of games not in the library yet.
     list.extend(epic.into_iter().filter(|u| u.active() && !games.iter().any(|g| g.id == u.game_id)));
     list
@@ -59,6 +63,9 @@ pub fn all(games: &[Game]) -> Vec<GameUpdate> {
 
 /// The update of one game, looked at a bit harder (for the launch screen).
 pub fn for_game(game: &Game) -> Option<GameUpdate> {
+    if let Some(own) = crate::direct::get(&game.id) {
+        return Some(own);
+    }
     match game.store {
         Store::Steam => steam_one(game.steam_appid?).map(|u| with_id(&u, game)),
         Store::Xbox => {

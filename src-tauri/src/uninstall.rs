@@ -39,7 +39,11 @@ pub fn uninstall(app: &AppHandle, game: &Game) -> Result<Outcome> {
             crate::legendary::uninstall(app, game)?;
             Ok(Outcome::Removed)
         }
-        Store::Gog | Store::Ubisoft | Store::Ea | Store::Epic => registered_uninstaller(app, game),
+        Store::Gog => match crate::gog_store::uninstall(game)? {
+            Some(outcome) => Ok(outcome),
+            None => registered_uninstaller(app, game),
+        },
+        Store::Ubisoft | Store::Ea | Store::Epic => registered_uninstaller(app, game),
         Store::Emulator => bail!("Per toglierlo, elimina il file della ROM dalla sua cartella"),
         Store::Mock => bail!("Non disponibile per i giochi demo"),
         Store::App => bail!("Le app si disinstallano dalle Impostazioni di Windows"),
@@ -122,7 +126,7 @@ fn registered_uninstaller(app: &AppHandle, game: &Game) -> Result<Outcome> {
         bail!("Nessun programma di disinstallazione trovato: disinstallalo dal client dello store");
     };
     let (exe, args) = split_command(&command);
-    std::process::Command::new(exe).raw_arg(args).spawn()?;
+    crate::webview2::scrub(std::process::Command::new(exe).raw_arg(args)).spawn()?;
     crate::window::minimize(app);
     Ok(Outcome::Started)
 }

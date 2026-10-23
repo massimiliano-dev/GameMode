@@ -104,6 +104,41 @@ export function nativelyHandled(id: string, native: boolean, pads: boolean) {
   return pads && !!ids && HID_MODELS.has(`${ids[1]} ${ids[2]}`);
 }
 
+/**
+ * The same physical pad can reach GameMode twice: through the native backend
+ * (XInput, HID) and through the browser's Gamepad API, whose ids don't always
+ * give it away (third-party Xbox pads, Steam Input's virtual pad). A press
+ * that arrives from the other path within ECHO_MS is that echo and is
+ * dropped; a browser pad caught echoing ECHO_STRIKES times is skipped for good.
+ */
+const ECHO_MS = 120;
+const ECHO_STRIKES = 2;
+/** Browser repeats pause while the native path is still sending this action. */
+const NATIVE_QUIET = REPEAT_DELAY + 200;
+/** Browser pads ("index:id") found to mirror a native one. */
+const twins = new Set<string>();
+const strikes = new Map<string, number>();
+/** Last fresh press per action: which browser pad sent it, or null for native. */
+const lastPress = new Map<Action, { t: number; from: string | null }>();
+/** Last native event (press or repeat) per action. */
+const lastNative = new Map<Action, number>();
+
+/** Whether a fresh press is the other path's echo of one just dispatched. */
+export function isEcho(action: Action, from: string | null, t: number) {
+  const prev = lastPress.get(action);
+  if (prev && (prev.from === null) !== (from === null) && t - prev.t < ECHO_MS) {
+    const pad = from ?? prev.from;
+    if (pad) {
+      const n = (strikes.get(pad) ?? 0) + 1;
+      strikes.set(pad, n);
+      if (n >= ECHO_STRIKES) twins.add(pad);
+    }
+    return true;
+  }
+  lastPress.set(action, { t, from });
+  return false;
+}
+
 function browserGamepad(native: boolean) {
   const held = new Map<Action, { since: number; last: number }>();
 
@@ -113,24 +148,32 @@ function browserGamepad(native: boolean) {
       held.clear();
       return;
     }
-    const pressed = new Set<Action>();
+    // Each action remembers the first pad pressing it, to blame echoes on.
+    const pressed = new Map<Action, string>();
     for (const pad of navigator.getGamepads()) {
-      if (!pad || nativelyHandled(pad.id, native, nativePads)) continue;
-      for (const [i, action] of BUTTONS) if (pad.buttons[i]?.pressed) pressed.add(action);
+      if (!pad) continue;
+      const key = `${pad.index}:${pad.id}`;
+      if (twins.has(key) || nativelyHandled(pad.id, native, nativePads)) continue;
+      const add = (action: Action) => {
+        if (!pressed.has(action)) pressed.set(action, key);
+      };
+      for (const [i, action] of BUTTONS) if (pad.buttons[i]?.pressed) add(action);
       const [x = 0, y = 0] = pad.axes;
-      if (x < -STICK) pressed.add("left");
-      if (x > STICK) pressed.add("right");
-      if (y < -STICK) pressed.add("up");
-      if (y > STICK) pressed.add("down");
+      if (x < -STICK) add("left");
+      if (x > STICK) add("right");
+      if (y < -STICK) add("up");
+      if (y > STICK) add("down");
     }
-    for (const action of pressed) {
+    for (const [action, key] of pressed) {
       const state = held.get(action);
       if (!state) {
         held.set(action, { since: t, last: t });
+        if (isEcho(action, key, t)) continue;
         controllerActive();
         dispatch(action, false, "pad");
       } else if (REPEATABLE.has(action) && t - state.since >= REPEAT_DELAY && t - state.last >= REPEAT_RATE) {
         state.last = t;
+        if (t - (lastNative.get(action) ?? -Infinity) < NATIVE_QUIET) continue;
         dispatch(action, true, "pad");
       }
     }
@@ -173,6 +216,9 @@ async function start(): Promise<boolean> {
   // Also without XInput: the phone companion's presses arrive here too.
   if (isTauri) {
     onWindow<{ action: Action; repeat: boolean }>("gamepad://nav", (e) => {
+      const t = performance.now();
+      lastNative.set(e.action, t);
+      if (!e.repeat && isEcho(e.action, null, t)) return;
       controllerActive();
       dispatch(e.action, e.repeat, "pad");
     });

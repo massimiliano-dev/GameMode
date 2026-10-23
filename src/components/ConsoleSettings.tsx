@@ -12,6 +12,8 @@ import { Toggle } from "./common";
 export function ConsoleSettings() {
   const toast = useApp((s) => s.toast);
   const paused = useApp((s) => s.suspended.length);
+  const settings = useApp((s) => s.settings);
+  const saveSettings = useApp((s) => s.saveSettings);
   const [status, setStatus] = useState<ShellStatus | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [restart, setRestart] = useState<"desktop" | "console" | null>(null);
@@ -66,6 +68,18 @@ export function ConsoleSettings() {
         onClick={() => (status.enabled ? void apply(false) : setConfirm(true))}
         control={<Toggle on={status.enabled} />}
       />
+      {status.enabled && settings && (
+        <Row
+          label="Il tasto Xbox apre GameMode, non la Game Bar"
+          hint={
+            settings.guideToGamemode
+              ? "La Game Bar non si apre più col tasto Xbox finché la modalità console è attiva; disattivandola torna com'era"
+              : "Il tasto Xbox apre anche la Game Bar di Windows, che può coprire GameMode"
+          }
+          onClick={() => void saveSettings({ ...settings, guideToGamemode: !settings.guideToGamemode })}
+          control={<Toggle on={settings.guideToGamemode} />}
+        />
+      )}
       {status.active && (
         <Row
           label="Riavvia in modalità desktop"

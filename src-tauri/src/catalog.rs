@@ -2,7 +2,8 @@
 //! (Steam Web API, which needs the user's free API key), owned Epic and GOG
 //! games (read from their launchers' local caches), the PC Game Pass catalog
 //! and Xbox Cloud Gaming (public Xbox endpoints). Installing hands off to the
-//! store client.
+//! store client, unless GameMode can do it itself (`direct`: GOG with an
+//! account, Microsoft Store).
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -80,6 +81,19 @@ pub struct CatalogCache {
     cloud: Mutex<Option<(Instant, Vec<CatalogItem>)>>,
 }
 
+impl CatalogCache {
+    /// Forgets the installable list (an account was added or removed).
+    pub fn invalidate(&self) {
+        *self.catalog.lock().unwrap() = None;
+    }
+
+    /// Title of a catalog item, from the last list.
+    pub fn name_of(&self, id: &str) -> Option<String> {
+        let cached = self.catalog.lock().unwrap();
+        cached.as_ref()?.1.items.iter().find(|i| i.id == id).map(|i| i.name.clone())
+    }
+}
+
 pub async fn load(app: &AppHandle, force: bool) -> Catalog {
     let state = app.state::<AppState>();
     if !force {
@@ -101,7 +115,11 @@ pub async fn load(app: &AppHandle, force: bool) -> Catalog {
         let installed = installed.clone();
         tauri::async_runtime::spawn_blocking(move || crate::legendary::catalog_items(&installed))
     };
-    let (steam, gamepass) = tokio::join!(steam_owned(&client, key, &installed), gamepass(&client, &installed));
+    let (steam, gamepass, gog_api) = tokio::join!(
+        steam_owned(&client, key, &installed),
+        gamepass(&client, &installed),
+        crate::gog_store::owned_items(&client, &installed)
+    );
     let mut catalog = Catalog::default();
     match steam {
         Ok(items) => catalog.items.extend(items),
@@ -115,7 +133,15 @@ pub async fn load(app: &AppHandle, force: bool) -> Catalog {
         Err(err) => log::warn!("Game Pass catalog failed: {err:#}"),
     }
     catalog.items.extend(legendary.await.ok().flatten().unwrap_or_else(|| epic_owned(&installed)));
-    catalog.items.extend(gog_owned(&installed));
+    // Owned through the GOG account first (GameMode installs those itself),
+    // then whatever only GOG Galaxy knows about.
+    let mut gog = gog_api;
+    for item in gog_owned(&installed) {
+        if !gog.iter().any(|g| g.id == item.id) {
+            gog.push(item);
+        }
+    }
+    catalog.items.extend(gog);
     catalog.items.sort_by_key(|i| i.name.to_lowercase());
     *state.catalog.catalog.lock().unwrap() = Some((Instant::now(), catalog.clone()));
     catalog

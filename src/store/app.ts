@@ -10,6 +10,7 @@ import type {
   Collection,
   Controller,
   Game,
+  DirectDone,
   GameUpdate,
   LibraryUpdate,
   PowerEvent,
@@ -134,6 +135,8 @@ let wokeSeen = false;
 const HANDOFF_DELAY = 2200;
 /** How often to ask the stores about game updates. */
 const GAME_UPDATES_EVERY = 20_000;
+/** First check, once the first screen is up. */
+const GAME_UPDATES_DELAY = 4_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let initialized = false;
 /** The overlay window shares this store but never owns the screen stack. */
@@ -182,6 +185,12 @@ export const useApp = create<AppState>((set, get) => ({
       get().toast(`${name} disinstallato`);
     });
     on<string>("legendary://error", (message) => get().toast(message, "error"));
+    on<DirectDone>("direct://done", (d) => {
+      void get().refreshGameUpdates();
+      if (d.ok) get().toast(`${d.name} è installato: lo trovi in Libreria`);
+      else if (d.error) get().toast(d.error, "error");
+      else get().toast(`Download di ${d.name} annullato`);
+    });
     on<string>("install://queued", () => {
       set({ rescanOnReturn: false });
       get().toast("Download avviato in Steam: lo trovi in Libreria quando ha finito");
@@ -235,7 +244,8 @@ export const useApp = create<AppState>((set, get) => ({
         .catch(() => {});
     }, 20_000);
     set({ games, settings, session, loaded: games.length > 0 });
-    void get().refreshGameUpdates();
+    // Asking every store about updates is slow: not while the first screen comes up.
+    setTimeout(() => void get().refreshGameUpdates(), GAME_UPDATES_DELAY);
     setInterval(() => void get().refreshGameUpdates(), GAME_UPDATES_EVERY);
     if (games.length === 0) setTimeout(() => set({ loaded: true }), 8000);
     if (!isOverlayWindow) {
@@ -391,6 +401,16 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   showGameUpdate: async (game) => {
+    if (game.store === "xbox" && get().settings?.msstoreDirect) {
+      // Through the Store's install service, without opening the Xbox app.
+      const started = await api.updateStoreGame(game.id).catch(() => null);
+      if (started) {
+        get().toast(`Aggiorno ${game.name}`);
+        void get().refreshGameUpdates();
+        return;
+      }
+      if (started === false) return get().toast(`Nessun aggiornamento per ${game.name}`);
+    }
     if (game.store !== "steam") return get().openStore(game.store, game.id);
     try {
       const what = "Apro i download di Steam.";
@@ -404,6 +424,13 @@ export const useApp = create<AppState>((set, get) => ({
 
   installFromCatalog: async (id, name) => {
     try {
+      // GOG with an account, Microsoft Store: GameMode downloads it itself.
+      if (await api.directInstallAvailable(id).catch(() => false)) {
+        get().toast(`Avvio il download di ${name}: lo segui in Scarica`);
+        await api.installCatalogItem(id);
+        void get().refreshGameUpdates();
+        return;
+      }
       if (!id.startsWith("cloud:")) {
         // Shown while GameMode is still on screen: it steps aside next.
         const what = `Apro l'installazione di ${name}.`;
@@ -420,7 +447,9 @@ export const useApp = create<AppState>((set, get) => ({
 
   uninstall: async (game, stay = false) => {
     try {
-      if (isLegendary(game)) {
+      if (isLegendary(game) || game.store === "gog") {
+        // legendary removes the files itself; GOG's uninstaller runs silently
+        // (only Windows' permission prompt shows up).
         get().toast(`Disinstallo ${game.name}…`);
       } else if (!["manual", "xbox", "mock"].includes(game.store)) {
         const what = `Apro la disinstallazione di ${game.name}.`;

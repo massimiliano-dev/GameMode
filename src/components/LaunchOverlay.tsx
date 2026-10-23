@@ -3,9 +3,15 @@ import { motion } from "motion/react";
 import { Priority, useAction } from "../input/dispatcher";
 import { api } from "../lib/api";
 import { formatPlaytime, UPDATE_LABEL, updateProgress } from "../lib/format";
+import type { LaunchStage } from "../lib/types";
 import { useApp } from "../store/app";
 import { Cover } from "./GameCard";
 import { Glyph, useClock } from "./common";
+
+const STAGE_LABEL: Record<LaunchStage, string> = {
+  steamStarting: "Avvio di Steam…",
+  steamLogin: "Accedi a Steam",
+};
 
 /** After this long, explain that the wait is normal. */
 const SLOW_SECS = 20;
@@ -48,7 +54,7 @@ export function LaunchOverlay({ onDismiss }: { onDismiss: () => void }) {
           <Cover game={game} />
         </div>
         <div className="launch-text">
-          <span className="qm-label">{update ? UPDATE_LABEL[update.state] : "Avvio in corso"}</span>
+          <span className="qm-label">{update ? UPDATE_LABEL[update.state] : session.stage ? STAGE_LABEL[session.stage] : "Avvio in corso"}</span>
           <span className="launch-name">{game.name}</span>
           <span className="launch-bar">
             {update?.progress != null && update.state !== "available" ? (
@@ -66,7 +72,11 @@ export function LaunchOverlay({ onDismiss }: { onDismiss: () => void }) {
                   ? "Finito l'aggiornamento, avvio io il gioco."
                   : "Finito l'aggiornamento, il gioco parte da solo."}
             </span>
-          ) : waited >= SLOW_SECS && (
+          ) : session.stage === "steamLogin" ? (
+            <span className="launch-note">
+              Nessun account collegato a Steam: accedi in Big Picture, poi il gioco parte da solo.
+            </span>
+          ) : !session.stage && waited >= SLOW_SECS && (
             <span className="launch-note">
               In attesa da {formatPlaytime(waited)}. Alcuni giochi, soprattutto Game Pass, ci mettono qualche
               minuto: appena compare la finestra del gioco te la porto davanti.

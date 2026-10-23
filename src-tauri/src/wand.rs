@@ -59,7 +59,7 @@ pub fn open_app(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         if crate::window::windows_of(PROCESSES).is_empty() {
-            let _ = std::process::Command::new(exe).spawn();
+            let _ = crate::webview2::scrub(&mut std::process::Command::new(exe)).spawn();
         }
         // Wand takes a few seconds to start; push its window up once it's there.
         for _ in 0..40 {

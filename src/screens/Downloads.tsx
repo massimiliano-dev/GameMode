@@ -9,9 +9,9 @@ import { Glyph, StoreBadge, useHints, useScreenFocus } from "../components/commo
 import { useAction } from "../input/dispatcher";
 import { forgetGroup } from "../input/focus";
 import { api, on, pickFolder } from "../lib/api";
-import { formatBytes, formatPlaytime } from "../lib/format";
+import { formatBytes, formatPlaytime, updateProgress } from "../lib/format";
 import { describeJob, jobActive } from "../lib/legendary";
-import type { Catalog, CatalogItem, Deals, Drive, InstallTarget, LegendaryJob, LegendaryStatus } from "../lib/types";
+import type { Catalog, CatalogItem, Deals, DirectDone, Drive, GameUpdate, InstallTarget, LegendaryJob, LegendaryStatus } from "../lib/types";
 import { useApp } from "../store/app";
 
 type Filter = "all" | CatalogItem["source"];
@@ -78,6 +78,18 @@ export function Downloads() {
     return () => offs.forEach((off) => off());
   }, []);
 
+  /** GameMode's own downloads (GOG, Microsoft Store), by catalog id. */
+  const gameUpdates = useApp((s) => s.gameUpdates);
+  const refreshGameUpdates = useApp((s) => s.refreshGameUpdates);
+  const [stopping, setStopping] = useState<CatalogItem | null>(null);
+  const downloading = useMemo(() => (catalog?.items ?? []).some((i) => gameUpdates[i.id]), [catalog, gameUpdates]);
+  // Live progress while something downloads here.
+  useEffect(() => {
+    if (!downloading) return;
+    const timer = setInterval(() => void refreshGameUpdates(), 1500);
+    return () => clearInterval(timer);
+  }, [downloading, refreshGameUpdates]);
+
   const load = useCallback(async (force: boolean) => {
     setLoading(true);
     // Thousands of titles: arrives on its own, after the rest.
@@ -95,6 +107,10 @@ export function Downloads() {
     setBackdropArt(null);
     void load(false);
   }, [load, setBackdropArt]);
+  // A finished install leaves the list.
+  useEffect(() => on<DirectDone>("direct://done", (d) => {
+    if (d.ok) void load(true);
+  }), [load]);
 
   const items = useMemo(() => [...(catalog?.items ?? []), ...cloud, ...dealItems(deals)], [catalog, cloud, deals]);
   const filters = useMemo(
@@ -152,7 +168,9 @@ export function Downloads() {
   const toast = useApp((s) => s.toast);
   const onSelect = useCallback(
     (item: CatalogItem) => {
-      if (item.source === "deal") {
+      if (useApp.getState().gameUpdates[item.id]) {
+        setStopping(item);
+      } else if (item.source === "deal") {
         void api.openLink(`steam://store/${item.id.slice("deal:".length)}`);
         toast(`${item.name} a ${item.price} nel negozio Steam. Premi Guide per tornare qui`);
       } else if (item.source === "epic" && legendaryOn) {
@@ -213,7 +231,7 @@ export function Downloads() {
         {focused && (
           <span className="sort-label catalog-focus">
             <StoreBadge store={focused.store} />
-            {describe(focused, legendaryOn)}
+            {describe(focused, legendaryOn, gameUpdates[focused.id])}
           </span>
         )}
       </header>
@@ -265,7 +283,7 @@ export function Downloads() {
       ) : (
         <div className="library-grid catalog-grid" data-nav-group="catalog">
           {shown.map((item, i) => (
-            <CatalogCard key={item.id} item={item} autofocus={i === 0} onFocus={onFocus} onSelect={onSelect} />
+            <CatalogCard key={item.id} item={item} autofocus={i === 0} onFocus={onFocus} onSelect={onSelect} download={gameUpdates[item.id]} />
           ))}
         </div>
       )}
@@ -291,6 +309,20 @@ export function Downloads() {
             onClose={() => setEpicInstall(null)}
           />
         )}
+        {stopping && (
+          <ConfirmDialog
+            key="stop"
+            title={`Annullare il download di ${stopping.name}?`}
+            text="I file scaricati finora vengono eliminati."
+            confirmLabel="Annulla download"
+            onCancel={() => setStopping(null)}
+            onConfirm={() => {
+              const id = stopping.id;
+              setStopping(null);
+              void api.cancelDirectInstall(id).then(() => refreshGameUpdates());
+            }}
+          />
+        )}
         {tight && (
           <ConfirmDialog
             key="tight"
@@ -314,7 +346,11 @@ function epicAppName(item: CatalogItem) {
   return item.id.split(":").slice(3).join(":");
 }
 
-function describe(item: CatalogItem, legendaryOn: boolean) {
+function describe(item: CatalogItem, legendaryOn: boolean, download?: GameUpdate) {
+  if (download) {
+    const progress = updateProgress(download);
+    return download.state === "installing" ? "Installazione in corso" : `Download in corso${progress ? ` · ${progress}` : ""}`;
+  }
   switch (item.source) {
     case "epic":
       return legendaryOn ? "Si installa senza Epic Games Launcher" : "Mai giocato";

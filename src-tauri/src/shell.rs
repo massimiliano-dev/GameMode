@@ -115,7 +115,7 @@ mod imp {
     /// Starts explorer.exe: with no shell running, it becomes the desktop.
     pub fn spawn_explorer() {
         let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
-        let _ = std::process::Command::new(Path::new(&windir).join("explorer.exe")).spawn();
+        let _ = crate::webview2::scrub(&mut std::process::Command::new(Path::new(&windir).join("explorer.exe"))).spawn();
     }
 
     /// Opens the Windows desktop: starts Explorer (with no shell running it
@@ -385,7 +385,7 @@ mod imp {
             }
             let expanded = expand_env(&cmd);
             let (program, args) = split_command(&expanded);
-            if let Err(err) = std::process::Command::new(&program).raw_arg(&args).spawn() {
+            if let Err(err) = crate::webview2::scrub(std::process::Command::new(&program).raw_arg(&args)).spawn() {
                 log::warn!("startup app {name}: {err}");
             }
         }
@@ -652,7 +652,7 @@ fn boot_flag() -> std::path::PathBuf {
 /// A boot flag older than this is a restart that never happened.
 const BOOT_FLAG_MAX_AGE: i64 = 24 * 3600;
 
-/// `shutdown /r` doesn't force apps to close: one refusing to end the
+/// A restart doesn't force apps to close: one refusing to end the
 /// session cancels the restart. If this process is still alive after this
 /// long and the session isn't ending, the restart didn't happen and the
 /// flag must not outlive it.
@@ -752,6 +752,12 @@ fn watchdog_live_file() -> Option<std::path::PathBuf> {
 pub fn set_enabled(enabled: bool) -> Result<ShellStatus> {
     set(enabled)?;
     Ok(status())
+}
+
+/// Cheap early guess, before `status()` settles it (no flags consumed, no
+/// controller wait): GameMode is the registered shell and no Explorer runs.
+pub fn likely_shell_start() -> bool {
+    imp::enabled() && !imp::explorer_running()
 }
 
 #[cfg(test)]

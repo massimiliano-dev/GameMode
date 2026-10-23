@@ -64,6 +64,8 @@ export interface Settings {
   performanceMode: boolean;
   closeApps: string[];
   overlayEnabled: boolean;
+  /** The game is frozen while the overlay is open. */
+  overlayPause: boolean;
   backupDir: string | null;
   keyboardAssist: boolean;
   steamBigPicture: boolean;
@@ -105,6 +107,14 @@ export interface Settings {
   hidPads: boolean;
   /** Epic games go through legendary instead of the Epic Games Launcher. */
   epicLegendary: boolean;
+  /** GOG games start from their folder instead of through Galaxy. */
+  gogDirect: boolean;
+  /** In console mode the Xbox button opens GameMode instead of Game Bar. */
+  guideToGamemode: boolean;
+  /** Where GameMode installs GOG games; `C:\GOG Games` when null. */
+  gogInstallDir: string | null;
+  /** Microsoft Store / Game Pass installs and updates without the Xbox app. */
+  msstoreDirect: boolean;
 }
 
 export interface ShellStatus {
@@ -270,6 +280,8 @@ export interface ManualGame {
   args: string[];
 }
 
+export type LaunchStage = "steamStarting" | "steamLogin";
+
 export type Phase = "launching" | "running" | "suspended" | "exited" | "failed";
 
 export interface SessionState {
@@ -285,6 +297,8 @@ export interface SessionState {
   suspendedAt?: number | null;
   /** An anti-cheat was found: suspending may get the player kicked. */
   antiCheat?: boolean;
+  /** What the launch waits on before the game starts: Steam starting, or a Steam login. */
+  stage?: LaunchStage | null;
 }
 
 export type UpdateState = "available" | "downloading" | "installing" | "paused";
@@ -646,4 +660,19 @@ export interface InstallTarget {
   /** Free bytes on its drive; 0 when unknown. */
   free: number;
   default: boolean;
+}
+
+export interface GogStatus {
+  signedIn: boolean;
+  installDir: string;
+}
+
+/** A download GameMode ran itself has ended (`direct://done`). */
+export interface DirectDone {
+  /** Catalog or game id: `gog:<id>`, `gamepass:<productId>`, `xbox:<family>`. */
+  id: string;
+  name: string;
+  ok: boolean;
+  /** Why it failed; null when it worked or was cancelled. */
+  error: string | null;
 }

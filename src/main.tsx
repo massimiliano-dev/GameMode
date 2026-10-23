@@ -5,7 +5,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 
 import App from "./App";
-import { api } from "./lib/api";
+import { api, signalAppReady } from "./lib/api";
 import { CaptureOsdApp } from "./screens/CaptureOsd";
 import { KeyboardApp } from "./screens/KeyboardApp";
 import { OsdApp } from "./screens/Osd";
@@ -49,6 +49,7 @@ if (isOsd) {
             <SafeMode info={info} onContinue={renderApp} />
           </React.StrictMode>,
         );
+        signalAppReady();
       } else {
         renderApp();
       }

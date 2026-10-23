@@ -12,6 +12,7 @@ import { UpdateSettings } from "../components/UpdateSettings";
 import { WandSettings } from "../components/WandSettings";
 import { ProfileSettings } from "../components/ProfileSettings";
 import { StorageSettings } from "../components/StorageSettings";
+import { StoreInstallSettings } from "../components/StoreInstallSettings";
 import { Row, Section } from "../components/SettingsRows";
 import { Glyph, Toggle, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
@@ -213,6 +214,14 @@ export function Settings() {
                 onClick={() => void saveSettings({ ...settings, overlayEnabled: !settings.overlayEnabled })}
                 control={<Toggle on={settings.overlayEnabled} />}
               />
+              {settings.overlayEnabled && (
+                <Row
+                  label="Metti in pausa il gioco con l'overlay"
+                  hint="Il gioco si ferma e non riceve i comandi del controller finché l'overlay è aperto. Non vale per i giochi con anti-cheat"
+                  onClick={() => void saveSettings({ ...settings, overlayPause: !settings.overlayPause })}
+                  control={<Toggle on={settings.overlayPause} />}
+                />
+              )}
               <Row
                 label="Tasto Xbox ai giochi Steam"
                 hint={
@@ -264,6 +273,12 @@ export function Settings() {
                 hint="Nelle finestre degli store la tastiera compare da sola quando un campo di testo ha il focus; con Y si apre comunque"
                 onClick={() => void saveSettings({ ...settings, keyboardAuto: !settings.keyboardAuto })}
                 control={<Toggle on={settings.keyboardAuto} />}
+              />
+              <Row
+                label="Avvia i giochi GOG senza Galaxy"
+                hint="Il gioco parte direttamente dalla sua cartella; disattiva per passare da Galaxy (salvataggi cloud, obiettivi)"
+                onClick={() => void saveSettings({ ...settings, gogDirect: !settings.gogDirect })}
+                control={<Toggle on={settings.gogDirect} />}
               />
             </Section>
             <WandSettings />
@@ -326,6 +341,8 @@ export function Settings() {
                 onClick={() => void rescan()}
               />
             </Section>
+
+            <StoreInstallSettings settings={settings} />
 
             <EpicSettings settings={settings} />
 
