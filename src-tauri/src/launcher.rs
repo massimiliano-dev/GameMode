@@ -400,6 +400,7 @@ impl Dialogs {
                 self.stepped_aside = true;
                 let keys = app.state::<AppState>().db.lock().settings.keyboard_assist;
                 crate::assist::enable(keys);
+                window::move_to_gamemode_screen(app, hwnd, false);
                 window::force_foreground_raw(hwnd);
                 window::minimize(app);
             } else if self.stepped_aside && self.seen.is_empty() {

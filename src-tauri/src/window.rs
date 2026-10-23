@@ -215,6 +215,50 @@ pub fn nothing_in_front() -> bool {
     }
 }
 
+/// Moves another app's window to the screen GameMode is on (apps like Wand
+/// remember the second monitor and open over there): maximized, or centered
+/// at its own size for dialogs.
+pub fn move_to_gamemode_screen(app: &AppHandle, raw: isize, maximize: bool) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
+        use windows::Win32::Foundation::RECT;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowRect, SetWindowPos, ShowWindow, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_MAXIMIZE, SW_RESTORE,
+        };
+        let Some(main) = main_window(app).and_then(|w| w.hwnd().ok()) else { return };
+        let target = win::hwnd(raw);
+        unsafe {
+            // A minimized GameMode still counts where it was before.
+            let screen = MonitorFromWindow(win::hwnd(main.0 as isize), MONITOR_DEFAULTTOPRIMARY);
+            if MonitorFromWindow(target, MONITOR_DEFAULTTOPRIMARY) == screen {
+                return;
+            }
+            let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+            if !GetMonitorInfoW(screen, &mut info).as_bool() {
+                return;
+            }
+            let work = info.rcWork;
+            let _ = ShowWindow(target, SW_RESTORE);
+            if maximize {
+                let (w, h) = (work.right - work.left, work.bottom - work.top);
+                let _ = SetWindowPos(target, None, work.left, work.top, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+                let _ = ShowWindow(target, SW_MAXIMIZE);
+            } else {
+                let mut rect = RECT::default();
+                let _ = GetWindowRect(target, &mut rect);
+                let x = work.left + ((work.right - work.left) - (rect.right - rect.left)).max(0) / 2;
+                let y = work.top + ((work.bottom - work.top) - (rect.bottom - rect.top)).max(0) / 2;
+                let _ = SetWindowPos(target, None, x, y, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, raw, maximize);
+    }
+}
+
 /// The window still exists and is shown.
 pub fn window_alive(raw: isize) -> bool {
     #[cfg(windows)]

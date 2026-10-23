@@ -56,6 +56,7 @@ pub fn is_open() -> bool {
 pub fn open_app(app: &AppHandle) {
     crate::overlay::hide(app);
     let Some(exe) = candidates().into_iter().find(|p| p.is_file()) else { return };
+    let app = app.clone();
     std::thread::spawn(move || {
         if crate::window::windows_of(PROCESSES).is_empty() {
             let _ = std::process::Command::new(exe).spawn();
@@ -63,10 +64,14 @@ pub fn open_app(app: &AppHandle) {
         // Wand takes a few seconds to start; push its window up once it's there.
         for _ in 0..40 {
             if has_focus() {
+                if let Some(&hwnd) = crate::window::windows_of(PROCESSES).first() {
+                    crate::window::move_to_gamemode_screen(&app, hwnd, true);
+                }
                 IN_APP.store(true, Ordering::SeqCst);
                 return;
             }
             if let Some(&hwnd) = crate::window::windows_of(PROCESSES).first() {
+                crate::window::move_to_gamemode_screen(&app, hwnd, true);
                 crate::window::force_foreground_raw(hwnd);
             }
             std::thread::sleep(std::time::Duration::from_millis(250));
