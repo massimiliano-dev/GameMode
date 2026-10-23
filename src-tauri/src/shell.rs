@@ -53,8 +53,7 @@ mod imp {
     use windows::core::BOOL;
     use windows::Win32::Foundation::{HWND, LPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, FindWindowW, GetClassNameW, GetSystemMetrics, IsWindowVisible, ShowWindow, SM_SHUTTINGDOWN,
-        SW_HIDE, SW_SHOWNA,
+        EnumWindows, FindWindowW, GetClassNameW, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOWNA,
     };
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
     use winreg::{RegKey, HKEY};
@@ -206,7 +205,7 @@ mod imp {
         // A clean exit to the desktop already started Explorer.
         std::thread::sleep(std::time::Duration::from_millis(500));
         // GameMode died because the user is signing out: no desktop to open.
-        if unsafe { GetSystemMetrics(SM_SHUTTINGDOWN) } != 0 {
+        if shutting_down() {
             return;
         }
         start_explorer();

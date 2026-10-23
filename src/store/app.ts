@@ -78,8 +78,6 @@ interface AppState {
   system: SystemInfo | null;
   /** The PC just woke up with a game still running: Home offers to go back to it. */
   wokeAt: number | null;
-  /** Seconds before the automatic sleep, while the warning is up. */
-  sleepSoon: number | null;
 
   init: () => Promise<void>;
   refreshGameUpdates: () => Promise<void>;
@@ -158,7 +156,6 @@ export const useApp = create<AppState>((set, get) => ({
   gameUpdates: {},
   system: null,
   wokeAt: null,
-  sleepSoon: null,
 
   init: async () => {
     if (initialized) return;
@@ -509,24 +506,13 @@ function onSessionEvent(
 /** Sleep, wake and the lock screen, as the backend reports them. */
 function onPowerEvent(e: PowerEvent, set: (partial: Partial<AppState>) => void, get: () => AppState) {
   switch (e.kind) {
-    case "suspended":
-    case "locked":
-    case "sessionEnding":
-      set({ sleepSoon: null });
-      break;
     case "resumed":
       // The game may have died in its sleep: the session is read again.
       void Promise.all([api.getSession(), api.getSuspended().catch(() => get().suspended)]).then(([session, suspended]) => {
         wokeSeen = document.hasFocus();
-        set({ session, suspended, wokeAt: session ? Date.now() : null, sleepSoon: null });
+        set({ session, suspended, wokeAt: session ? Date.now() : null });
         get().toast(session ? "Bentornato: la partita ti aspetta" : "Bentornato");
       });
-      break;
-    case "sleepSoon":
-      set({ sleepSoon: e.seconds });
-      break;
-    case "sleepCancelled":
-      set({ sleepSoon: null });
       break;
     default:
       break;

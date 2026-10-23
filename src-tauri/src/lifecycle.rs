@@ -1,7 +1,7 @@
 //! Console-style life cycle: what GameMode does when the PC goes to sleep
 //! and wakes up, when the session is locked and unlocked, when the display
-//! changes and when Windows signs out — plus the idle timer that puts the
-//! PC to sleep by itself when nobody touches keyboard, mouse or controller.
+//! changes and when Windows signs out. The idle timer that puts the PC to
+//! sleep by itself lives in `idle`, which asks `others_keep_awake` first.
 //!
 //! Windows tells a top-level window about all of this, so a hidden one runs
 //! on its own thread with its own message loop; every reaction happens in
@@ -18,7 +18,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{launcher, model::now, overlay, performance, shell, system, window, AppState};
+use crate::{launcher, model::now, overlay, performance, shell, window, AppState};
 
 /// What the frontend hears about.
 #[derive(Serialize, Clone, Copy, PartialEq, Debug)]
@@ -32,9 +32,6 @@ pub enum PowerEvent {
     Unlocked,
     DisplayOff,
     DisplayOn,
-    /// The idle timer puts the PC to sleep in `seconds` unless someone moves.
-    SleepSoon { seconds: u64 },
-    SleepCancelled,
     /// Windows is signing out or shutting down.
     SessionEnding,
 }
@@ -82,21 +79,19 @@ static PRESENT: AtomicBool = AtomicBool::new(true);
 const COME_BACK_DELAYS: [u64; 3] = [2, 4, 6];
 /// Display changes settle for this long before TV mode is checked.
 const DISPLAY_SETTLE: Duration = Duration::from_millis(1500);
-/// How often the idle timer looks, at most; once the warning is up it
-/// looks every second, so the countdown and the cancel are on time.
-const IDLE_POLL: Duration = Duration::from_secs(30);
-const WARNED_POLL: Duration = Duration::from_secs(1);
 /// How often a wake waits for the user to show up.
 const PRESENCE_POLL: Duration = Duration::from_secs(1);
-/// Warning before the automatic sleep, in seconds.
-pub const WARN_BEFORE: u64 = 60;
 
-/// Starts listening to the system and the idle timer.
+/// Starts listening to the system.
 pub fn start(app: &AppHandle) {
     let _ = APP.set(app.clone());
     imp::start();
-    let handle = app.clone();
-    std::thread::spawn(move || idle_loop(&handle));
+}
+
+/// Some other program (a video player, a download, Windows Update) asks
+/// Windows to stay awake: the idle timer must not put the PC to sleep.
+pub fn others_keep_awake() -> bool {
+    imp::others_keep_awake()
 }
 
 pub fn locked() -> bool {
@@ -340,99 +335,6 @@ impl Drop for Awake {
     }
 }
 
-/* ---------- Idle timer ---------- */
-
-/// What the idle timer does this round.
-#[derive(PartialEq, Debug)]
-pub enum Step {
-    Nothing,
-    /// Say that sleep comes in this many seconds.
-    Warn(u64),
-    /// The warning no longer applies.
-    Cancel,
-    Sleep,
-}
-
-/// Decides from the idle time, the configured threshold and whether the
-/// warning was already given.
-pub fn step(idle: u64, threshold: u64, warned: bool) -> Step {
-    if idle >= threshold {
-        Step::Sleep
-    } else if idle + WARN_BEFORE >= threshold {
-        if warned { Step::Nothing } else { Step::Warn(threshold - idle) }
-    } else if warned {
-        Step::Cancel
-    } else {
-        Step::Nothing
-    }
-}
-
-/// Seconds since the last activity, merging what Windows counts (keyboard,
-/// mouse) with the controller and the last wake, which Windows doesn't.
-/// Unknown on every side means "not idle".
-pub fn idle_secs(system_idle: Option<u64>, pad_last: i64, woke_at: i64, at: i64) -> u64 {
-    let since = |t: i64| (t > 0).then(|| (at - t).max(0) as u64);
-    [system_idle, since(pad_last), since(woke_at)].into_iter().flatten().min().unwrap_or(0)
-}
-
-/// How long the idle timer waits before looking again: every second once
-/// the warning is up, otherwise until the warning is due (at most `IDLE_POLL`).
-pub fn next_poll(idle: u64, threshold: u64, warned: bool) -> Duration {
-    if warned {
-        return WARNED_POLL;
-    }
-    let until_warning = threshold.saturating_sub(WARN_BEFORE).saturating_sub(idle);
-    Duration::from_secs(until_warning.clamp(1, IDLE_POLL.as_secs()))
-}
-
-/// Whether the idle timer runs now: on, nobody asleep or locked out, no
-/// game up, nothing else asking Windows to stay awake (a film, a download,
-/// Windows Update) and GameMode is what's on screen, so the warning is seen.
-fn timer_applies(app: &AppHandle) -> bool {
-    let state = app.state::<AppState>();
-    !(suspended() || locked() || session_ending() || state.launcher.current().is_some())
-        && (shell::status().active || window::is_foreground(app))
-        && !imp::others_keep_awake()
-}
-
-fn idle_loop(app: &AppHandle) {
-    let mut warned = false;
-    let mut wait = IDLE_POLL;
-    loop {
-        std::thread::sleep(wait);
-        wait = IDLE_POLL;
-        let minutes = app.state::<AppState>().db.lock().settings.auto_sleep_minutes;
-        let threshold = minutes.filter(|m| *m > 0).map(|m| u64::from(m) * 60);
-        let Some(threshold) = threshold.filter(|_| timer_applies(app)) else {
-            if std::mem::take(&mut warned) {
-                emit(PowerEvent::SleepCancelled);
-            }
-            continue;
-        };
-        let idle = idle_secs(imp::system_idle_secs(), crate::gamepad::last_input(), WOKE_AT.load(Ordering::SeqCst), now());
-        match step(idle, threshold, warned) {
-            Step::Nothing => {}
-            Step::Warn(seconds) => {
-                warned = true;
-                emit(PowerEvent::SleepSoon { seconds });
-            }
-            Step::Cancel => {
-                warned = false;
-                emit(PowerEvent::SleepCancelled);
-            }
-            Step::Sleep => {
-                warned = false;
-                emit(PowerEvent::SleepCancelled);
-                if let Err(err) = system::power(system::PowerAction::Sleep) {
-                    eprintln!("auto sleep: {err:#}");
-                }
-                continue;
-            }
-        }
-        wait = next_poll(idle, threshold, warned);
-    }
-}
-
 #[cfg(windows)]
 mod imp {
     use windows::core::w;
@@ -565,9 +467,9 @@ mod imp {
         }
     }
 
-    /// Some other program (a video player, a download, Windows Update)
-    /// asks Windows to stay awake. GameMode's own request only exists while
-    /// a game is up, when the idle timer isn't running anyway.
+    /// Some program asks Windows to stay awake. GameMode's own requests
+    /// (a game up, a download awaited, a pad in use) already stop the idle
+    /// timer before it gets here.
     pub fn others_keep_awake() -> bool {
         let mut state = EXECUTION_STATE(0);
         let status = unsafe {
@@ -611,46 +513,5 @@ mod imp {
 
     pub fn others_keep_awake() -> bool {
         false
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn warns_a_minute_before_and_sleeps_at_the_threshold() {
-        let threshold = 15 * 60;
-        assert_eq!(step(100, threshold, false), Step::Nothing);
-        assert_eq!(step(threshold - 60, threshold, false), Step::Warn(60));
-        assert_eq!(step(threshold - 30, threshold, true), Step::Nothing);
-        // Someone moved: the warning goes away.
-        assert_eq!(step(5, threshold, true), Step::Cancel);
-        assert_eq!(step(threshold, threshold, true), Step::Sleep);
-        assert_eq!(step(threshold + 1000, threshold, false), Step::Sleep);
-    }
-
-    #[test]
-    fn idle_is_the_most_recent_activity_of_any_kind() {
-        // Keyboard idle for an hour, pad used 2 minutes ago.
-        assert_eq!(idle_secs(Some(3600), 1_000_000 - 120, 0, 1_000_000), 120);
-        // Pad never used: Windows' count stands.
-        assert_eq!(idle_secs(Some(3600), 0, 0, 1_000_000), 3600);
-        // Just woke up by the power button: not idle, whatever Windows says.
-        assert_eq!(idle_secs(Some(3600), 0, 1_000_000 - 10, 1_000_000), 10);
-        // Nothing known: never sleep on a guess.
-        assert_eq!(idle_secs(None, 0, 0, 1_000_000), 0);
-    }
-
-    #[test]
-    fn the_countdown_matches_the_real_sleep() {
-        let threshold = 30 * 60;
-        // Far away: the usual pace.
-        assert_eq!(next_poll(0, threshold, false), IDLE_POLL);
-        // Close to the warning: wake up right when it's due.
-        assert_eq!(next_poll(threshold - 70, threshold, false), Duration::from_secs(10));
-        assert_eq!(next_poll(threshold - 60, threshold, false), Duration::from_secs(1));
-        // Warning up: every second, so the sleep lands at 0 and a touch cancels at once.
-        assert_eq!(next_poll(threshold - 30, threshold, true), WARNED_POLL);
     }
 }

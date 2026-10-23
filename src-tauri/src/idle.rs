@@ -29,8 +29,6 @@ pub const WARNING_SECS: u64 = 60;
 const PAD_KEEPS_DISPLAY_MS: u64 = 2 * 60 * 1000;
 /// The press that entered rest mode must not leave it at once.
 const REST_GRACE_MS: u64 = 1500;
-/// After waking from sleep GameMode takes the screen back once things settle.
-const RESUME_FRONT_DELAY: Duration = Duration::from_secs(2);
 
 /// Where the inactivity machine is, as the frontend sees it.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -319,18 +317,12 @@ fn run(app: AppHandle) {
             .is_some_and(|s| matches!(s.phase, launcher::Phase::Running | launcher::Phase::Launching));
         let in_front = window::is_foreground(&app) || overlay::is_open();
 
-        // Back from sleep: start counting again, and take the screen back.
+        // Back from sleep: start counting again. Taking the screen back is
+        // `lifecycle`'s job: it waits for the user and minds the lock screen.
         if RESUMED.swap(false, Ordering::SeqCst) {
             LAST_RESUME.store(now.max(1), Ordering::SeqCst);
             REST_SINCE.store(0, Ordering::SeqCst);
             set_stage(&app, Stage::Active);
-            if !playing {
-                let h = app.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(RESUME_FRONT_DELAY);
-                    window::bring_to_front(&h);
-                });
-            }
         }
 
         // Scheduled power action. The lock only covers the bookkeeping.
@@ -411,7 +403,9 @@ fn run(app: AppHandle) {
             }
             set_stage(&app, target);
         }
-        if !playing && !wait_downloads && (resting || in_front) && sleep_due(idle_secs, thresholds) {
+        // A film, a download outside the stores or Windows Update asking
+        // Windows to stay awake wins over the idle timer.
+        if !playing && !wait_downloads && (resting || in_front) && sleep_due(idle_secs, thresholds) && !crate::lifecycle::others_keep_awake() {
             // Count again from here, in case the PC doesn't go (or comes right back).
             LAST_RESUME.store(now.max(1), Ordering::SeqCst);
             REST_SINCE.store(0, Ordering::SeqCst);
@@ -419,7 +413,9 @@ fn run(app: AppHandle) {
             continue;
         }
 
-        let wanted = required(playing, wait_downloads, pad_recent, in_front, target);
+        // A wake nobody asked for (a wake timer, maintenance) with a game
+        // open must be free to go back to sleep.
+        let wanted = required(playing && crate::lifecycle::user_present(), wait_downloads, pad_recent, in_front, target);
         if applied != Some(wanted) {
             applied = Some(wanted);
             imp::set_execution_state(wanted.0, wanted.1);

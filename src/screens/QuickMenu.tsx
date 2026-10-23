@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { ActionSheet } from "../components/ActionSheet";
 import { Cover } from "../components/GameCard";
 import { Avatar } from "../components/ProfileSettings";
-import { SLEEP_CHOICES, sleepLabel } from "../components/SystemSettings";
 import { Glyph, useClock, useScreenFocus } from "../components/common";
 import { MusicPanel } from "../components/NowPlaying";
 import { Priority, useAction } from "../input/dispatcher";
@@ -40,9 +39,6 @@ export function QuickMenu() {
   const cancelPower = useIdle((s) => s.cancelPower);
   const [powerSheet, setPowerSheet] = useState(false);
   const [powerOptions, setPowerOptions] = useState<PowerOptions>({ sleep: true, hibernate: false });
-  const [sleepSheet, setSleepSheet] = useState(false);
-  const settings = useApp((s) => s.settings);
-  const saveSettings = useApp((s) => s.saveSettings);
   // The screen below keeps the hint bar; the panel shows its own.
   useEffect(() => {
     void api.getVolume().then(setVolume).catch(() => setVolume(null));
@@ -227,11 +223,6 @@ export function QuickMenu() {
           >
             {consoleMode ? "Apri il desktop di Windows" : "Vai al desktop"}
           </QmButton>
-          {settings && (
-            <QmButton onClick={() => setSleepSheet(true)}>
-              Sospensione automatica <span className="qm-sub">{sleepLabel(settings.autoSleepMinutes)}</span>
-            </QmButton>
-          )}
         </div>
 
         {schedule && (
@@ -311,24 +302,6 @@ export function QuickMenu() {
                   .setAudioOutput(o.id)
                   .then(() => toast(`Audio su ${o.name}`))
                   .catch((e) => toast(String(e), "error")),
-            }))}
-          />
-        )}
-        {sleepSheet && settings && (
-          <ActionSheet
-            key="sleep"
-            title="Sospensione automatica"
-            onClose={() => setSleepSheet(false)}
-            actions={SLEEP_CHOICES.map(({ minutes, label }) => ({
-              label,
-              hint: minutes === settings.autoSleepMinutes ? "Scelta attuale" : undefined,
-              onSelect: () => {
-                saveSettings({ ...settings, autoSleepMinutes: minutes })
-                  .then(() =>
-                    toast(minutes ? `Il PC si sospende dopo ${label.replace("Dopo ", "")} senza attività` : "Sospensione automatica disattivata"),
-                  )
-                  .catch((e) => toast(String(e), "error"));
-              },
             }))}
           />
         )}
