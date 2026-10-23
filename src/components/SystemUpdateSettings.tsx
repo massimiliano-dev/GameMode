@@ -22,8 +22,10 @@ export function SystemUpdateSettings() {
     try {
       const found = await api.systemUpdates(true);
       useApp.setState({ systemUpdate: found });
-      if (found.state === "none") toast("Windows è aggiornato");
-      else if (found.state === "unknown") toast(`Windows Update non risponde: ${found.error ?? "riprova più tardi"}`, "error");
+      if (found.state === "unknown") toast(`Windows Update non risponde: ${found.error ?? "riprova più tardi"}`, "error");
+      // Online search failed: what shows comes from Windows' local cache.
+      else if (found.error) toast(`Ricerca online non riuscita: ${found.error}`, "error");
+      else if (found.state === "none") toast("Windows è aggiornato");
     } catch (e) {
       toast(`Controllo non riuscito: ${String(e)}`, "error");
     } finally {
@@ -104,7 +106,9 @@ function badge(u: SystemUpdates): string {
 /** The hint under the search row. */
 export function status(u: SystemUpdates | null): string {
   if (!u) return "GameMode controlla da solo ogni qualche ora. Scaricare e installare resta a Windows.";
-  const when = u.checkedAt ? `Ultimo controllo: ${formatLastPlayed(u.checkedAt).toLowerCase()}.` : "";
+  const when =
+    (u.checkedAt ? `Ultimo controllo: ${formatLastPlayed(u.checkedAt).toLowerCase()}.` : "") +
+    (u.error && u.state !== "unknown" ? " Ultima ricerca online non riuscita." : "");
   switch (u.state) {
     case "none":
       return `Windows è aggiornato. ${when}`.trim();

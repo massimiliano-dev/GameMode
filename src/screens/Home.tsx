@@ -4,7 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { ActionSheet } from "../components/ActionSheet";
 import { Cover, GameCard } from "../components/GameCard";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
-import { SystemUpdateRow } from "../components/SystemUpdateCard";
+import { SystemUpdateRow, SystemUpdateSheet } from "../components/SystemUpdateCard";
 import { useAction } from "../input/dispatcher";
 import { artUrl } from "../lib/api";
 import { formatLastPlayed, formatPlaytime, STORE_LABEL, STORES } from "../lib/format";
@@ -73,6 +73,7 @@ export function Home({ focusId }: { focusId?: string }) {
   const [onPausedRow, setOnPausedRow] = useState(false);
   // The focus sits on the Windows update card: no game to play there.
   const [onSystemCard, setOnSystemCard] = useState(false);
+  const [systemSheet, setSystemSheet] = useState(false);
 
   useScreenFocus(focusId, rows.length > 0 || paused.length > 0);
   useHints(
@@ -125,7 +126,7 @@ export function Home({ focusId }: { focusId?: string }) {
     <div className="screen home">
       <section className="home-hero">{featured && <FeaturedInfo game={featured} />}</section>
       <div className="rows">
-        <SystemUpdateRow onFocus={onFocusSystem} />
+        <SystemUpdateRow onFocus={onFocusSystem} onSelect={() => setSystemSheet(true)} />
         {paused.length > 0 && (
           <section className="row" data-nav-group="row:paused">
             <h2 className="row-title">
@@ -185,6 +186,7 @@ export function Home({ focusId }: { focusId?: string }) {
           />
         )}
       </AnimatePresence>
+      <SystemUpdateSheet open={systemSheet} onClose={() => setSystemSheet(false)} />
     </div>
   );
 }

@@ -87,14 +87,64 @@ pub fn cached() -> Option<SystemUpdates> {
     CACHE.lock().unwrap().clone()
 }
 
+/// The answer from a search, given whether a reboot is already pending. A
+/// pending reboot is worth more than a failed search: a restart installs it
+/// whatever the network says.
+fn from_search(reboot_required: bool, search: Result<Vec<SystemUpdateItem>>, now: i64) -> Result<SystemUpdates> {
+    match search {
+        Ok(items) => Ok(SystemUpdates {
+            state: classify(reboot_required, &items),
+            items,
+            checked_at: Some(now),
+            error: None,
+        }),
+        Err(err) if reboot_required => {
+            eprintln!("windows update: search failed, reboot pending anyway: {err:#}");
+            Ok(SystemUpdates {
+                state: SystemUpdateState::RebootRequired,
+                items: Vec::new(),
+                checked_at: Some(now),
+                error: Some(err.to_string()),
+            })
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// What to show when Windows Update didn't answer at all: a staged update or
+/// a pending reboot known before stays (a network hiccup doesn't undo it),
+/// anything else becomes `Unknown`.
+fn after_failure(previous: Option<SystemUpdates>, error: String) -> SystemUpdates {
+    match previous {
+        Some(mut p) if matches!(p.state, SystemUpdateState::Ready | SystemUpdateState::RebootRequired) => {
+            p.error = Some(error);
+            p
+        }
+        _ => SystemUpdates::unknown(error),
+    }
+}
+
 /// Asks Windows Update (online: also the Microsoft servers, slow) and caches
-/// the answer. Never fails: trouble becomes `Unknown` with its reason.
+/// the answer. Never fails: an online search that fails falls back to WUA's
+/// local cache, and when that fails too the last good state is kept with the
+/// reason (or `Unknown`, see `after_failure`).
 pub fn check(online: bool) -> SystemUpdates {
-    let status = match imp::query(online) {
+    let mut answer = imp::query(online);
+    if online {
+        if let Err(err) = &answer {
+            eprintln!("windows update: online search failed, using the local cache: {err:#}");
+            let reason = err.to_string();
+            answer = imp::query(false).map(|mut s| {
+                s.error.get_or_insert(reason);
+                s
+            });
+        }
+    }
+    let status = match answer {
         Ok(s) => s,
         Err(err) => {
             eprintln!("windows update: {err:#}");
-            SystemUpdates::unknown(err.to_string())
+            after_failure(cached(), err.to_string())
         }
     };
     *CACHE.lock().unwrap() = Some(status.clone());
@@ -135,7 +185,7 @@ pub fn shutdown(restart: bool) -> Result<()> {
 #[cfg(windows)]
 mod imp {
     use anyhow::{Context, Result, anyhow};
-    use windows::Win32::Foundation::{DECIMAL, HANDLE, LUID};
+    use windows::Win32::Foundation::{CloseHandle, DECIMAL, HANDLE, LUID};
     use windows::Win32::Security::{
         AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED, SE_SHUTDOWN_NAME,
         TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
@@ -152,11 +202,14 @@ mod imp {
     };
     use windows::core::BSTR;
 
-    use super::{SystemUpdateItem, SystemUpdates, classify};
+    use super::{SystemUpdateItem, SystemUpdates, from_search};
 
-    /// Pending, visible software updates; drivers are left to the vendors
-    /// (Windows 11 treats them as optional and WU's GPU drivers lag behind).
-    const CRITERIA: &str = "IsInstalled=0 and IsHidden=0 and Type='Software'";
+    /// Pending, visible, non-optional software updates. Drivers are left to
+    /// the vendors (Windows 11 treats them as optional and WU's GPU drivers
+    /// lag behind); optional ones (BrowseOnly: previews, feature upgrade
+    /// offers) are never downloaded on their own, so they'd keep the state at
+    /// `Available` forever.
+    const CRITERIA: &str = "IsInstalled=0 and IsHidden=0 and Type='Software' and BrowseOnly=0";
 
     pub fn query(online: bool) -> Result<SystemUpdates> {
         unsafe {
@@ -165,7 +218,12 @@ mod imp {
             let info: ISystemInformation =
                 CoCreateInstance(&SystemInformation, None, CLSCTX_INPROC_SERVER).context("Windows Update non raggiungibile")?;
             let reboot_required = info.RebootRequired().map(|b| b.as_bool()).unwrap_or(false);
+            from_search(reboot_required, search(online), crate::model::now())
+        }
+    }
 
+    unsafe fn search(online: bool) -> Result<Vec<SystemUpdateItem>> {
+        unsafe {
             let session: IUpdateSession =
                 CoCreateInstance(&UpdateSession, None, CLSCTX_INPROC_SERVER).context("Windows Update non raggiungibile")?;
             let _ = session.SetClientApplicationID(&BSTR::from("GameMode"));
@@ -189,12 +247,7 @@ mod imp {
                     downloaded: update.IsDownloaded().map(|b| b.as_bool()).unwrap_or(false),
                 });
             }
-            Ok(SystemUpdates {
-                state: classify(reboot_required, &items),
-                items,
-                checked_at: Some(crate::model::now()),
-                error: None,
-            })
+            Ok(items)
         }
     }
 
@@ -214,7 +267,11 @@ mod imp {
         let flags = mode | SHUTDOWN_INSTALL_UPDATES;
         let reason = SHTDN_REASON_MAJOR_OPERATINGSYSTEM | SHTDN_REASON_MINOR_UPGRADE | SHTDN_REASON_FLAG_PLANNED;
         let code = unsafe {
-            enable_shutdown_privilege()?;
+            // Without the privilege InitiateShutdown fails and shutdown.exe
+            // below still gets its turn.
+            if let Err(err) = enable_shutdown_privilege() {
+                eprintln!("windows update: cannot enable SeShutdownPrivilege: {err:#}");
+            }
             InitiateShutdownW(None, None, 0, flags, reason)
         };
         if code == 0 {
@@ -231,14 +288,18 @@ mod imp {
         unsafe {
             let mut token = HANDLE::default();
             OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token)?;
-            let mut luid = LUID::default();
-            LookupPrivilegeValueW(None, SE_SHUTDOWN_NAME, &mut luid)?;
-            let privileges = TOKEN_PRIVILEGES {
-                PrivilegeCount: 1,
-                Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }],
-            };
-            AdjustTokenPrivileges(token, false, Some(&privileges), 0, None, None)?;
-            Ok(())
+            let adjusted = (|| -> Result<()> {
+                let mut luid = LUID::default();
+                LookupPrivilegeValueW(None, SE_SHUTDOWN_NAME, &mut luid)?;
+                let privileges = TOKEN_PRIVILEGES {
+                    PrivilegeCount: 1,
+                    Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }],
+                };
+                AdjustTokenPrivileges(token, false, Some(&privileges), 0, None, None)?;
+                Ok(())
+            })();
+            let _ = CloseHandle(token);
+            adjusted
         }
     }
 }
@@ -247,11 +308,10 @@ mod imp {
 mod imp {
     use anyhow::Result;
 
-    use super::{SystemUpdates, classify};
+    use super::{SystemUpdates, from_search};
 
     pub fn query(_online: bool) -> Result<SystemUpdates> {
-        let items = Vec::new();
-        Ok(SystemUpdates { state: classify(false, &items), items, checked_at: Some(crate::model::now()), error: None })
+        from_search(false, Ok(Vec::new()), crate::model::now())
     }
 
     #[allow(dead_code)]
@@ -285,6 +345,33 @@ mod tests {
         assert_eq!(classify(false, &[item(true), item(true)]), SystemUpdateState::Ready);
         assert_eq!(classify(false, &[item(true), item(false)]), SystemUpdateState::Available);
         assert_eq!(classify(false, &[item(false)]), SystemUpdateState::Available);
+    }
+
+    fn ready() -> SystemUpdates {
+        from_search(false, Ok(vec![item(true)]), 1).unwrap()
+    }
+
+    #[test]
+    fn failed_search_keeps_a_pending_reboot() {
+        let s = from_search(true, Err(anyhow::anyhow!("offline")), 7).unwrap();
+        assert_eq!(s.state, SystemUpdateState::RebootRequired);
+        assert_eq!(s.checked_at, Some(7));
+        assert!(from_search(false, Err(anyhow::anyhow!("offline")), 7).is_err());
+    }
+
+    #[test]
+    fn failure_keeps_a_staged_update() {
+        let s = after_failure(Some(ready()), "offline".into());
+        assert_eq!(s.state, SystemUpdateState::Ready);
+        assert_eq!(s.items.len(), 1);
+        assert_eq!(s.error.as_deref(), Some("offline"));
+    }
+
+    #[test]
+    fn failure_without_anything_staged_is_unknown() {
+        assert_eq!(after_failure(None, "offline".into()).state, SystemUpdateState::Unknown);
+        let none = from_search(false, Ok(Vec::new()), 1).unwrap();
+        assert_eq!(after_failure(Some(none), "offline".into()).state, SystemUpdateState::Unknown);
     }
 
     #[test]

@@ -6,27 +6,21 @@ import { formatBytes } from "../lib/format";
 import type { PowerAction, SystemUpdates } from "../lib/types";
 import { systemUpdateReady, useApp } from "../store/app";
 import { ActionSheet } from "./ActionSheet";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 /** Home row for a Windows update a restart would install. Nothing shows
- * until Windows has everything staged: the couch never sees a download. */
-export function SystemUpdateRow({ onFocus }: { onFocus: () => void }) {
+ * until Windows has everything staged: the couch never sees a download.
+ * The options open in `SystemUpdateSheet`, which Home mounts outside the
+ * masked `.rows` (a mask clips fixed descendants too). */
+export function SystemUpdateRow({ onFocus, onSelect }: { onFocus: () => void; onSelect: () => void }) {
   const update = useApp((s) => s.systemUpdate);
-  const paused = useApp((s) => s.suspended.length);
-  const toast = useApp((s) => s.toast);
-  const [sheet, setSheet] = useState(false);
   if (!update || !systemUpdateReady(update)) return null;
-
-  const power = (action: PowerAction) => {
-    setSheet(false);
-    void api.power(action).catch((e) => toast(String(e), "error"));
-  };
-  const pausedNote = paused ? (paused === 1 ? "Il gioco in pausa viene chiuso" : `I ${paused} giochi in pausa vengono chiusi`) : undefined;
 
   return (
     <section className="row" data-nav-group="row:system">
       <h2 className="row-title">Sistema</h2>
       <div className="row-scroll">
-        <button type="button" className="system-card" data-nav data-nav-id="system:update" onFocus={onFocus} onClick={() => setSheet(true)}>
+        <button type="button" className="system-card" data-nav data-nav-id="system:update" onFocus={onFocus} onClick={onSelect}>
           <span className="system-card-glyph" aria-hidden>
             ⟳
           </span>
@@ -37,21 +31,47 @@ export function SystemUpdateRow({ onFocus }: { onFocus: () => void }) {
           <span className="playing-pill">Windows</span>
         </button>
       </div>
-      <AnimatePresence>
-        {sheet && (
-          <ActionSheet
-            key="system-update"
-            title="Aggiornamento di Windows"
-            onClose={() => setSheet(false)}
-            actions={[
-              { label: "Aggiorna e riavvia", hint: pausedNote ?? "Il PC si riavvia e installa l'aggiornamento", onSelect: () => power("updateRestart") },
-              { label: "Aggiorna e spegni", hint: pausedNote ?? "Installa l'aggiornamento e spegne il PC", onSelect: () => power("updateShutdown") },
-              { label: "Più tardi", hint: "Resta qui finché non riavvii", onSelect: () => setSheet(false) },
-            ]}
-          />
-        )}
-      </AnimatePresence>
     </section>
+  );
+}
+
+/** Options for the update card. "Più tardi" comes first so a stray A never
+ * restarts the PC, and both power actions still ask for confirmation. */
+export function SystemUpdateSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const paused = useApp((s) => s.suspended.length);
+  const toast = useApp((s) => s.toast);
+  const [confirm, setConfirm] = useState<PowerAction | null>(null);
+  const pausedNote = paused ? (paused === 1 ? " Il gioco in pausa viene chiuso." : ` I ${paused} giochi in pausa vengono chiusi.`) : "";
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <ActionSheet
+          key="system-update"
+          title="Aggiornamento di Windows"
+          onClose={onClose}
+          actions={[
+            { label: "Più tardi", hint: "Resta qui finché non riavvii", onSelect: onClose },
+            { label: "Aggiorna e riavvia", hint: "Il PC si riavvia e installa l'aggiornamento", onSelect: () => setConfirm("updateRestart") },
+            { label: "Aggiorna e spegni", hint: "Installa l'aggiornamento e spegne il PC", danger: true, onSelect: () => setConfirm("updateShutdown") },
+          ]}
+        />
+      )}
+      {confirm && (
+        <ConfirmDialog
+          key="system-update-confirm"
+          title={confirm === "updateRestart" ? "Riavviare e aggiornare?" : "Spegnere e aggiornare?"}
+          text={`Windows installa l'aggiornamento: può volerci qualche minuto e il PC può riavviarsi più volte.${pausedNote}`}
+          confirmLabel={confirm === "updateRestart" ? "Riavvia" : "Spegni"}
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => {
+            const action = confirm;
+            setConfirm(null);
+            void api.power(action).catch((e) => toast(String(e), "error"));
+          }}
+        />
+      )}
+    </AnimatePresence>
   );
 }
 
