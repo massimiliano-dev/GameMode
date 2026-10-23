@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { ActionSheet } from "../components/ActionSheet";
 import { Cover, GameCard } from "../components/GameCard";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
+import { SystemUpdateRow } from "../components/SystemUpdateCard";
 import { useAction } from "../input/dispatcher";
 import { artUrl } from "../lib/api";
 import { formatLastPlayed, formatPlaytime, STORE_LABEL, STORES } from "../lib/format";
@@ -70,21 +71,26 @@ export function Home({ focusId }: { focusId?: string }) {
   const [sheet, setSheet] = useState<Game | null>(null);
   // The focus sits on the "In pausa" row, where A opens the options.
   const [onPausedRow, setOnPausedRow] = useState(false);
+  // The focus sits on the Windows update card: no game to play there.
+  const [onSystemCard, setOnSystemCard] = useState(false);
 
   useScreenFocus(focusId, rows.length > 0 || paused.length > 0);
   useHints(
-    [
-      { button: "A", label: onPausedRow ? "Opzioni" : "Dettagli" },
-      { button: "X", label: "Gioca" },
-      { button: "Y", label: "Preferito" },
-    ],
-    [onPausedRow],
+    onSystemCard
+      ? [{ button: "A", label: "Opzioni" }]
+      : [
+          { button: "A", label: onPausedRow ? "Opzioni" : "Dettagli" },
+          { button: "X", label: "Gioca" },
+          { button: "Y", label: "Preferito" },
+        ],
+    [onPausedRow, onSystemCard],
   );
 
   const onFocus = useCallback(
     (g: Game) => {
       setBackdrop(g.id);
       setOnPausedRow(false);
+      setOnSystemCard(false);
     },
     [setBackdrop],
   );
@@ -92,15 +98,17 @@ export function Home({ focusId }: { focusId?: string }) {
     (g: Game) => {
       setBackdrop(g.id);
       setOnPausedRow(true);
+      setOnSystemCard(false);
     },
     [setBackdrop],
   );
+  const onFocusSystem = useCallback(() => setOnSystemCard(true), []);
   const onSelect = useCallback((g: Game) => open({ name: "detail", gameId: g.id }), [open]);
   const onSelectPaused = useCallback((g: Game) => setSheet(g), []);
   const sheetKnown = !!sheet && games.some((g) => g.id === sheet.id);
 
   useAction((action, repeat) => {
-    if (repeat || !featured || sheet) return;
+    if (repeat || !featured || sheet || onSystemCard) return;
     if (action === "x") {
       void launch(featured.id);
       return true;
@@ -117,6 +125,7 @@ export function Home({ focusId }: { focusId?: string }) {
     <div className="screen home">
       <section className="home-hero">{featured && <FeaturedInfo game={featured} />}</section>
       <div className="rows">
+        <SystemUpdateRow onFocus={onFocusSystem} />
         {paused.length > 0 && (
           <section className="row" data-nav-group="row:paused">
             <h2 className="row-title">

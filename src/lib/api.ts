@@ -29,6 +29,7 @@ import type {
   Store,
   SteamExtras,
   Storefront,
+  SystemUpdates,
   UpdateInfo,
   UninstallOutcome,
   Volume,
@@ -124,6 +125,8 @@ export const api = {
   removeCollection: (id: string) => call<void>("remove_collection", { id }),
   setInCollection: (collectionId: string, gameId: string, value: boolean) =>
     call<Collection[]>("set_in_collection", { collectionId, gameId, value }),
+  /** Windows Update's state; `force` asks Microsoft's servers (slow). */
+  systemUpdates: (force = false) => call<SystemUpdates>("system_updates", { force }),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

@@ -9,7 +9,7 @@ import { Priority, useAction } from "../input/dispatcher";
 import { api } from "../lib/api";
 import { formatClock, formatDate, formatPlaytime } from "../lib/format";
 import type { AudioOutput, PowerAction, Volume } from "../lib/types";
-import { useApp } from "../store/app";
+import { systemUpdateReady, useApp } from "../store/app";
 
 const VOLUME_STEP = 0.05;
 
@@ -23,6 +23,7 @@ export function QuickMenu() {
   const activeProfile = useApp((s) => s.activeProfile);
   const switchProfile = useApp((s) => s.switchProfile);
   const toast = useApp((s) => s.toast);
+  const systemUpdate = useApp((s) => systemUpdateReady(s.systemUpdate));
   const now = useClock(1000);
   const [volume, setVolume] = useState<Volume | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
@@ -196,6 +197,15 @@ export function QuickMenu() {
         </div>
 
         <div className="qm-list qm-power">
+          {systemUpdate && (
+            <>
+              <QmButton armed={armed === "updateRestart"} confirmText={pausedNote} onClick={power("updateRestart")}>
+                Aggiorna e riavvia
+                <span className="qm-sub">Aggiornamento di Windows pronto</span>
+              </QmButton>
+              <QmButton danger armed={armed === "updateShutdown"} confirmText={pausedNote} onClick={power("updateShutdown")}>Aggiorna e spegni</QmButton>
+            </>
+          )}
           <QmButton armed={armed === "sleep"} onClick={power("sleep")}>Sospendi</QmButton>
           <QmButton armed={armed === "restart"} confirmText={pausedNote} onClick={power("restart")}>Riavvia</QmButton>
           <QmButton danger armed={armed === "shutdown"} confirmText={pausedNote} onClick={power("shutdown")}>Spegni</QmButton>

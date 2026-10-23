@@ -295,4 +295,23 @@ export interface Catalog {
 
 export type UninstallOutcome = "started" | "removed";
 
-export type PowerAction = "shutdown" | "restart" | "sleep";
+export type PowerAction = "shutdown" | "restart" | "sleep" | "updateRestart" | "updateShutdown";
+
+/** Windows Update, as far as a non-elevated shell can see. */
+export type SystemUpdateState = "none" | "available" | "ready" | "rebootRequired" | "unknown";
+
+export interface SystemUpdateItem {
+  title: string;
+  /** Download size in bytes, 0 when Windows doesn't say. */
+  bytes: number;
+  downloaded: boolean;
+}
+
+export interface SystemUpdates {
+  state: SystemUpdateState;
+  items: SystemUpdateItem[];
+  /** Unix seconds of the last answer from Windows Update. */
+  checkedAt: number | null;
+  /** Why the state is `unknown`. */
+  error: string | null;
+}

@@ -10,6 +10,11 @@ pub enum PowerAction {
     Shutdown,
     Restart,
     Sleep,
+    /// Restart installing the pending Windows updates on the way.
+    #[serde(rename = "updateRestart")]
+    UpdateRestart,
+    #[serde(rename = "updateShutdown")]
+    UpdateShutdown,
 }
 
 #[derive(Serialize, Clone, Copy, Debug)]
@@ -34,6 +39,8 @@ pub fn power(action: PowerAction) -> Result<()> {
                 anyhow::bail!("sospensione non riuscita");
             }
         },
+        PowerAction::UpdateRestart => crate::winupdate::shutdown(true)?,
+        PowerAction::UpdateShutdown => crate::winupdate::shutdown(false)?,
     }
     Ok(())
 }
