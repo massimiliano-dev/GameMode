@@ -15,6 +15,8 @@ import { STORE_LABEL, STORES } from "../lib/format";
 import type { ManualGame, Store } from "../lib/types";
 import { useApp } from "../store/app";
 
+const HAPTICS_LABEL = ["Off", "Leggera", "Normale"];
+
 type SettingsTab = "general" | "play" | "libraries" | "emulators" | "system";
 
 const TABS: { key: SettingsTab; label: string }[] = [
@@ -181,6 +183,12 @@ export function Settings() {
                 hint="Click leggeri quando ti muovi e selezioni"
                 onClick={() => void saveSettings({ ...settings, uiSounds: !settings.uiSounds })}
                 control={<Toggle on={settings.uiSounds} />}
+              />
+              <Row
+                label="Vibrazione del controller"
+                hint="Un impulso quando selezioni, al lancio di un gioco e sugli errori"
+                onClick={() => void saveSettings({ ...settings, haptics: (settings.haptics + 1) % 3 })}
+                control={<span className="setting-action">{HAPTICS_LABEL[settings.haptics] ?? HAPTICS_LABEL[1]}</span>}
               />
             </Section>
             <ProfileSettings />

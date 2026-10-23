@@ -233,6 +233,8 @@ pub struct Settings {
     pub wand_combo: bool,
     /// Freeze the game while Wand has the screen.
     pub wand_pause: bool,
+    /// Controller vibration for the interface: 0 off, 1 light, 2 normal.
+    pub haptics: u8,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -266,6 +268,7 @@ impl Default for Settings {
             wand_backtick: false,
             wand_combo: false,
             wand_pause: true,
+            haptics: 1,
         }
     }
 }

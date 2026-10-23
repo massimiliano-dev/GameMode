@@ -124,6 +124,7 @@ export const api = {
   removeCollection: (id: string) => call<void>("remove_collection", { id }),
   setInCollection: (collectionId: string, gameId: string, value: boolean) =>
     call<Collection[]>("set_in_collection", { collectionId, gameId, value }),
+  rumble: (pattern: "tick" | "select" | "error" | "launch" | "notify") => call<void>("rumble", { pattern }),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

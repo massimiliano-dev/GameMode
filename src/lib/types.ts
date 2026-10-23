@@ -44,6 +44,8 @@ export interface Settings {
   wandCombo: boolean;
   /** Freeze the game while Wand has the screen. */
   wandPause: boolean;
+  /** Controller vibration for the interface: 0 off, 1 light, 2 normal. */
+  haptics: number;
 }
 
 export interface ShellStatus {

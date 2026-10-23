@@ -117,8 +117,8 @@ mod xinput {
     use windows::core::{s, PCSTR};
     use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
     use windows::Win32::UI::Input::XboxController::{
-        XInputGetBatteryInformation, XInputGetState, BATTERY_DEVTYPE_GAMEPAD, BATTERY_TYPE_DISCONNECTED,
-        BATTERY_TYPE_WIRED, XINPUT_BATTERY_INFORMATION, XINPUT_STATE,
+        XInputGetBatteryInformation, XInputGetState, XInputSetState, BATTERY_DEVTYPE_GAMEPAD,
+        BATTERY_TYPE_DISCONNECTED, BATTERY_TYPE_WIRED, XINPUT_BATTERY_INFORMATION, XINPUT_STATE, XINPUT_VIBRATION,
     };
 
     use super::{Action, Controller, NavEvent, Repeater, CONTROLLERS};
@@ -234,6 +234,7 @@ mod xinput {
             let mut wand_since: Option<Instant> = None;
             let mut wand_fired = false;
             let mut wand_checked = Instant::now();
+            let mut haptics = crate::haptics::PulseQueue::default();
 
             loop {
                 let now = Instant::now();
@@ -351,6 +352,18 @@ mod xinput {
                     wand_fired = false;
                 }
 
+                // Interface vibration: queued patterns become motor speeds here,
+                // on the same thread that knows which slots are connected.
+                for (pattern, level) in crate::haptics::take_pending() {
+                    haptics.push(pattern, level, now);
+                }
+                if let Some((strong, weak)) = haptics.step(now) {
+                    let vibration = XINPUT_VIBRATION { wLeftMotorSpeed: strong, wRightMotorSpeed: weak };
+                    for slot in (0..4u32).filter(|&s| connected[s as usize]) {
+                        unsafe { XInputSetState(slot, &vibration) };
+                    }
+                }
+
                 std::thread::sleep(POLL);
             }
         });
@@ -437,6 +450,9 @@ mod xinput {
             return;
         }
         if playing && state.db.lock().settings.overlay_enabled && overlay::window(app).is_some() {
+            // The only vibration during a game: confirms the press that
+            // opens the overlay, before the half-second it takes to appear.
+            crate::haptics::rumble(crate::haptics::Pattern::Tick, state.db.lock().settings.haptics);
             overlay::show_after_guide(app);
             return;
         }
