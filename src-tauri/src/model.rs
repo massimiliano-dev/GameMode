@@ -286,6 +286,8 @@ pub struct Settings {
     pub close_apps: Vec<String>,
     /// Guide during a game opens the overlay instead of the launcher.
     pub overlay_enabled: bool,
+    /// The game is frozen while the overlay is open, so it ignores the pad.
+    pub overlay_pause: bool,
     /// Where save backups go; the app data folder when unset.
     pub backup_dir: Option<PathBuf>,
     /// The controller types Enter/Esc/arrows in store windows GameMode opens.
@@ -371,6 +373,7 @@ impl Default for Settings {
             performance_mode: false,
             close_apps: Vec::new(),
             overlay_enabled: true,
+            overlay_pause: true,
             backup_dir: None,
             keyboard_assist: true,
             steam_big_picture: true,

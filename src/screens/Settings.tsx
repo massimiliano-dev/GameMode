@@ -213,6 +213,14 @@ export function Settings() {
                 onClick={() => void saveSettings({ ...settings, overlayEnabled: !settings.overlayEnabled })}
                 control={<Toggle on={settings.overlayEnabled} />}
               />
+              {settings.overlayEnabled && (
+                <Row
+                  label="Metti in pausa il gioco con l'overlay"
+                  hint="Il gioco si ferma e non riceve i comandi del controller finché l'overlay è aperto. Non vale per i giochi con anti-cheat"
+                  onClick={() => void saveSettings({ ...settings, overlayPause: !settings.overlayPause })}
+                  control={<Toggle on={settings.overlayPause} />}
+                />
+              )}
               <Row
                 label="Tasto Xbox ai giochi Steam"
                 hint={

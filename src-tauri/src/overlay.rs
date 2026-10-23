@@ -135,6 +135,7 @@ pub fn show(app: &AppHandle) {
     let _ = w.show();
     let _ = w.set_always_on_top(true);
     claim_focus(&w);
+    crate::overlay_pause::begin(app);
     let _ = app.emit_to(LABEL, "overlay://open", ());
     // Guide also wakes Steam and Xbox Game Bar, which jump on top right
     // after us. While open, keep the overlay above them (input reaches it
@@ -181,6 +182,7 @@ pub fn fit_screen(app: &AppHandle) {
 
 pub fn hide(app: &AppHandle) {
     VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
+    crate::overlay_pause::end();
     if let Some(w) = window(app) {
         let _ = w.hide();
     }

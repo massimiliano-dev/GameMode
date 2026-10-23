@@ -64,6 +64,8 @@ export interface Settings {
   performanceMode: boolean;
   closeApps: string[];
   overlayEnabled: boolean;
+  /** The game is frozen while the overlay is open. */
+  overlayPause: boolean;
   backupDir: string | null;
   keyboardAssist: boolean;
   steamBigPicture: boolean;

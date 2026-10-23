@@ -27,6 +27,7 @@ mod metadata;
 mod mixer;
 mod model;
 mod overlay;
+mod overlay_pause;
 mod performance;
 mod procinfo;
 mod saves;
@@ -1179,6 +1180,7 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             live::init(&data_dir);
+            overlay_pause::recover();
             let live_file = live::file_in(&data_dir);
             let db = Db::open(&data_dir)?;
             db.update(|d| d.upgrade_artwork(artwork::PIPELINE_VERSION))?;

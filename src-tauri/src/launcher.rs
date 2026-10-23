@@ -917,6 +917,8 @@ fn end(app: &AppHandle, generation: u64, phase: Phase, grace: u64) {
 
 /// Quick Resume: freezes the foreground game and brings GameMode back.
 pub fn suspend_current(app: &AppHandle) -> Result<()> {
+    // The overlay's own freeze goes first, so Quick Resume's mute sticks.
+    crate::overlay_pause::thaw_now();
     let launcher = &app.state::<AppState>().launcher;
     let _transition = launcher.transition()?;
     let session = launcher.current().context("Nessun gioco in corso")?;
@@ -1064,6 +1066,7 @@ fn thaw(app: &AppHandle, generation: u64) -> Result<()> {
 /// Thaws every frozen game, e.g. before GameMode quits or the PC shuts
 /// down: nothing may stay frozen behind GameMode's back.
 pub fn thaw_all(app: &AppHandle) {
+    crate::overlay_pause::thaw_now();
     let launcher = &app.state::<AppState>().launcher;
     let _transition = launcher.transition_within(TRANSITION_WAIT);
     for session in launcher.suspended() {

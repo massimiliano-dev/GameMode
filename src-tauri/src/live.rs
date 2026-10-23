@@ -52,6 +52,8 @@ pub struct LiveState {
     pub sessions: Vec<LiveSession>,
     /// The power plan active before performance mode switched it.
     pub previous_power_scheme: Option<String>,
+    /// Processes frozen while the overlay is open, with their start time.
+    pub overlay_frozen: Vec<(u32, u64)>,
 }
 
 impl LiveState {
@@ -131,6 +133,11 @@ pub fn thaw_frozen_in(path: &Path) {
             log::warn!("thawing {} failed: {err:#}", session.game_id);
         }
         session.suspended = false;
+        changed = true;
+    }
+    if !state.overlay_frozen.is_empty() {
+        crate::overlay_pause::thaw_marked(&state.overlay_frozen);
+        state.overlay_frozen.clear();
         changed = true;
     }
     if changed {
