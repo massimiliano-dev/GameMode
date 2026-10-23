@@ -20,10 +20,10 @@ import type {
   UpdateInfo,
 } from "../lib/types";
 
-export type Tab = "home" | "library" | "downloads" | "stores" | "stats" | "settings";
+export type Tab = "home" | "library" | "apps" | "downloads" | "stores" | "stats" | "settings";
 export type Screen = { name: Tab } | { name: "detail"; gameId: string } | { name: "search" } | { name: "connections" };
 
-const TABS: Tab[] = ["home", "library", "downloads", "stores", "stats", "settings"];
+const TABS: Tab[] = ["home", "library", "apps", "downloads", "stores", "stats", "settings"];
 
 interface Entry {
   screen: Screen;
@@ -222,7 +222,7 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const update = await api.rescan();
       set({ games: update.games, scanErrors: update.errors, loaded: true });
-      get().toast(`Libreria aggiornata: ${update.games.length} giochi`);
+      get().toast(`Libreria aggiornata: ${libraryGames(update.games).length} giochi`);
     } catch (e) {
       get().toast(String(e), "error");
     } finally {
@@ -462,7 +462,10 @@ function onSessionEvent(
   const mine = get().session?.gameId === s.gameId;
   if (s.phase === "exited") {
     set({ suspended: others, ...(mine ? { session: null } : {}) });
-    if (s.seconds > 0) get().toast(`${name}: hai giocato ${formatPlaytime(s.seconds)}`);
+    if (s.seconds > 0) {
+      const used = s.gameId.startsWith("app:") ? "usata per" : "hai giocato";
+      get().toast(`${name}: ${used} ${formatPlaytime(s.seconds)}`);
+    }
   } else if (s.phase === "failed") {
     set({ suspended: others, ...(mine ? { session: null } : {}) });
     get().toast(`${name} non si è avviato (o non è stato rilevato)`, "error");
@@ -614,3 +617,6 @@ export const activeProfileOf = (s: AppState) => s.profiles.find((p) => p.id === 
 
 export const currentScreen = (s: AppState) => s.stack.at(-1)!;
 export const visibleGames = (games: Game[]) => games.filter((g) => !g.hidden);
+/** The games proper: applications have their own screen. */
+export const libraryGames = (games: Game[]) => games.filter((g) => g.store !== "app");
+export const isApp = (game: Game) => game.store === "app";

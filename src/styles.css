@@ -2756,3 +2756,129 @@ html.is-keyboard .osk-done[data-nav-current] {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- Applicazioni ---------- */
+
+.store-app { --store: #c4b5fd; }
+.store-tint-app { --tint: #3b2f6b; }
+.store-glow-app { --glow: #2a2150; }
+
+/* Square icons shown whole, never cropped to the poster shape. */
+.cover-icon {
+  object-fit: contain;
+  padding: 14%;
+  background: linear-gradient(160deg, #1a1f2b 0%, #0b0e14 100%);
+}
+
+.apps-search {
+  flex: 0 1 22rem;
+  font-size: 1rem;
+}
+
+.apps-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.2rem, 1fr));
+  align-content: start;
+  gap: 1.4rem 1.2rem;
+  padding: 1rem var(--gutter) 3rem;
+  scroll-padding-block: 1.5rem;
+}
+
+.app-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+  flex: 0 0 auto;
+  width: 8.2rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+}
+
+.apps-grid .app-card {
+  width: auto;
+}
+
+.app-tile {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: calc(var(--radius) * 1.2);
+  background: #10141b;
+  box-shadow: 0 0.5rem 1.4rem rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  transition: transform 0.16s var(--ease), box-shadow 0.16s var(--ease);
+}
+
+.app-card:focus {
+  outline: none;
+  z-index: 2;
+}
+
+.app-card:focus .app-tile {
+  transform: scale(1.08);
+  box-shadow:
+    0 0 0 0.2rem var(--focus),
+    0 0 2.4rem 0.2rem var(--accent-glow),
+    0 1.2rem 2.4rem rgba(0, 0, 0, 0.6);
+}
+
+.app-icon {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* UWP tiles come with their own plate; desktop icons float on ours. */
+  padding: 10%;
+  background: linear-gradient(160deg, #1a1f2b 0%, #0b0e14 100%);
+}
+
+.app-icon-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 2.6rem;
+  font-weight: 800;
+  color: var(--text);
+  background:
+    radial-gradient(120% 70% at 20% 0%, color-mix(in srgb, #3b2f6b 85%, white 8%) 0%, transparent 70%),
+    linear-gradient(160deg, #3b2f6b 0%, #0b0e14 85%);
+}
+
+.app-star {
+  position: absolute;
+  top: 0.45rem;
+  left: 0.5rem;
+}
+
+.app-pill {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  margin: 0;
+}
+
+.app-name {
+  max-width: 100%;
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-dim);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.16s var(--ease);
+}
+
+.app-card:focus .app-name {
+  color: var(--text);
+}

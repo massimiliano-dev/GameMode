@@ -95,8 +95,10 @@ pub fn refresh(app: &AppHandle, force: bool) {
         let state = app.state::<AppState>();
         let (games, key) = {
             let data = state.db.lock();
+            // Apps bring their own icon: nothing to look up for them.
             let due = |g: &&Game| {
-                !g.artwork.is_complete()
+                g.store != Store::App
+                    && !g.artwork.is_complete()
                     && (force || g.artwork_checked_at.is_none_or(|t| now() - t > RETRY_AFTER_SECS))
             };
             let games: Vec<Game> = data.games.iter().filter(due).cloned().collect();

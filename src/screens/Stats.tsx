@@ -96,13 +96,16 @@ export function Stats() {
     void api.getSessions().then(setSessions).catch(() => setSessions([]));
   }, [setBackdrop, profile?.id]);
 
-  const stats = useStats(sessions ?? []);
   const gameById = useMemo(() => new Map(games.map((g) => [g.id, g])), [games]);
+  // Time in apps (Netflix, Spotify…) isn't play time, even once the app is
+  // gone from the library: the id's store prefix tells.
+  const played = useMemo(() => (sessions ?? []).filter((s) => !s.gameId.startsWith("app:")), [sessions]);
+  const stats = useStats(played);
   useScreenFocus(undefined, sessions !== null);
   useHints([{ button: "A", label: "Apri gioco" }]);
 
   if (sessions === null) return <div className="screen empty"><div className="spinner" /></div>;
-  if (sessions.length === 0) {
+  if (played.length === 0) {
     return (
       <div className="screen empty">
         <p className="empty-title">Ancora nessuna partita</p>

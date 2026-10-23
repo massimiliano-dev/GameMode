@@ -16,6 +16,7 @@ import { Connections } from "./screens/Connections";
 import { GameDetail } from "./screens/GameDetail";
 import { Home } from "./screens/Home";
 import { Library } from "./screens/Library";
+import { Apps } from "./screens/Apps";
 import { QuickMenu } from "./screens/QuickMenu";
 import { Search } from "./screens/Search";
 import { Settings } from "./screens/Settings";
@@ -24,7 +25,7 @@ import { Stores } from "./screens/Stores";
 import { currentScreen, type Tab, useApp } from "./store/app";
 import { useIdle } from "./store/idle";
 
-const TAB_ORDER: Tab[] = ["home", "library", "downloads", "stores", "stats", "settings"];
+const TAB_ORDER: Tab[] = ["home", "library", "apps", "downloads", "stores", "stats", "settings"];
 
 export default function App() {
   const entry = useApp(currentScreen);
@@ -102,6 +103,7 @@ export default function App() {
           >
             {screen.name === "home" && <Home focusId={entry.focusId} />}
             {screen.name === "library" && <Library focusId={entry.focusId} />}
+            {screen.name === "apps" && <Apps focusId={entry.focusId} />}
             {screen.name === "downloads" && <Downloads />}
             {screen.name === "stores" && <Stores />}
             {screen.name === "stats" && <Stats />}

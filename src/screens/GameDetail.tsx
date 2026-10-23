@@ -62,12 +62,14 @@ export function GameDetail({ gameId }: { gameId: string }) {
   const logo = artUrl(game.artwork.logo, game.artworkCheckedAt);
   const mine = session?.gameId === game.id ? session : null;
   const inCollections = collections.filter((c) => c.gameIds.includes(game.id));
+  // Applications: opened, not played; no saves or uninstaller to offer.
+  const isApp = game.store === "app";
 
   const options: SheetAction[] = [
     ...(SHOP_LABEL[game.store]
       ? [{ label: "Pagina nello store", hint: "DLC, espansioni e aggiornamenti", onSelect: () => void openStore(game.store, game.id) }]
       : []),
-    ...(game.store !== "mock"
+    ...(game.store !== "mock" && !isApp
       ? [{ label: "Salvataggi", hint: "Backup e ripristino", onSelect: () => setDialog("saves") }]
       : []),
     {
@@ -78,7 +80,7 @@ export function GameDetail({ gameId }: { gameId: string }) {
         if (!game.hidden) back();
       },
     },
-    ...(game.store !== "mock"
+    ...(game.store !== "mock" && !isApp
       ? [{ label: game.store === "manual" ? "Rimuovi dalla libreria" : "Disinstalla", danger: true, onSelect: () => setDialog("uninstall") }]
       : []),
   ];
@@ -112,10 +114,10 @@ export function GameDetail({ gameId }: { gameId: string }) {
               {mine ? (
                 <>
                   <button type="button" className="btn btn-primary btn-play" data-nav data-nav-autofocus onClick={() => void api.resumeGame()}>
-                    {mine.phase === "launching" ? "Avvio in corso…" : "Torna al gioco"}
+                    {mine.phase === "launching" ? "Avvio in corso…" : isApp ? "Torna all'app" : "Torna al gioco"}
                   </button>
                   <button type="button" className="btn" data-nav onClick={() => void api.closeGame()}>
-                    Chiudi gioco
+                    {isApp ? "Chiudi app" : "Chiudi gioco"}
                   </button>
                 </>
               ) : pausedSession ? (
@@ -129,7 +131,7 @@ export function GameDetail({ gameId }: { gameId: string }) {
                 </>
               ) : (
                 <button type="button" className="btn btn-primary btn-play" data-nav data-nav-autofocus onClick={() => void launch(game.id)}>
-                  <span className="play-icon" aria-hidden>▶</span> Gioca
+                  <span className="play-icon" aria-hidden>▶</span> {isApp ? "Apri" : "Gioca"}
                 </button>
               )}
               {update && (game.store === "steam" || game.store === "xbox") && (
@@ -140,9 +142,11 @@ export function GameDetail({ gameId }: { gameId: string }) {
               <button type="button" className="btn" data-nav onClick={() => void toggleFavorite(game)}>
                 {game.favorite ? "★ Preferito" : "☆ Preferito"}
               </button>
-              <button type="button" className="btn" data-nav onClick={() => setDialog("collections")}>
-                Raccolte
-              </button>
+              {!isApp && (
+                <button type="button" className="btn" data-nav onClick={() => setDialog("collections")}>
+                  Raccolte
+                </button>
+              )}
               <button type="button" className="btn" data-nav aria-label="Altre opzioni" onClick={() => setDialog("options")}>
                 ··· Opzioni
               </button>
@@ -150,11 +154,11 @@ export function GameDetail({ gameId }: { gameId: string }) {
     
             <dl className="stats">
               <div className="stat">
-                <dt>Tempo di gioco</dt>
+                <dt>{isApp ? "Tempo di utilizzo" : "Tempo di gioco"}</dt>
                 <dd>{formatPlaytime(game.playtimeSecs)}</dd>
               </div>
               <div className="stat">
-                <dt>Ultima partita</dt>
+                <dt>{isApp ? "Ultimo utilizzo" : "Ultima partita"}</dt>
                 <dd>{formatLastPlayed(game.lastPlayed)}</dd>
               </div>
               {formatGameSize(game) && (

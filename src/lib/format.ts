@@ -10,6 +10,7 @@ export const STORE_LABEL: Record<Store, string> = {
   manual: "Aggiunti a mano",
   emulator: "Emulatori",
   mock: "Demo",
+  app: "App",
 };
 
 /** Names of the shops, which differ from the library names for Xbox. */

@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::model::{Game, ManualGame, Settings, Store};
 
+pub mod apps;
 pub mod ea;
 pub mod emulators;
 pub mod epic;

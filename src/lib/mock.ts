@@ -51,6 +51,38 @@ let games: Game[] = SEED.map(([store, name, appid], i) => ({
   sizePartial: store === "xbox" && i === 7,
 }));
 
+/** Installed applications, for the Apps screen. */
+const APPS: [string, number | null][] = [
+  ["Netflix", now() - day],
+  ["Spotify", now() - 3 * 3600],
+  ["Disney+", null],
+  ["VLC media player", now() - 9 * day],
+  ["Microsoft Edge", null],
+  ["Calcolatrice", null],
+  ["Foto", null],
+  ["Prime Video", null],
+];
+games = [
+  ...games,
+  ...APPS.map(([name, lastPlayed], i): Game => ({
+    id: `app:mock-app-${i}`,
+    store: "app",
+    name,
+    installDir: null,
+    steamAppid: null,
+    artwork: {},
+    artworkCheckedAt: null,
+    favorite: i === 1,
+    hidden: false,
+    addedAt: now() - 30 * day,
+    lastPlayed,
+    playtimeSecs: lastPlayed ? 2 * 3600 : 0,
+    sizeBytes: null,
+    sizeCheckedAt: null,
+    sizePartial: false,
+  })),
+];
+
 let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true, keyboardAuto: true, backupOnExit: true };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;

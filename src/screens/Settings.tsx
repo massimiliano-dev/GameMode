@@ -294,7 +294,7 @@ export function Settings() {
         {tab === "libraries" && (
           <>
             <Section title="Librerie">
-              {STORES.filter((s) => s !== "manual").map((store, i) => (
+              {[...STORES.filter((s) => s !== "manual"), "app" as Store].map((store, i) => (
                 <Row
                   key={store}
                   label={STORE_LABEL[store]}

@@ -10,6 +10,7 @@ import { Glyph, useClock } from "./common";
 const TABS: { tab: Tab; label: string }[] = [
   { tab: "home", label: "Home" },
   { tab: "library", label: "Libreria" },
+  { tab: "apps", label: "App" },
   { tab: "downloads", label: "Scarica" },
   { tab: "stores", label: "Negozi" },
   { tab: "stats", label: "Statistiche" },

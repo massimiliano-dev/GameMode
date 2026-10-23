@@ -6,7 +6,7 @@ import { useAction } from "../input/dispatcher";
 import { ensureFocus, forgetGroup } from "../input/focus";
 import { STORE_LABEL, STORES } from "../lib/format";
 import type { Game, Store } from "../lib/types";
-import { useApp, visibleGames } from "../store/app";
+import { libraryGames, useApp, visibleGames } from "../store/app";
 
 type Sort = "name" | "recent" | "playtime" | "size";
 const SORTS: { key: Sort; label: string }[] = [
@@ -36,7 +36,7 @@ export function Library({ focusId }: { focusId?: string }) {
   const [sort, setSort] = useState<Sort>("name");
   const focused = useRef<Game | null>(null);
 
-  const games = useMemo(() => visibleGames(all), [all]);
+  const games = useMemo(() => libraryGames(visibleGames(all)), [all]);
   const filters = useMemo(
     () => [
       { key: "all", label: "Tutti" },
