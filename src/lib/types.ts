@@ -322,3 +322,39 @@ export interface CheatsStatus {
   scan: CheatScan | null;
   frozen: CheatHit[];
 }
+
+export type NetworkKind = "none" | "wifi" | "ethernet" | "cellular";
+
+export interface NetworkInfo {
+  kind: NetworkKind;
+  /** Wi-Fi signal, 0–4; null on Ethernet or when unknown. */
+  bars: number | null;
+  ssid: string | null;
+  /** The internet is reachable, not just the local network. */
+  internet: boolean;
+}
+
+export interface BatteryInfo {
+  /** 0–100. */
+  percent: number;
+  charging: boolean;
+  /** On mains power (charging or already full). */
+  plugged: boolean;
+  /** Windows' battery saver is on. */
+  saver: boolean;
+}
+
+export interface BluetoothInfo {
+  /** null when the PC has no Bluetooth radio. */
+  on: boolean | null;
+  /** Devices connected right now. */
+  connected: number;
+}
+
+/** The top bar's system status: `system://status` events, `getSystemStatus` for the first paint. */
+export interface SystemInfo {
+  network: NetworkInfo;
+  /** null on a desktop without a battery. */
+  battery: BatteryInfo | null;
+  bluetooth: BluetoothInfo;
+}

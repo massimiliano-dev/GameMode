@@ -1,7 +1,7 @@
 // In-browser stand-in for the Rust backend, so the UI can be developed and
 // tested with `npm run dev` in any browser.
 
-import type { Collection, Game, ManualGame, Profile, SessionState, Settings, Store, Volume } from "./types";
+import type { Collection, Game, ManualGame, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
 
 const CDN = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps";
 
@@ -92,6 +92,12 @@ let profiles: Profile[] = [
 ];
 let activeProfile = "p1";
 let collections: Collection[] = [{ id: "c1", name: "Da finire", gameIds: ["steam:mock-0", "gog:mock-12"] }];
+let systemInfo: SystemInfo = {
+  network: { kind: "wifi", bars: 3, ssid: "Casa", internet: true },
+  battery: { percent: 72, charging: false, plugged: false, saver: false },
+  bluetooth: { on: true, connected: 1 },
+};
+let systemDemo = false;
 
 type Listener = (payload: unknown) => void;
 const listeners = new Map<string, Set<Listener>>();
@@ -146,6 +152,19 @@ function freeze() {
   suspended = [...suspended, paused];
   session = null;
   emit("game://state", paused);
+}
+
+/** A battery running low, then the Wi-Fi dropping and coming back: exercises the top bar and its toasts. */
+function fakeSystemChanges() {
+  if (systemDemo) return;
+  systemDemo = true;
+  const push = (patch: Partial<SystemInfo>) => {
+    systemInfo = { ...systemInfo, ...patch };
+    emit("system://status", systemInfo);
+  };
+  setTimeout(() => push({ battery: { percent: 9, charging: false, plugged: false, saver: true } }), 20_000);
+  setTimeout(() => push({ network: { kind: "none", bars: null, ssid: null, internet: false }, bluetooth: { on: true, connected: 2 } }), 40_000);
+  setTimeout(() => push({ network: { kind: "ethernet", bars: null, ssid: null, internet: true }, battery: { percent: 12, charging: true, plugged: true, saver: false } }), 55_000);
 }
 
 function fakeResume(paused: SessionState) {
@@ -346,6 +365,9 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         return collections;
       case "get_controllers":
         return [{ slot: 0, wired: false, level: 2 }];
+      case "get_system_status":
+        fakeSystemChanges();
+        return systemInfo;
       case "list_storefronts":
         return (["steam", "xbox", "epic", "gog", "ubisoft", "ea"] as Store[]).map((store, i) => ({
           store,

@@ -32,6 +32,7 @@ import type {
   Store,
   SteamExtras,
   Storefront,
+  SystemInfo,
   UpdateInfo,
   UninstallOutcome,
   Volume,
@@ -135,6 +136,7 @@ export const api = {
   setInCollection: (collectionId: string, gameId: string, value: boolean) =>
     call<Collection[]>("set_in_collection", { collectionId, gameId, value }),
   rumble: (pattern: "tick" | "select" | "error" | "launch" | "notify") => call<void>("rumble", { pattern }),
+  getSystemStatus: () => call<SystemInfo>("get_system_status"),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

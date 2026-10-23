@@ -2281,3 +2281,92 @@ html.is-overlay .qm-volume[data-nav-current] {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- System status (top bar) ---------- */
+
+.status-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.9rem;
+  color: var(--text-dim);
+}
+
+.status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.status-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: none;
+}
+
+.status-battery {
+  width: 1.75rem;
+  height: 1rem;
+}
+
+.status-count,
+.status-percent {
+  line-height: 1;
+}
+
+.status-downloads {
+  color: var(--accent);
+}
+
+.status-arc {
+  opacity: 0.28;
+}
+
+.status-arc.is-on {
+  opacity: 1;
+}
+
+.status-net.is-offline {
+  color: var(--danger);
+}
+
+.status-net.is-offline .status-arc {
+  opacity: 0.45;
+}
+
+.status-net.is-limited {
+  color: var(--text);
+}
+
+.status-mark {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--danger);
+}
+
+.status-battery-fill {
+  fill: var(--text);
+}
+
+.status-bolt {
+  fill: var(--bg);
+  stroke: var(--accent);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+  paint-order: stroke;
+}
+
+.status-pc-battery.is-saver .status-battery-fill {
+  fill: #f5b942;
+}
+
+.status-pc-battery.is-low {
+  color: var(--danger);
+}
+
+.status-pc-battery.is-low .status-battery-fill {
+  fill: var(--danger);
+}
