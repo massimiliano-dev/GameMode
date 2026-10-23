@@ -2824,6 +2824,28 @@ html.is-keyboard .osk-done[data-nav-current] {
 
 .app-card:focus .app-tile {
   transform: scale(1.08);
+/* ---------- Windows update (Home card) ---------- */
+
+.system-card {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 1.1rem;
+  width: 32rem;
+  max-width: calc(100vw - var(--gutter) * 2);
+  padding: 1.1rem 1.3rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, rgba(94, 242, 200, 0.14), rgba(255, 255, 255, 0.04));
+  color: var(--text);
+  text-align: left;
+  box-shadow: 0 0.5rem 1.4rem rgba(0, 0, 0, 0.35);
+  transition: transform 0.16s var(--ease), box-shadow 0.16s var(--ease);
+}
+
+.system-card:focus {
+  z-index: 2;
+  transform: scale(1.03);
   box-shadow:
     0 0 0 0.2rem var(--focus),
     0 0 2.4rem 0.2rem var(--accent-glow),
@@ -2905,6 +2927,21 @@ html.is-keyboard .osk-done[data-nav-current] {
 .wake-info {
   display: flex;
   flex: 1;
+.system-card-glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 1.7rem;
+  font-weight: 700;
+}
+
+.system-card-text {
+  display: flex;
   flex-direction: column;
   gap: 0.2rem;
   min-width: 0;
@@ -2927,4 +2964,19 @@ html.is-keyboard .osk-done[data-nav-current] {
   display: flex;
   flex: none;
   gap: 0.6rem;
+}
+.system-card-title {
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.system-card-sub {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.setting-value {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 0.95rem;
 }

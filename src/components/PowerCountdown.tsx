@@ -16,6 +16,8 @@ const VERB: Record<PowerAction, string> = {
   hibernate: "Ibernazione",
   lock: "Blocco",
   logoff: "Disconnessione",
+  updateRestart: "Aggiornamento e riavvio",
+  updateShutdown: "Aggiornamento e spegnimento",
 };
 
 /** The last minute before a scheduled power action, with a way out. */

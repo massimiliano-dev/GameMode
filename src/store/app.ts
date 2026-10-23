@@ -18,6 +18,7 @@ import type {
   Settings,
   Store,
   SystemInfo,
+  SystemUpdates,
   UpdateInfo,
 } from "../lib/types";
 
@@ -78,6 +79,8 @@ interface AppState {
   system: SystemInfo | null;
   /** The PC just woke up with a game still running: Home offers to go back to it. */
   wokeAt: number | null;
+  /** Windows Update's state, when known. */
+  systemUpdate: SystemUpdates | null;
 
   init: () => Promise<void>;
   refreshGameUpdates: () => Promise<void>;
@@ -156,6 +159,7 @@ export const useApp = create<AppState>((set, get) => ({
   gameUpdates: {},
   system: null,
   wokeAt: null,
+  systemUpdate: null,
 
   init: async () => {
     if (initialized) return;
@@ -189,6 +193,8 @@ export const useApp = create<AppState>((set, get) => ({
     void api.getControllers().then((controllers) => set({ controllers })).catch(() => {});
     // The event may land first with a fresher snapshot: never overwrite it with this one.
     void api.getSystemStatus().then((system) => { if (!get().system) set({ system }); }).catch(() => {});
+    on<SystemUpdates>("system://update", (u) => onSystemUpdate(u, set, get));
+    setTimeout(() => void api.systemUpdates().then((u) => onSystemUpdate(u, set, get)).catch(() => {}), 25_000);
 
     const [games, settings, session, suspended, profiles, collections, shell] = await Promise.all([
       api.getLibrary(),
@@ -612,6 +618,18 @@ async function announceDeals(toast: (text: string) => void) {
     // ignore
   }
 }
+
+/** A Windows update that a restart would install: said once per session. */
+let systemUpdateAnnounced = false;
+function onSystemUpdate(u: SystemUpdates, set: (partial: Partial<AppState>) => void, get: () => AppState) {
+  set({ systemUpdate: u });
+  if (systemUpdateAnnounced || !systemUpdateReady(u)) return;
+  systemUpdateAnnounced = true;
+  get().toast("Aggiornamento di Windows pronto: lo installi con \"Aggiorna e riavvia\" dal menu rapido");
+}
+
+/** A restart (or shutdown) would install something. */
+export const systemUpdateReady = (u: SystemUpdates | null) => u?.state === "ready" || u?.state === "rebootRequired";
 
 /** Warns once when a wireless controller's battery runs low. */
 function onControllers(list: Controller[], set: (partial: Partial<AppState>) => void, get: () => AppState) {

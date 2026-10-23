@@ -5,6 +5,7 @@ import { ActionSheet } from "../components/ActionSheet";
 import { AppCard } from "../components/AppCard";
 import { Cover, GameCard } from "../components/GameCard";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
+import { SystemUpdateRow, SystemUpdateSheet } from "../components/SystemUpdateCard";
 import { useAction } from "../input/dispatcher";
 import { ensureFocus, focusElement } from "../input/focus";
 import { artUrl } from "../lib/api";
@@ -90,20 +91,25 @@ export function Home({ focusId }: { focusId?: string }) {
   const [onWakeRow, setOnWakeRow] = useState(false);
   const wakeResume = useRef<HTMLButtonElement>(null);
   const wokeId = wokeGame?.id;
+  // The focus sits on the Windows update card: no game to play there.
+  const [onSystemCard, setOnSystemCard] = useState(false);
+  const [systemSheet, setSystemSheet] = useState(false);
 
   useScreenFocus(focusId, rows.length > 0 || paused.length > 0);
   useHints(
-    onWakeRow
-      ? [
-          { button: "A", label: "Seleziona" },
-          { button: "X", label: "Riprendi" },
-        ]
-      : [
-          { button: "A", label: onPausedRow ? "Opzioni" : onAppsRow ? "Apri" : "Dettagli" },
-          { button: "X", label: onAppsRow ? "Dettagli" : "Gioca" },
-          { button: "Y", label: onAppsRow ? "Preferita" : "Preferito" },
-        ],
-    [onPausedRow, onAppsRow, onWakeRow],
+    onSystemCard
+      ? [{ button: "A", label: "Opzioni" }]
+      : onWakeRow
+        ? [
+            { button: "A", label: "Seleziona" },
+            { button: "X", label: "Riprendi" },
+          ]
+        : [
+            { button: "A", label: onPausedRow ? "Opzioni" : onAppsRow ? "Apri" : "Dettagli" },
+            { button: "X", label: onAppsRow ? "Dettagli" : "Gioca" },
+            { button: "Y", label: onAppsRow ? "Preferita" : "Preferito" },
+          ],
+    [onPausedRow, onAppsRow, onWakeRow, onSystemCard],
   );
 
   // The card comes and goes while Home is up (a wake, the game ending):
@@ -123,6 +129,7 @@ export function Home({ focusId }: { focusId?: string }) {
     setOnWakeRow(true);
     setOnPausedRow(false);
     setOnAppsRow(false);
+    setOnSystemCard(false);
   }, [wokeId, setBackdrop]);
 
   const onFocus = useCallback(
@@ -131,6 +138,7 @@ export function Home({ focusId }: { focusId?: string }) {
       setOnPausedRow(false);
       setOnAppsRow(false);
       setOnWakeRow(false);
+      setOnSystemCard(false);
     },
     [setBackdrop],
   );
@@ -140,6 +148,7 @@ export function Home({ focusId }: { focusId?: string }) {
       setOnPausedRow(true);
       setOnAppsRow(false);
       setOnWakeRow(false);
+      setOnSystemCard(false);
     },
     [setBackdrop],
   );
@@ -149,16 +158,23 @@ export function Home({ focusId }: { focusId?: string }) {
       setOnPausedRow(false);
       setOnAppsRow(true);
       setOnWakeRow(false);
+      setOnSystemCard(false);
     },
     [setBackdrop],
   );
+  const onFocusSystem = useCallback(() => {
+    setOnSystemCard(true);
+    setOnPausedRow(false);
+    setOnAppsRow(false);
+    setOnWakeRow(false);
+  }, []);
   const onSelect = useCallback((g: Game) => open({ name: "detail", gameId: g.id }), [open]);
   const onSelectPaused = useCallback((g: Game) => setSheet(g), []);
   const onSelectApp = useCallback((g: Game) => void launch(g.id), [launch]);
   const sheetKnown = !!sheet && games.some((g) => g.id === sheet.id);
 
   useAction((action, repeat) => {
-    if (repeat || !featured || sheet) return;
+    if (repeat || !featured || sheet || onSystemCard) return;
     if (onWakeRow && wokeGame) {
       // The buttons speak for the game left open, not for the last card.
       if (action === "x") {
@@ -214,6 +230,7 @@ export function Home({ focusId }: { focusId?: string }) {
             </div>
           </section>
         )}
+        <SystemUpdateRow onFocus={onFocusSystem} onSelect={() => setSystemSheet(true)} />
         {paused.length > 0 && (
           <section className="row" data-nav-group="row:paused">
             <h2 className="row-title">
@@ -285,6 +302,7 @@ export function Home({ focusId }: { focusId?: string }) {
           />
         )}
       </AnimatePresence>
+      <SystemUpdateSheet open={systemSheet} onClose={() => setSystemSheet(false)} />
     </div>
   );
 }

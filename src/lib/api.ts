@@ -42,6 +42,7 @@ import type {
   SystemInfo,
   TypedKey,
   StorageOverview,
+  SystemUpdates,
   UpdateInfo,
   UninstallOutcome,
   Volume,
@@ -166,6 +167,8 @@ export const api = {
   storageOverview: (measure = false) => call<StorageOverview>("storage_overview", { measure }),
   storageCleanup: (apply: boolean) => call<Cleanup>("storage_cleanup", { apply }),
   storageRemeasure: () => call<void>("storage_remeasure"),
+  /** Windows Update's state; `force` asks Microsoft's servers (slow). */
+  systemUpdates: (force = false) => call<SystemUpdates>("system_updates", { force }),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

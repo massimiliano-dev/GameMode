@@ -336,7 +336,7 @@ export interface Catalog {
 
 export type UninstallOutcome = "started" | "removed";
 
-export type PowerAction = "shutdown" | "restart" | "sleep" | "restartToDesktop" | "hibernate" | "lock" | "logoff";
+export type PowerAction = "shutdown" | "restart" | "sleep" | "restartToDesktop" | "hibernate" | "lock" | "logoff" | "updateRestart" | "updateShutdown";
 
 /** Trucchi: what a memory value is stored as. */
 export type CheatKind = "int" | "float" | "double";
@@ -492,3 +492,22 @@ export type PowerEvent =
   | { kind: "displayOff" }
   | { kind: "displayOn" }
   | { kind: "sessionEnding" };
+
+/** Windows Update, as far as a non-elevated shell can see. */
+export type SystemUpdateState = "none" | "available" | "ready" | "rebootRequired" | "unknown";
+
+export interface SystemUpdateItem {
+  title: string;
+  /** Download size in bytes, 0 when Windows doesn't say. */
+  bytes: number;
+  downloaded: boolean;
+}
+
+export interface SystemUpdates {
+  state: SystemUpdateState;
+  items: SystemUpdateItem[];
+  /** Unix seconds of the last answer from Windows Update. */
+  checkedAt: number | null;
+  /** Why the state is `unknown`. */
+  error: string | null;
+}

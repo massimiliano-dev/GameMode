@@ -10,11 +10,11 @@ import { Priority, useAction } from "../input/dispatcher";
 import { api, on } from "../lib/api";
 import { formatClock, formatDate, formatPlaytime } from "../lib/format";
 import type { AudioOutput, PowerAction, PowerMode, PowerOptions, Volume, VolumeEvent } from "../lib/types";
-import { useApp } from "../store/app";
+import { systemUpdateReady, useApp } from "../store/app";
 import { useIdle } from "../store/idle";
 
 const VOLUME_STEP = 0.05;
-const POWER_VERB: Record<PowerAction, string> = { shutdown: "Spegnimento", restart: "Riavvio", sleep: "Sospensione", restartToDesktop: "Riavvio in modalità desktop", hibernate: "Ibernazione", lock: "Blocco", logoff: "Disconnessione" };
+const POWER_VERB: Record<PowerAction, string> = { shutdown: "Spegnimento", restart: "Riavvio", sleep: "Sospensione", restartToDesktop: "Riavvio in modalità desktop", hibernate: "Ibernazione", lock: "Blocco", logoff: "Disconnessione", updateRestart: "Aggiornamento e riavvio", updateShutdown: "Aggiornamento e spegnimento" };
 
 export function QuickMenu() {
   const close = () => useApp.getState().setQuickMenu(false);
@@ -28,6 +28,7 @@ export function QuickMenu() {
   const activeProfile = useApp((s) => s.activeProfile);
   const switchProfile = useApp((s) => s.switchProfile);
   const toast = useApp((s) => s.toast);
+  const systemUpdate = useApp((s) => systemUpdateReady(s.systemUpdate));
   const now = useClock(1000);
   const [volume, setVolume] = useState<Volume | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
@@ -237,6 +238,15 @@ export function QuickMenu() {
         )}
 
         <div className="qm-list qm-power">
+          {systemUpdate && (
+            <>
+              <QmButton armed={armed === "updateRestart"} confirmText={gameNote} onClick={power("updateRestart")}>
+                Aggiorna e riavvia
+                <span className="qm-sub">Aggiornamento di Windows pronto</span>
+              </QmButton>
+              <QmButton danger armed={armed === "updateShutdown"} confirmText={gameNote} onClick={power("updateShutdown")}>Aggiorna e spegni</QmButton>
+            </>
+          )}
           {powerOptions.sleep && <QmButton armed={armed === "sleep"} onClick={power("sleep")}>Sospendi</QmButton>}
           {powerOptions.hibernate && <QmButton armed={armed === "hibernate"} onClick={power("hibernate")}>Iberna</QmButton>}
           <QmButton

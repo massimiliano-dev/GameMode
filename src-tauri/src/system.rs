@@ -16,6 +16,11 @@ pub enum PowerAction {
     Hibernate,
     Lock,
     Logoff,
+    /// Restart installing the pending Windows updates on the way.
+    #[serde(rename = "updateRestart")]
+    UpdateRestart,
+    #[serde(rename = "updateShutdown")]
+    UpdateShutdown,
 }
 
 impl PowerAction {
@@ -24,7 +29,12 @@ impl PowerAction {
     pub fn ends_session(self) -> bool {
         matches!(
             self,
-            PowerAction::Shutdown | PowerAction::Restart | PowerAction::RestartToDesktop | PowerAction::Logoff
+            PowerAction::Shutdown
+                | PowerAction::Restart
+                | PowerAction::RestartToDesktop
+                | PowerAction::Logoff
+                | PowerAction::UpdateRestart
+                | PowerAction::UpdateShutdown
         )
     }
 }
@@ -86,6 +96,8 @@ pub fn power(action: PowerAction) -> Result<()> {
             Ok(())
         },
         PowerAction::Lock => unsafe { Ok(LockWorkStation()?) },
+        PowerAction::UpdateRestart => crate::winupdate::shutdown(true),
+        PowerAction::UpdateShutdown => crate::winupdate::shutdown(false),
     }
 }
 

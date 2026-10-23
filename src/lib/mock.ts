@@ -611,6 +611,17 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "check_update":
         await wait(700);
         return { version: "0.2.1", notes: "Correzioni e miglioramenti" };
+      case "system_updates":
+        if (args.force) await wait(2500);
+        return {
+          state: "ready",
+          items: [
+            { title: "Aggiornamento cumulativo 2026-10 per Windows 11 Version 25H2 (KB5071234)", bytes: 812 * 1024 ** 2, downloaded: true },
+            { title: "Aggiornamento per Microsoft Defender Antivirus (KB2267602)", bytes: 2.4 * 1024 ** 2, downloaded: true },
+          ],
+          checkedAt: now() - 1800,
+          error: null,
+        };
       case "install_update":
         await wait(1500);
         throw "Aggiornamento simulato: nel browser non si installa nulla";

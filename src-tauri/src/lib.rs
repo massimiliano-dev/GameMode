@@ -46,6 +46,7 @@ mod audio_events;
 mod osd;
 mod idle;
 mod lifecycle;
+mod winupdate;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -862,6 +863,21 @@ async fn install_update(app: AppHandle) -> CmdResult<()> {
     app.restart();
 }
 
+/// Windows Update's view: pending updates and whether a restart installs them.
+/// `force` asks Microsoft's servers (slow); otherwise the cached answer.
+#[tauri::command]
+async fn system_updates(app: AppHandle, force: bool) -> winupdate::SystemUpdates {
+    if !force {
+        if let Some(cached) = winupdate::cached() {
+            return cached;
+        }
+    }
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || winupdate::refresh(&handle, force))
+        .await
+        .unwrap_or_else(|e| winupdate::SystemUpdates { state: winupdate::SystemUpdateState::Unknown, items: Vec::new(), checked_at: None, error: Some(e.to_string()) })
+}
+
 #[tauri::command]
 fn refresh_artwork(app: AppHandle) {
     artwork::refresh(&app, true);
@@ -1050,6 +1066,7 @@ pub fn run() {
             lifecycle::start(&handle);
             updates::watch_packages();
             status::start(handle.clone());
+            winupdate::watch(handle.clone());
             let native = gamepad::start(handle.clone());
             app.state::<AppState>().native_gamepad.store(native, Ordering::SeqCst);
             idle::start(handle.clone());
@@ -1172,6 +1189,7 @@ pub fn run() {
             storage_cleanup,
             storage_remeasure,
             power_options,
+            system_updates,
         ])
         .on_window_event(|window, event| {
             // Alt+F4 on the launcher: the hidden overlay window would keep
