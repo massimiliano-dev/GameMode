@@ -281,6 +281,8 @@ mod xinput {
             loop {
                 let now = Instant::now();
                 let mut buttons = 0u32;
+                // The physical D-pad alone, without the stick folded in.
+                let mut dpad = 0u32;
                 for slot in 0..4 {
                     if !connected[slot] && last_probe[slot].is_some_and(|t| now - t < PROBE_INTERVAL) {
                         continue;
@@ -290,6 +292,7 @@ mod xinput {
                     connected[slot] = unsafe { get_state(slot as u32, &mut state) } == 0;
                     if connected[slot] {
                         buttons |= read_buttons(&state);
+                        dpad |= state.Gamepad.wButtons.0 as u32 & (DPAD_UP | DPAD_DOWN);
                     }
                 }
 
@@ -325,6 +328,13 @@ mod xinput {
                 let wand = target.is_none() && crate::wand::is_open();
                 for (bit, repeat) in repeater.step(buttons, DIRECTIONS, now) {
                     let Some(&(_, action)) = MAPPING.iter().find(|(b, _)| *b == bit) else { continue };
+                    // View held + D-pad up/down during a game: volume, with
+                    // the on-screen indicator as feedback. Only the real
+                    // D-pad: View + left stick is common in games (scoreboard).
+                    if target.is_none() && buttons & BACK != 0 && (bit == DPAD_UP || bit == DPAD_DOWN) && dpad & bit != 0 && crate::osd::combo_active(&app) {
+                        crate::osd::nudge(&app, if bit == DPAD_UP { crate::osd::PAD_STEP } else { -crate::osd::PAD_STEP });
+                        continue;
+                    }
                     if wand {
                         wand_key(&app, action);
                     } else if action == Action::Guide {

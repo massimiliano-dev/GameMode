@@ -2474,3 +2474,84 @@ html.is-overlay .qm-music[data-nav-current] {
 .qm-volume.is-app.is-idle .qm-volume-fill {
   opacity: 0.5;
 }
+
+/* ---------- Volume OSD (its own small window) ---------- */
+
+html.is-osd {
+  /* A 420 px window: the viewport-based root size would be unreadable. */
+  font-size: 16px;
+}
+
+html.is-osd,
+html.is-osd body {
+  background: transparent;
+}
+
+.osd {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1rem;
+  padding: 0 1.4rem;
+  border-radius: 1.1rem;
+  background: rgba(7, 9, 13, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+.osd-icon {
+  display: block;
+  color: var(--accent);
+}
+
+.osd-icon svg {
+  display: block;
+  width: 1.9rem;
+  height: 1.9rem;
+}
+
+.osd-body {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.osd-label {
+  overflow: hidden;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.osd-bar {
+  display: block;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+
+.osd-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.12s var(--ease);
+}
+
+.osd-value {
+  min-width: 3.4rem;
+  text-align: right;
+  font-size: 1.2rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.osd.is-muted .osd-icon,
+.osd.is-muted .osd-value {
+  color: var(--text-faint);
+}

@@ -221,6 +221,12 @@ export function Settings() {
                 hint="Brano in riproduzione (Spotify, browser…) con LB/RB per cambiarlo e volume separato per gioco, musica e chat"
                 onClick={() => void saveSettings({ ...settings, musicControls: !settings.musicControls })}
                 control={<Toggle on={settings.musicControls} />}
+                />
+                <Row
+                label="Indicatore del volume"
+                hint="Tasti volume della tastiera e ⧉ + croce su/giù mostrano il volume sopra il gioco, al posto del pannello di Windows"
+                onClick={() => void saveSettings({ ...settings, osdVolume: !settings.osdVolume })}
+                control={<Toggle on={settings.osdVolume} />}
               />
             </Section>
             <Section title="Negozi e finestre degli store">

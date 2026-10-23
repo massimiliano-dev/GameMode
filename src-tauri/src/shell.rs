@@ -354,7 +354,7 @@ mod imp {
     pub fn run_startup_apps() {}
 }
 
-pub use imp::{ensure_explorer, run_startup_apps, run_watchdog, set, spawn_watchdog, start_explorer};
+pub use imp::{ensure_explorer, explorer_running, run_startup_apps, run_watchdog, set, spawn_watchdog, start_explorer};
 
 /// The user asked for the Windows desktop ("Apri il desktop di Windows").
 static DESKTOP_WANTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

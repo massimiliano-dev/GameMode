@@ -51,3 +51,5 @@ windows = { version = "0.62.2", features = ["Management_Deployment", "Applicatio
 winreg = "0.56.0"
 # The tray icon exists only when GameMode sits behind the Windows desktop.
 tauri = { version = "2", features = ["tray-icon"] }
+# Direct dependency so `#[implement]` (COM callbacks in audio_events.rs) resolves `::windows_core`.
+windows-core = "0.62.2"

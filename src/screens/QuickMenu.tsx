@@ -7,9 +7,9 @@ import { Avatar } from "../components/ProfileSettings";
 import { Glyph, useClock, useScreenFocus } from "../components/common";
 import { MusicPanel } from "../components/NowPlaying";
 import { Priority, useAction } from "../input/dispatcher";
-import { api } from "../lib/api";
+import { api, on } from "../lib/api";
 import { formatClock, formatDate, formatPlaytime } from "../lib/format";
-import type { AudioOutput, PowerAction, Volume } from "../lib/types";
+import type { AudioOutput, PowerAction, Volume, VolumeEvent } from "../lib/types";
 import { useApp } from "../store/app";
 
 const VOLUME_STEP = 0.05;
@@ -35,6 +35,8 @@ export function QuickMenu() {
   useEffect(() => {
     void api.getVolume().then(setVolume).catch(() => setVolume(null));
     void api.getConsoleMode().then((s) => { setConsoleMode(s.active); setDesktopOnce(s.desktopOnce); }).catch(() => {});
+    // Volume keys and the other window keep the bar current.
+    return on<VolumeEvent>("audio://volume", ({ level, muted }) => setVolume({ level, muted }));
   }, []);
   useScreenFocus();
 

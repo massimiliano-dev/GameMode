@@ -237,6 +237,8 @@ pub struct Settings {
     pub haptics: u8,
     /// Now playing and the per-app mixer in the overlay and quick menu.
     pub music_controls: bool,
+    /// Volume keys and View + D-pad show the volume over the game (OSD).
+    pub osd_volume: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -272,6 +274,7 @@ impl Default for Settings {
             wand_pause: true,
             haptics: 1,
             music_controls: true,
+            osd_volume: true,
         }
     }
 }

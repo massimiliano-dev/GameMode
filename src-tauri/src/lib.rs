@@ -38,6 +38,8 @@ mod uninstall;
 mod updates;
 mod wand;
 mod window;
+mod audio_events;
+mod osd;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -919,6 +921,8 @@ pub fn run() {
             }
             overlay::create(&handle);
             media::init(&handle);
+            osd::create(&handle);
+            audio_events::start(handle.clone());
             updates::watch_packages();
             status::start(handle.clone());
             let native = gamepad::start(handle.clone());

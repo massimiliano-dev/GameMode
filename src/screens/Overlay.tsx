@@ -11,7 +11,7 @@ import { focusInitial } from "../input/focus";
 import { setupInput } from "../input/sources";
 import { api, on } from "../lib/api";
 import { formatClock, formatDate, formatPlaytime } from "../lib/format";
-import type { Volume } from "../lib/types";
+import type { Volume, VolumeEvent } from "../lib/types";
 import { useApp } from "../store/app";
 import { QmButton, VolumeRow } from "./QuickMenu";
 
@@ -60,9 +60,11 @@ export function OverlayApp() {
       refresh();
     });
     const unlistenClose = on("overlay://close", () => setOpen(false));
+    const offVolume = on<VolumeEvent>("audio://volume", ({ level, muted }) => setVolume({ level, muted }));
     return () => {
       unlisten();
       unlistenClose();
+      offVolume();
     };
   }, []);
 
