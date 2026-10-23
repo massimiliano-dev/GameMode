@@ -11,6 +11,7 @@ import { Toggle } from "./common";
 /** Console mode: GameMode instead of the Windows desktop, for this user. */
 export function ConsoleSettings() {
   const toast = useApp((s) => s.toast);
+  const paused = useApp((s) => s.suspended.length);
   const [status, setStatus] = useState<ShellStatus | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [restart, setRestart] = useState<"desktop" | "console" | null>(null);
@@ -41,6 +42,13 @@ export function ConsoleSettings() {
   };
 
   if (!status) return null;
+
+  // Restarting closes the games left paused (Quick Resume), like in the quick menu.
+  const pausedNote = paused
+    ? paused === 1
+      ? " Il gioco in pausa viene chiuso."
+      : ` I ${paused} giochi in pausa vengono chiusi.`
+    : "";
 
   return (
     <Section title="Modalità console">
@@ -92,9 +100,9 @@ export function ConsoleSettings() {
             key="restart"
             title={restart === "desktop" ? "Riavviare in modalità desktop?" : "Riavviare in modalità console?"}
             text={
-              restart === "desktop"
+              (restart === "desktop"
                 ? "Il PC si riavvia e questa volta Windows apre il desktop normale, con GameMode nell'area di notifica. La modalità console resta attiva: al riavvio successivo torni in GameMode."
-                : "Il PC si riavvia e all'accesso trovi di nuovo GameMode al posto del desktop."
+                : "Il PC si riavvia e all'accesso trovi di nuovo GameMode al posto del desktop.") + pausedNote
             }
             confirmLabel="Riavvia"
             onCancel={() => setRestart(null)}

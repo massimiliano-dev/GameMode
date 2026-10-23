@@ -778,14 +778,20 @@ pub fn run() {
                 tray::create(&handle);
                 shell::guard_desktop_once(handle.clone());
                 if let Some(w) = window::main_window(&handle) {
-                    let _ = w.hide();
+                    // After an update the user was looking at GameMode.
+                    if !shell::restarted_for_update() {
+                        let _ = w.hide();
+                    }
                     // The X goes back to the tray, like any tray app: a
                     // destroyed main window would leave the tray's "Apri
-                    // GameMode" with nothing to show.
+                    // GameMode" with nothing to show. The process stays
+                    // alive, so the TV mode must go now, not at exit.
                     let hidden = w.clone();
                     w.on_window_event(move |e| {
                         if let tauri::WindowEvent::CloseRequested { api, .. } = e {
                             api.prevent_close();
+                            display::reset_mode();
+                            let _ = hidden.set_fullscreen(false);
                             let _ = hidden.hide();
                         }
                     });
@@ -805,7 +811,7 @@ pub fn run() {
                     }
                 });
             }
-            if window::wants_fullscreen(&handle) && !shell::status().desktop_once {
+            if window::wants_fullscreen(&handle) && (!shell::status().desktop_once || shell::restarted_for_update()) {
                 window::apply_tv(&handle);
                 if let Some(w) = window::main_window(&handle) {
                     let _ = w.set_fullscreen(true);
