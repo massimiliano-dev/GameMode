@@ -44,6 +44,8 @@ export interface Settings {
   wandCombo: boolean;
   /** Freeze the game while Wand has the screen. */
   wandPause: boolean;
+  /** When Windows shuts down with a game open, back up its saves once it has closed. */
+  backupOnExit: boolean;
 }
 
 export interface ShellStatus {
@@ -295,4 +297,10 @@ export interface Catalog {
 
 export type UninstallOutcome = "started" | "removed";
 
-export type PowerAction = "shutdown" | "restart" | "sleep";
+export type PowerAction = "shutdown" | "restart" | "sleep" | "hibernate" | "lock" | "logoff";
+
+/** Which power actions this PC supports. */
+export interface PowerOptions {
+  sleep: boolean;
+  hibernate: boolean;
+}

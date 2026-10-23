@@ -65,6 +65,8 @@ const LAUNCHERS: &[&str] = &[
 const NOT_THE_GAME: &[&str] = &["gamelaunchhelper.exe"];
 /// Games often restart themselves (launcher → game, anti-cheat…).
 const EXIT_GRACE: Duration = Duration::from_secs(10);
+/// How long an exit path waits for a state change under way.
+const TRANSITION_WAIT: Duration = Duration::from_secs(3);
 
 #[derive(Serialize, Clone, Copy, PartialEq, Debug)]
 #[serde(rename_all = "lowercase")]
@@ -151,9 +153,27 @@ impl Launcher {
         }
     }
 
-    /// Like `transition`, waiting for any change under way to finish.
-    fn transition_wait(&self) -> MutexGuard<'_, ()> {
-        self.transition.lock().unwrap_or_else(|e| e.into_inner())
+    /// Like `transition`, waiting up to `timeout` for any change under way
+    /// to finish. `None` past that: the exit paths run on the main thread,
+    /// and a change waiting on the main thread must not hang them.
+    fn transition_within(&self, timeout: Duration) -> Option<MutexGuard<'_, ()>> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.transition.try_lock() {
+                Ok(guard) => return Some(guard),
+                Err(TryLockError::Poisoned(e)) => return Some(e.into_inner()),
+                Err(TryLockError::WouldBlock) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+                Err(TryLockError::WouldBlock) => return None,
+            }
+        }
+    }
+
+    /// Ids and processes of every game GameMode follows, frozen ones included.
+    fn open_games(&self) -> (Vec<String>, Vec<u32>) {
+        let sessions = self.sessions.lock().unwrap();
+        let ids = sessions.iter().map(|a| a.state.game_id.clone()).collect();
+        let pids = sessions.iter().flat_map(|a| a.pids.iter().copied()).collect();
+        (ids, pids)
     }
 
     /// The game in the foreground (starting or running), if any.
@@ -856,7 +876,7 @@ fn thaw(app: &AppHandle, generation: u64) -> Result<()> {
 /// down: nothing may stay frozen behind GameMode's back.
 pub fn thaw_all(app: &AppHandle) {
     let launcher = &app.state::<AppState>().launcher;
-    let _transition = launcher.transition_wait();
+    let _transition = launcher.transition_within(TRANSITION_WAIT);
     for session in launcher.suspended() {
         if let Some(generation) = launcher.generation_of(&session.game_id) {
             if let Err(err) = thaw(app, generation) {
@@ -949,6 +969,31 @@ pub fn close_running(app: &AppHandle) -> bool {
     }
     kill(&pids);
     true
+}
+
+/// Asks every open game to close (WM_CLOSE to its windows, like the X
+/// button, so it can save), waits up to `grace` for it, then terminates
+/// what is left. Frozen games are thawed first (`thaw_all`) or they can't
+/// answer. Returns the ids of the games that were open.
+pub fn close_all_gently(app: &AppHandle, grace: Duration) -> Vec<String> {
+    let (ids, pids) = app.state::<AppState>().launcher.open_games();
+    if pids.is_empty() {
+        return ids;
+    }
+    crate::performance::close_windows(&pids);
+    let targets: Vec<Pid> = pids.iter().map(|p| Pid::from_u32(*p)).collect();
+    let deadline = Instant::now() + grace;
+    let mut sys = System::new();
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(250));
+        sys.refresh_processes(ProcessesToUpdate::Some(&targets), true);
+        if targets.iter().all(|pid| sys.process(*pid).is_none()) {
+            return ids;
+        }
+    }
+    // UWP titles and anti-cheat games often ignore WM_CLOSE.
+    kill(&pids);
+    ids
 }
 
 #[cfg(test)]

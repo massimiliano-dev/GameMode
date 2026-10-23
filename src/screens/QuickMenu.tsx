@@ -8,7 +8,7 @@ import { Glyph, useClock, useScreenFocus } from "../components/common";
 import { Priority, useAction } from "../input/dispatcher";
 import { api } from "../lib/api";
 import { formatClock, formatDate, formatPlaytime } from "../lib/format";
-import type { AudioOutput, PowerAction, Volume } from "../lib/types";
+import type { AudioOutput, PowerAction, PowerOptions, Volume } from "../lib/types";
 import { useApp } from "../store/app";
 
 const VOLUME_STEP = 0.05;
@@ -29,10 +29,12 @@ export function QuickMenu() {
   const [outputs, setOutputs] = useState<AudioOutput[] | null>(null);
   const output = outputs?.find((o) => o.default);
   const [consoleMode, setConsoleMode] = useState(false);
+  const [powerOptions, setPowerOptions] = useState<PowerOptions>({ sleep: true, hibernate: false });
   // The screen below keeps the hint bar; the panel shows its own.
   useEffect(() => {
     void api.getVolume().then(setVolume).catch(() => setVolume(null));
     void api.getConsoleMode().then((s) => setConsoleMode(s.active)).catch(() => {});
+    void api.powerOptions().then(setPowerOptions).catch(() => {});
   }, []);
   useScreenFocus();
 
@@ -70,6 +72,8 @@ export function QuickMenu() {
 
   const elapsed = session ? Math.max(0, Math.floor(Date.now() / 1000) - session.startedAt) : 0;
   const pausedNote = paused ? `${paused === 1 ? "Il gioco in pausa viene chiuso" : `I ${paused} giochi in pausa vengono chiusi`} · premi di nuovo` : undefined;
+  // Ending the session closes the games gently (they get to save first).
+  const gameNote = pausedNote ?? (session ? "Il gioco viene chiuso e i salvataggi copiati · premi di nuovo" : undefined);
   const pausedQuitNote = paused ? `${paused === 1 ? "Il gioco in pausa riprende sul desktop" : "I giochi in pausa riprendono sul desktop"} · premi di nuovo` : undefined;
 
   return (
@@ -196,9 +200,13 @@ export function QuickMenu() {
         </div>
 
         <div className="qm-list qm-power">
-          <QmButton armed={armed === "sleep"} onClick={power("sleep")}>Sospendi</QmButton>
-          <QmButton armed={armed === "restart"} confirmText={pausedNote} onClick={power("restart")}>Riavvia</QmButton>
-          <QmButton danger armed={armed === "shutdown"} confirmText={pausedNote} onClick={power("shutdown")}>Spegni</QmButton>
+          {powerOptions.sleep && <QmButton armed={armed === "sleep"} onClick={power("sleep")}>Sospendi</QmButton>}
+          {powerOptions.hibernate && <QmButton armed={armed === "hibernate"} onClick={power("hibernate")}>Iberna</QmButton>}
+          {/* Unlocking needs a keyboard: not offered when GameMode is the shell. */}
+          {!consoleMode && <QmButton armed={armed === "lock"} onClick={power("lock")}>Blocca</QmButton>}
+          <QmButton armed={armed === "logoff"} confirmText={gameNote} onClick={power("logoff")}>Disconnetti</QmButton>
+          <QmButton armed={armed === "restart"} confirmText={gameNote} onClick={power("restart")}>Riavvia</QmButton>
+          <QmButton danger armed={armed === "shutdown"} confirmText={gameNote} onClick={power("shutdown")}>Spegni</QmButton>
           <QmButton armed={armed === "quit"} confirmText={pausedQuitNote} onClick={() => confirmTwice("quit", () => void useApp.getState().quit())}>
             {consoleMode ? "Chiudi GameMode e apri il desktop" : "Chiudi GameMode"}
           </QmButton>

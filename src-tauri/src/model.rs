@@ -233,6 +233,9 @@ pub struct Settings {
     pub wand_combo: bool,
     /// Freeze the game while Wand has the screen.
     pub wand_pause: bool,
+    /// When Windows shuts down with a game open, back up its saves once it
+    /// has closed.
+    pub backup_on_exit: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -266,6 +269,7 @@ impl Default for Settings {
             wand_backtick: false,
             wand_combo: false,
             wand_pause: true,
+            backup_on_exit: true,
         }
     }
 }

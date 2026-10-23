@@ -23,6 +23,7 @@ mod performance;
 mod procinfo;
 mod saves;
 mod shell;
+mod shutdown;
 #[cfg(windows)]
 mod sqlite;
 mod steam_web;
@@ -337,11 +338,18 @@ fn close_game(app: AppHandle) -> bool {
 
 #[tauri::command]
 fn power(app: AppHandle, action: system::PowerAction) -> CmdResult<()> {
-    // Frozen games can't answer the shutdown: let them go first.
-    if !matches!(action, system::PowerAction::Sleep) {
+    // Frozen games can't answer the shutdown: let them go first. The rest
+    // happens when Windows asks GameMode to close (see `shutdown`).
+    if action.ends_session() {
         launcher::thaw_all(&app);
     }
     system::power(action).map_err(err)
+}
+
+/// Which power actions this PC supports (sleep and hibernation can be off).
+#[tauri::command]
+fn power_options() -> system::PowerOptions {
+    system::power_options()
 }
 
 #[tauri::command]
@@ -403,11 +411,7 @@ fn toggle_fullscreen(app: AppHandle) {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
-    // Never leave a game frozen behind.
-    wand::forget();
-    launcher::thaw_all(&app);
-    display::reset_mode();
-    shell::start_explorer();
+    shutdown::teardown(&app, shutdown::Reason::Quit);
     app.exit(0);
 }
 
@@ -789,6 +793,7 @@ pub fn run() {
                 std::thread::spawn(launcher::preload_steam);
             }
             overlay::create(&handle);
+            shutdown::install(&handle);
             updates::watch_packages();
             let native = gamepad::start(handle.clone());
             app.state::<AppState>().native_gamepad.store(native, Ordering::SeqCst);
@@ -883,14 +888,31 @@ pub fn run() {
             add_collection,
             remove_collection,
             set_in_collection,
+            power_options,
         ])
+        .on_window_event(|window, event| {
+            // Alt+F4 on the launcher: the hidden overlay window would keep
+            // the process alive with no window, so this quits for real.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    shutdown::teardown(window.app_handle(), shutdown::Reason::Quit);
+                    window.app_handle().exit(0);
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
-            // Whatever ends GameMode (its own quit, a closed window, the
-            // session ending): nothing stays frozen behind it.
-            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
-                launcher::thaw_all(app);
-            }
+            // Whatever ends GameMode (its own quit, a closed window, an
+            // update restart): put things back. Windows' own shutdown went
+            // through `shutdown` already.
+            let code = match event {
+                tauri::RunEvent::ExitRequested { code, .. } => code,
+                tauri::RunEvent::Exit => None,
+                _ => return,
+            };
+            let reason = if code == Some(tauri::RESTART_EXIT_CODE) { shutdown::Reason::Restart } else { shutdown::Reason::Quit };
+            shutdown::teardown(app, reason);
         });
 }

@@ -63,11 +63,6 @@ fn powercfg(_args: &[&str]) -> bool {
 #[cfg(windows)]
 fn close_windows_of(names: &[String]) {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
-    use windows::core::BOOL;
-    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindow, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, GW_OWNER, WM_CLOSE,
-    };
 
     let names: Vec<String> = names.iter().map(|n| n.trim().to_lowercase()).filter(|n| !n.is_empty()).collect();
     if names.is_empty() {
@@ -75,12 +70,26 @@ fn close_windows_of(names: &[String]) {
     }
     let mut sys = System::new();
     sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
-    let mut pids: Vec<u32> = sys
+    let pids: Vec<u32> = sys
         .processes()
         .iter()
         .filter(|(_, p)| names.contains(&p.name().to_string_lossy().to_lowercase()))
         .map(|(pid, _)| pid.as_u32())
         .collect();
+    close_windows(&pids);
+}
+
+/// Sends WM_CLOSE to the visible top-level windows of `pids`, like clicking
+/// their close button: the app (or game) gets to save and quit on its own.
+#[cfg(windows)]
+pub fn close_windows(pids: &[u32]) {
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindow, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, GW_OWNER, WM_CLOSE,
+    };
+
+    let mut pids: Vec<u32> = pids.to_vec();
     if pids.is_empty() {
         return;
     }
@@ -106,6 +115,13 @@ fn close_windows_of(names: &[String]) {
 fn close_windows_of(names: &[String]) {
     if !names.is_empty() {
         eprintln!("closing {names:?} ignored outside Windows");
+    }
+}
+
+#[cfg(not(windows))]
+pub fn close_windows(pids: &[u32]) {
+    if !pids.is_empty() {
+        eprintln!("closing windows of {pids:?} ignored outside Windows");
     }
 }
 
