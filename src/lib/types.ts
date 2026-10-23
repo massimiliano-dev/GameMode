@@ -296,3 +296,27 @@ export interface Catalog {
 export type UninstallOutcome = "started" | "removed";
 
 export type PowerAction = "shutdown" | "restart" | "sleep";
+
+/** Trucchi: what a memory value is stored as. */
+export type CheatKind = "int" | "float" | "double";
+
+export interface CheatHit {
+  address: number;
+  value: string;
+  frozen: boolean;
+}
+
+export interface CheatScan {
+  kind: CheatKind;
+  count: number;
+  /** Listed once the search is down to a handful. */
+  hits: CheatHit[];
+}
+
+export interface CheatsStatus {
+  available: boolean;
+  /** Why not, when not available. */
+  reason: string | null;
+  scan: CheatScan | null;
+  frozen: CheatHit[];
+}

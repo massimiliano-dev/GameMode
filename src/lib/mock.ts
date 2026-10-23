@@ -157,6 +157,9 @@ function fakeResume(paused: SessionState) {
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+let cheatScan: { kind: string; count: number; hits: { address: number; value: string; frozen: boolean }[] } | null = null;
+let cheatFrozen: { address: number; value: string; frozen: boolean }[] = [];
+
 export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {}): Promise<T> {
   const result = await (async (): Promise<unknown> => {
     switch (cmd) {
@@ -214,6 +217,28 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "wand_installed":
         return true;
       case "open_wand":
+      case "cheats_status":
+        return { available: true, reason: null, scan: cheatScan, frozen: cheatFrozen };
+      case "cheats_search": {
+        await wait(400);
+        const count = args.fresh || !cheatScan ? 48213 : Math.max(1, Math.floor(cheatScan.count / 40));
+        const hits =
+          count <= 20
+            ? Array.from({ length: count }, (_, i) => ({ address: 0x7ff6a1b20000 + i * 0x40, value: args.value, frozen: false }))
+            : [];
+        return (cheatScan = { kind: args.kind, count, hits });
+      }
+      case "cheats_set":
+      case "cheats_reset":
+        return;
+      case "cheats_freeze": {
+        const hit = cheatScan?.hits.find((h) => h.address === args.address);
+        if (hit) cheatFrozen = [...cheatFrozen.filter((f) => f.address !== hit.address), { ...hit, value: args.value ?? hit.value, frozen: true }];
+        return;
+      }
+      case "cheats_unfreeze":
+        cheatFrozen = cheatFrozen.filter((f) => f.address !== args.address);
+        return;
       case "open_wand_app":
         return;
       case "get_game_updates":

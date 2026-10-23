@@ -9,6 +9,7 @@ mod artwork;
 mod assist;
 mod autostart;
 mod catalog;
+mod cheats;
 mod db;
 mod devices;
 mod display;
@@ -106,6 +107,39 @@ fn open_wand(app: AppHandle) {
 #[tauri::command]
 fn open_wand_app(app: AppHandle) {
     wand::open_app(&app);
+}
+
+#[tauri::command]
+async fn cheats_status(app: AppHandle) -> cheats::CheatsStatus {
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || cheats::status(&handle))
+        .await
+        .unwrap_or_else(|_| cheats::CheatsStatus { available: false, reason: None, scan: None, frozen: Vec::new() })
+}
+
+#[tauri::command]
+async fn cheats_search(app: AppHandle, value: String, kind: cheats::Kind, fresh: bool) -> CmdResult<cheats::ScanView> {
+    blocking(move || cheats::search(&app, &value, kind, fresh)).await
+}
+
+#[tauri::command]
+fn cheats_set(app: AppHandle, address: u64, value: String) -> CmdResult<()> {
+    cheats::set(&app, address, &value).map_err(err)
+}
+
+#[tauri::command]
+fn cheats_freeze(app: AppHandle, address: u64, value: Option<String>) -> CmdResult<()> {
+    cheats::freeze(&app, address, value.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+fn cheats_unfreeze(address: u64) {
+    cheats::unfreeze(address);
+}
+
+#[tauri::command]
+fn cheats_reset() {
+    cheats::reset();
 }
 
 #[tauri::command]
@@ -826,6 +860,12 @@ pub fn run() {
             wand_installed,
             open_wand,
             open_wand_app,
+            cheats_status,
+            cheats_search,
+            cheats_set,
+            cheats_freeze,
+            cheats_unfreeze,
+            cheats_reset,
             close_game,
             power,
             get_volume,
