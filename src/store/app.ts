@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { currentFocusId } from "../input/focus";
-import { rumble, setHaptics } from "../input/haptics";
+import { rumble, setHaptics, type Pattern } from "../input/haptics";
 import { setSoundsEnabled } from "../input/sfx";
 import { api, on } from "../lib/api";
 import { formatPlaytime } from "../lib/format";
@@ -101,7 +101,8 @@ interface AppState {
   installFromCatalog: (id: string, name: string) => Promise<void>;
   uninstall: (game: Game) => Promise<void>;
   returnedToApp: () => void;
-  toast: (text: string, tone?: Toast["tone"]) => void;
+  /** `haptic` overrides the vibration (default: `error` for the error tone, none otherwise). */
+  toast: (text: string, tone?: Toast["tone"], haptic?: Pattern | null) => void;
   setKeyboardField: (field: HTMLInputElement | null) => void;
   switchProfile: (id: string) => Promise<void>;
   setProfiles: (profiles: Profile[], active: string) => void;
@@ -433,8 +434,8 @@ export const useApp = create<AppState>((set, get) => ({
     set({ collections: get().collections.filter((c) => c.id !== id) });
   },
 
-  toast: (text, tone = "info") => {
-    if (tone === "error") rumble("error");
+  toast: (text, tone = "info", haptic = tone === "error" ? "error" : null) => {
+    if (haptic) rumble(haptic);
     const id = ++toastId;
     set((s) => ({ toasts: [...s.toasts, { id, text, tone }] }));
     setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 4500);
@@ -565,8 +566,7 @@ function onControllers(list: Controller[], set: (partial: Partial<AppState>) => 
   for (const c of list) {
     const prev = before.find((p) => p.slot === c.slot);
     if (!c.wired && c.level <= 1 && (!prev || prev.wired || prev.level > 1)) {
-      rumble("notify");
-      get().toast(`Batteria del controller ${c.slot + 1} quasi scarica`, "error");
+      get().toast(`Batteria del controller ${c.slot + 1} quasi scarica`, "error", "notify");
     }
   }
   set({ controllers: list });

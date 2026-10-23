@@ -1,17 +1,25 @@
-// Controller vibration for interface feedback. On Windows the backend drives
-// the pads through XInput and knows the setting and whether a game is
-// running; in a plain browser the Gamepad API's dual-rumble stands in, so
-// the feel can be tried during development.
+// Controller vibration for interface feedback. With the native XInput backend
+// the Rust side drives the pads and knows the setting and whether a game is
+// running; otherwise (plain browser, or Tauri on a platform without XInput)
+// the Gamepad API's dual-rumble stands in, so the feel can be tried during
+// development.
 
 import { api, isTauri } from "../lib/api";
 
 export type Pattern = "tick" | "select" | "error" | "launch" | "notify";
 
-/** 0 off, 1 light, 2 normal — mirrors `Settings.haptics`. */
+/** 0 off, 1 light, 2 normal — mirrors `Settings.haptics`; only the browser fallback reads it. */
 let level = 1;
 
 export function setHaptics(value: number) {
   level = value;
+}
+
+/** Whether the native backend owns the pads (the result of `setupInput`). */
+let native = isTauri;
+
+export function setNativeHaptics(value: boolean) {
+  native = value;
 }
 
 /** Beats as `[startMs, lengthMs, strong, weak]`, same as the Rust side. */
@@ -30,11 +38,12 @@ const BEATS: Record<Pattern, [number, number, number, number][]> = {
 };
 
 export function rumble(pattern: Pattern) {
-  if (level === 0) return;
-  if (isTauri) {
+  if (native) {
+    // The backend reads the saved level itself, so every window stays in sync.
     void api.rumble(pattern).catch(() => {});
     return;
   }
+  if (level === 0) return;
   const factor = level >= 2 ? 1 : 0.45;
   try {
     for (const pad of navigator.getGamepads()) {

@@ -3,6 +3,7 @@
 import { api, isTauri, onWindow } from "../lib/api";
 import type { Action } from "../lib/types";
 import { dispatch } from "./dispatcher";
+import { setNativeHaptics } from "./haptics";
 
 const KEYS: Record<string, Action> = {
   ArrowUp: "up",
@@ -140,6 +141,7 @@ async function start(): Promise<boolean> {
   keyboard();
   pointer();
   const native = isTauri ? await api.nativeGamepad().catch(() => false) : false;
+  setNativeHaptics(native);
   if (native) {
     onWindow<{ action: Action; repeat: boolean }>("gamepad://nav", (e) => {
       controllerActive();
