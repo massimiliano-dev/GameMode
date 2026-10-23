@@ -8,10 +8,12 @@ import { Glyph, useClock, useScreenFocus } from "../components/common";
 import { Priority, useAction } from "../input/dispatcher";
 import { api } from "../lib/api";
 import { formatClock, formatDate, formatPlaytime } from "../lib/format";
-import type { AudioOutput, PowerAction, Volume } from "../lib/types";
+import type { AudioOutput, PowerAction, PowerMode, Volume } from "../lib/types";
 import { useApp } from "../store/app";
+import { useIdle } from "../store/idle";
 
 const VOLUME_STEP = 0.05;
+const POWER_VERB: Record<PowerAction, string> = { shutdown: "Spegnimento", restart: "Riavvio", sleep: "Sospensione" };
 
 export function QuickMenu() {
   const close = () => useApp.getState().setQuickMenu(false);
@@ -29,6 +31,9 @@ export function QuickMenu() {
   const [outputs, setOutputs] = useState<AudioOutput[] | null>(null);
   const output = outputs?.find((o) => o.default);
   const [consoleMode, setConsoleMode] = useState(false);
+  const schedule = useIdle((s) => s.schedule);
+  const cancelPower = useIdle((s) => s.cancelPower);
+  const [powerSheet, setPowerSheet] = useState(false);
   // The screen below keeps the hint bar; the panel shows its own.
   useEffect(() => {
     void api.getVolume().then(setVolume).catch(() => setVolume(null));
@@ -60,6 +65,13 @@ export function QuickMenu() {
       close();
       void api.power(action).catch((e) => toast(String(e), "error"));
     });
+
+  /** "Shut down in…": the backend warns a minute before. */
+  const schedulePower = (action: PowerAction, mode: PowerMode) => () =>
+    void api
+      .schedulePower(action, mode)
+      .then((s) => toast(s.at ? `${POWER_VERB[action]} alle ${formatClock(new Date(s.at * 1000))}` : `${POWER_VERB[action]} a fine download`))
+      .catch((e) => toast(String(e), "error"));
 
   const changeVolume = async (delta: number) => {
     if (!volume) return;
@@ -195,8 +207,28 @@ export function QuickMenu() {
           </QmButton>
         </div>
 
+        {schedule && (
+          <div className="qm-paused qm-scheduled">
+            <span className="qm-label">Programmato</span>
+            <span className="qm-sub">
+              {schedule.at ? `${POWER_VERB[schedule.action]} alle ${formatClock(new Date(schedule.at * 1000))}` : `${POWER_VERB[schedule.action]} a fine download`}
+            </span>
+            <QmButton onClick={() => void cancelPower().then(() => toast("Programmazione annullata"))}>Annulla</QmButton>
+          </div>
+        )}
+
         <div className="qm-list qm-power">
           <QmButton armed={armed === "sleep"} onClick={power("sleep")}>Sospendi</QmButton>
+          <QmButton
+            onClick={() => {
+              close();
+              void api.restMode().catch((e) => toast(String(e), "error"));
+            }}
+          >
+            Modalità riposo
+            <span className="qm-sub">Schermo spento, i download continuano</span>
+          </QmButton>
+          <QmButton onClick={() => setPowerSheet(true)}>Spegni fra…</QmButton>
           <QmButton armed={armed === "restart"} confirmText={pausedNote} onClick={power("restart")}>Riavvia</QmButton>
           <QmButton danger armed={armed === "shutdown"} confirmText={pausedNote} onClick={power("shutdown")}>Spegni</QmButton>
           <QmButton armed={armed === "quit"} confirmText={pausedQuitNote} onClick={() => confirmTwice("quit", () => void useApp.getState().quit())}>
@@ -209,6 +241,20 @@ export function QuickMenu() {
         </div>
       </motion.aside>
       <AnimatePresence>
+        {powerSheet && (
+          <ActionSheet
+            key="power"
+            title="Spegni fra"
+            onClose={() => setPowerSheet(false)}
+            actions={[
+              { label: "30 minuti", onSelect: schedulePower("shutdown", { kind: "in", secs: 30 * 60 }) },
+              { label: "1 ora", onSelect: schedulePower("shutdown", { kind: "in", secs: 60 * 60 }) },
+              { label: "2 ore", onSelect: schedulePower("shutdown", { kind: "in", secs: 2 * 60 * 60 }) },
+              { label: "A fine download", hint: "Quando non scarica più nulla da un minuto", onSelect: schedulePower("shutdown", { kind: "atDownloadsEnd" }) },
+              { label: "Sospendi a fine download", hint: "Il PC si sospende invece di spegnersi", onSelect: schedulePower("sleep", { kind: "atDownloadsEnd" }) },
+            ]}
+          />
+        )}
         {outputs && (
           <ActionSheet
             key="audio"

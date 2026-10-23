@@ -19,6 +19,8 @@ import type {
   LibraryUpdate,
   ManualGame,
   PowerAction,
+  PowerMode,
+  PowerSchedule,
   Radios,
   SaveInfo,
   ShellStatus,
@@ -124,6 +126,12 @@ export const api = {
   removeCollection: (id: string) => call<void>("remove_collection", { id }),
   setInCollection: (collectionId: string, gameId: string, value: boolean) =>
     call<Collection[]>("set_in_collection", { collectionId, gameId, value }),
+  schedulePower: (action: PowerAction, mode: PowerMode) => call<PowerSchedule>("schedule_power", { action, mode }),
+  cancelPower: () => call<void>("cancel_power"),
+  getPowerSchedule: () => call<PowerSchedule | null>("get_power_schedule"),
+  restMode: () => call<void>("rest_mode"),
+  idleWake: () => call<void>("idle_wake"),
+  touchInput: () => call<void>("touch_input"),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

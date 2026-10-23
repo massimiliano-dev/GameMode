@@ -32,6 +32,7 @@ mod uninstall;
 mod updates;
 mod wand;
 mod window;
+mod idle;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -720,6 +721,40 @@ async fn open_store(app: AppHandle, store: model::Store, game_id: Option<String>
     blocking(move || storefront::open(&handle, store, game.as_ref())).await
 }
 
+/// "Shut down in…": a power action after `mode`, with a one-minute warning.
+#[tauri::command]
+fn schedule_power(app: AppHandle, action: system::PowerAction, mode: idle::PowerMode) -> idle::PowerSchedule {
+    idle::schedule(&app, action, mode)
+}
+
+#[tauri::command]
+fn cancel_power(app: AppHandle) {
+    idle::cancel(&app);
+}
+
+#[tauri::command]
+fn get_power_schedule() -> Option<idle::PowerSchedule> {
+    idle::current_schedule()
+}
+
+/// Rest mode: screen off now, downloads go on, any input brings it back.
+#[tauri::command]
+fn rest_mode(app: AppHandle) {
+    idle::rest(&app);
+}
+
+/// Leaves the screensaver or turns the display back on.
+#[tauri::command]
+fn idle_wake() {
+    idle::wake();
+}
+
+/// The frontend saw input (Gamepad API fallback, dev machines).
+#[tauri::command]
+fn touch_input() {
+    idle::touch_input();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // The console-mode watchdog is this same executable with `--watchdog`.
@@ -792,6 +827,7 @@ pub fn run() {
             updates::watch_packages();
             let native = gamepad::start(handle.clone());
             app.state::<AppState>().native_gamepad.store(native, Ordering::SeqCst);
+            idle::start(handle.clone());
 
             // Games left running by a crash or an update come first; then the
             // saved library shows instantly and the fresh scan replaces it.
@@ -883,6 +919,12 @@ pub fn run() {
             add_collection,
             remove_collection,
             set_in_collection,
+            schedule_power,
+            cancel_power,
+            get_power_schedule,
+            rest_mode,
+            idle_wake,
+            touch_input,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

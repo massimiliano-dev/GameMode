@@ -44,6 +44,15 @@ export interface Settings {
   wandCombo: boolean;
   /** Freeze the game while Wand has the screen. */
   wandPause: boolean;
+  /** Minutes of inactivity before the ambient screensaver; 0 = never. */
+  idleScreensaverMin: number;
+  /** Minutes of inactivity before the display turns off; 0 = never. */
+  idleDisplayOffMin: number;
+  /** Minutes of inactivity before `idleAction`; 0 = never. */
+  idleSleepMin: number;
+  idleAction: PowerAction;
+  /** Inactivity never sleeps the PC while a game downloads or updates. */
+  idleWaitDownloads: boolean;
 }
 
 export interface ShellStatus {
@@ -296,3 +305,19 @@ export interface Catalog {
 export type UninstallOutcome = "started" | "removed";
 
 export type PowerAction = "shutdown" | "restart" | "sleep";
+
+export type IdleStage = "active" | "screensaver" | "displayOff";
+
+export type PowerMode = { kind: "in"; secs: number } | { kind: "atDownloadsEnd" };
+
+export interface PowerSchedule {
+  action: PowerAction;
+  /** Unix seconds when it happens; null while waiting for the downloads to end. */
+  at: number | null;
+  atDownloadsEnd: boolean;
+}
+
+export interface PowerCountdown {
+  action: PowerAction;
+  secondsLeft: number;
+}

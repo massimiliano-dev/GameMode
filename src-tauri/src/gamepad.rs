@@ -249,6 +249,10 @@ mod xinput {
                         buttons |= read_buttons(&state);
                     }
                 }
+                // Windows doesn't count controllers as activity: GameMode does.
+                if buttons != 0 {
+                    crate::idle::touch_input();
+                }
 
                 // Input goes only to the GameMode window that has focus.
                 let target = if overlay::is_open() {
