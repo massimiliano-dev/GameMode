@@ -113,7 +113,7 @@ games = [
   })),
 ];
 
-let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true, keyboardAuto: true, backupOnExit: true, igdbClientId: null, igdbClientSecret: null, captureCombo: true, companionEnabled: false, hidPads: true };
+let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true, keyboardAuto: true, backupOnExit: true, igdbClientId: null, igdbClientSecret: null, captureCombo: true, companionEnabled: false, hidPads: true, gogInstallDir: null, msstoreDirect: true };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
 let suspended: SessionState[] = [];
@@ -211,6 +211,28 @@ let powerTimer: ReturnType<typeof setInterval> | undefined;
 
 type Listener = (payload: unknown) => void;
 const listeners = new Map<string, Set<Listener>>();
+
+let gogSignedIn = false;
+/** Pretend downloads in progress: id -> still wanted. */
+const directCancel = new Set<string>();
+const directProgress = new Map<string, number>();
+
+/** A fake GOG download that fills up in a few seconds. */
+function mockDirectDownload(id: string) {
+  directCancel.add(id);
+  directProgress.set(id, 0);
+  const tick = setInterval(() => {
+    const done = (directProgress.get(id) ?? 0) + 0.1;
+    if (!directCancel.has(id) || done >= 1) {
+      clearInterval(tick);
+      directProgress.delete(id);
+      const ok = directCancel.delete(id);
+      emit("direct://done", { id, name: "Gioco GOG", ok, error: null });
+      return;
+    }
+    directProgress.set(id, done);
+  }, 800);
+}
 
 function emit(event: string, payload: unknown) {
   listeners.get(event)?.forEach((l) => l(payload));
@@ -407,7 +429,10 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "open_wand_app":
         return;
       case "get_game_updates":
-        return games[1] ? [{ gameId: games[1].id, state: "downloading", done: 1.2 * 1024 ** 3, total: 4.5 * 1024 ** 3, progress: 0.27 }] : [];
+        return [
+          ...(games[1] ? [{ gameId: games[1].id, state: "downloading", done: 1.2 * 1024 ** 3, total: 4.5 * 1024 ** 3, progress: 0.27 }] : []),
+          ...[...directProgress].map(([gameId, progress]) => ({ gameId, state: "downloading", done: progress * 8 * 1024 ** 3, total: 8 * 1024 ** 3, progress })),
+        ];
       case "get_volume":
         return volume;
       case "set_volume":
@@ -717,9 +742,6 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "set_rom_dir":
         romDirs = { ...romDirs, [args.system]: args.path };
         return mockEmulators();
-      case "install_catalog_item":
-        console.info("[mock] install", args.id);
-        return;
       case "uninstall_game": {
         const game = games.find((g) => g.id === args.id);
         games = games.filter((g) => g.id !== args.id);
@@ -835,6 +857,25 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "companion_firewall":
         await wait(500);
         return true;
+      case "direct_install_available":
+        return String(args.id).startsWith("gog:") && gogSignedIn;
+      case "install_catalog_item":
+        console.info("[mock] install", args.id);
+        if (String(args.id).startsWith("gog:") && gogSignedIn) mockDirectDownload(String(args.id));
+        return;
+      case "cancel_direct_install":
+        return directCancel.delete(String(args.id));
+      case "gog_status":
+        return { signedIn: gogSignedIn, installDir: settings.gogInstallDir ?? "C:\\GOG Games" };
+      case "gog_login":
+        await wait(800);
+        gogSignedIn = true;
+        return true;
+      case "gog_logout":
+        gogSignedIn = false;
+        return;
+      case "update_store_game":
+        return false;
       default:
         // exit_to_desktop, toggle_fullscreen, quit_app, refresh_artwork, refresh_metadata
         console.info(`[mock] ${cmd}`, args);

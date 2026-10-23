@@ -334,6 +334,11 @@ pub struct Settings {
     /// Read DualSense, DualShock 4 and Switch Pro directly over HID; off
     /// when Steam Input or DS4Windows already turn them into XInput pads.
     pub hid_pads: bool,
+    /// Where GameMode installs GOG games; `C:\GOG Games` when unset.
+    pub gog_install_dir: Option<PathBuf>,
+    /// Install and update Microsoft Store / Game Pass games through the
+    /// Store's install service, without opening the Xbox app.
+    pub msstore_direct: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -382,6 +387,8 @@ impl Default for Settings {
             capture_combo: true,
             companion_enabled: false,
             hid_pads: true,
+            gog_install_dir: None,
+            msstore_direct: true,
         }
     }
 }

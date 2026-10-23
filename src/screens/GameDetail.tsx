@@ -34,6 +34,7 @@ export function GameDetail({ gameId }: { gameId: string }) {
   const back = useApp((s) => s.back);
   const update = useApp((s) => s.gameUpdates[gameId] ?? (s.session?.gameId === gameId ? s.session.update : null));
   const showGameUpdate = useApp((s) => s.showGameUpdate);
+  const storeDirect = useApp((s) => !!s.settings?.msstoreDirect);
   const [dialog, setDialog] = useState<Dialog>(null);
 
   useEffect(() => setBackdrop(gameId), [gameId, setBackdrop]);
@@ -75,6 +76,9 @@ export function GameDetail({ gameId }: { gameId: string }) {
   const options: SheetAction[] = [
     ...(SHOP_LABEL[game.store]
       ? [{ label: "Pagina nello store", hint: "DLC, espansioni e aggiornamenti", onSelect: () => void openStore(game.store, game.id) }]
+      : []),
+    ...(game.store === "xbox" && storeDirect && !update
+      ? [{ label: "Cerca aggiornamenti", hint: "Dal Microsoft Store, senza aprire l'app Xbox", onSelect: () => void showGameUpdate(game) }]
       : []),
     ...(game.store !== "mock" && !isApp
       ? [{ label: "Salvataggi", hint: "Backup e ripristino", onSelect: () => setDialog("saves") }]
@@ -143,7 +147,7 @@ export function GameDetail({ gameId }: { gameId: string }) {
               )}
               {update && (game.store === "steam" || game.store === "xbox") && (
                 <button type="button" className="btn" data-nav onClick={() => void showGameUpdate(game)}>
-                  {game.store === "steam" ? "Download di Steam" : "Apri nell'app Xbox"}
+                  {game.store === "steam" ? "Download di Steam" : storeDirect ? "Aggiorna" : "Apri nell'app Xbox"}
                 </button>
               )}
               <button type="button" className="btn" data-nav onClick={() => void toggleFavorite(game)}>
@@ -215,5 +219,6 @@ export function GameDetail({ gameId }: { gameId: string }) {
 function uninstallText(game: Game) {
   if (game.store === "manual") return "Il gioco sparisce da GameMode, i suoi file restano dove sono.";
   if (game.store === "xbox") return "Il gioco viene rimosso dal PC. I salvataggi nel cloud restano sul tuo account Xbox.";
+  if (game.store === "gog") return "Il gioco viene rimosso dal PC senza altre finestre. Windows potrebbe chiederti il permesso.";
   return "Si apre la disinstallazione dello store, che potrebbe chiederti un'ulteriore conferma.";
 }

@@ -11,6 +11,7 @@ import { UpdateSettings } from "../components/UpdateSettings";
 import { WandSettings } from "../components/WandSettings";
 import { ProfileSettings } from "../components/ProfileSettings";
 import { StorageSettings } from "../components/StorageSettings";
+import { StoreInstallSettings } from "../components/StoreInstallSettings";
 import { Row, Section } from "../components/SettingsRows";
 import { Glyph, Toggle, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
@@ -325,6 +326,8 @@ export function Settings() {
                 onClick={() => void rescan()}
               />
             </Section>
+
+            <StoreInstallSettings settings={settings} />
 
             <Section title="Giochi aggiunti a mano">
               {manual.map((m) => (

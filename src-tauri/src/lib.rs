@@ -53,6 +53,9 @@ mod winupdate;
 mod capture;
 mod capture_osd;
 mod companion;
+mod direct;
+mod gog_store;
+mod msstore;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -734,6 +737,11 @@ async fn install_catalog_item(app: AppHandle, id: String) -> CmdResult<()> {
 /// Opens a catalog item's install dialog in its store, with the controller
 /// hand-off; shared with the phone companion.
 pub(crate) async fn install_catalog(app: &AppHandle, id: String) -> CmdResult<()> {
+    // GameMode installs it by itself when it can (GOG account, Microsoft Store).
+    let name = app.state::<AppState>().catalog.name_of(&id).unwrap_or_else(|| id.clone());
+    if let Some(result) = direct::start(app, &id, &name).await {
+        return result;
+    }
     // Cloud games run in Edge, which handles the controller itself and needs
     // View for the game; the Xbox app and Store handle the controller too.
     if !id.starts_with("cloud:") {
@@ -746,6 +754,46 @@ pub(crate) async fn install_catalog(app: &AppHandle, id: String) -> CmdResult<()
     // Launching may wait on Windows (WinRT launcher): keep it off the main thread.
     let handle = app.clone();
     blocking(move || catalog::install(&handle, &id)).await
+}
+
+/// Whether GameMode downloads and installs this catalog item itself
+/// (no store window to hand off to).
+#[tauri::command]
+fn direct_install_available(app: AppHandle, id: String) -> bool {
+    direct::available(&app, &id)
+}
+
+#[tauri::command]
+fn cancel_direct_install(id: String) -> bool {
+    direct::cancel(&id)
+}
+
+#[tauri::command]
+fn gog_status(app: AppHandle) -> gog_store::GogStatus {
+    gog_store::status(&app)
+}
+
+/// Opens GOG's login page; false when the user closed it.
+#[tauri::command]
+async fn gog_login(app: AppHandle) -> CmdResult<bool> {
+    gog_store::login(&app).await.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn gog_logout(app: AppHandle) {
+    gog_store::logout(&app).await;
+}
+
+/// Starts a Store game's update through the Store's install service; false
+/// when there is none (or it isn't available).
+#[tauri::command]
+async fn update_store_game(app: AppHandle, id: String) -> CmdResult<bool> {
+    let game = app.state::<AppState>().db.lock().game(&id).cloned().ok_or("Gioco non trovato")?;
+    if !app.state::<AppState>().db.lock().settings.msstore_direct {
+        return Ok(false);
+    }
+    let handle = app.clone();
+    blocking(move || msstore::update(&handle, &game)).await
 }
 
 #[tauri::command]
@@ -1347,6 +1395,12 @@ pub fn run() {
             capture_notice,
             companion_status,
             companion_firewall,
+            direct_install_available,
+            cancel_direct_install,
+            gog_status,
+            gog_login,
+            gog_logout,
+            update_store_game,
         ])
         .on_window_event(|window, event| {
             // Alt+F4 on the launcher: the hidden overlay window would keep

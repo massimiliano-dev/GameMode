@@ -103,6 +103,10 @@ export interface Settings {
   companionEnabled: boolean;
   /** DualSense, DualShock 4 and Switch Pro read directly over HID. */
   hidPads: boolean;
+  /** Where GameMode installs GOG games; `C:\GOG Games` when null. */
+  gogInstallDir: string | null;
+  /** Microsoft Store / Game Pass installs and updates without the Xbox app. */
+  msstoreDirect: boolean;
 }
 
 export interface ShellStatus {
@@ -602,4 +606,19 @@ export interface RemoteText {
   text: string;
   enter: boolean;
   backspace: boolean;
+}
+
+export interface GogStatus {
+  signedIn: boolean;
+  installDir: string;
+}
+
+/** A download GameMode ran itself has ended (`direct://done`). */
+export interface DirectDone {
+  /** Catalog or game id: `gog:<id>`, `gamepass:<productId>`, `xbox:<family>`. */
+  id: string;
+  name: string;
+  ok: boolean;
+  /** Why it failed; null when it worked or was cancelled. */
+  error: string | null;
 }
