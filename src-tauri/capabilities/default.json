@@ -6,7 +6,8 @@
     "main",
     "overlay",
     "osd",
-    "keyboard"
+    "keyboard",
+    "capture-osd"
   ],
   "permissions": [
     "core:default",

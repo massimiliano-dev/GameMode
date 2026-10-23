@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ActionSheet } from "../components/ActionSheet";
 import { AppCard } from "../components/AppCard";
+import { CaptureRow } from "../components/CaptureGallery";
 import { Cover, GameCard } from "../components/GameCard";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { SystemUpdateRow, SystemUpdateSheet } from "../components/SystemUpdateCard";
@@ -94,22 +95,26 @@ export function Home({ focusId }: { focusId?: string }) {
   // The focus sits on the Windows update card: no game to play there.
   const [onSystemCard, setOnSystemCard] = useState(false);
   const [systemSheet, setSystemSheet] = useState(false);
+  // The focus sits on "Le tue catture": A opens the picture, X/Y do nothing.
+  const [onCaptureRow, setOnCaptureRow] = useState(false);
 
   useScreenFocus(focusId, rows.length > 0 || paused.length > 0);
   useHints(
     onSystemCard
       ? [{ button: "A", label: "Opzioni" }]
-      : onWakeRow
-        ? [
-            { button: "A", label: "Seleziona" },
-            { button: "X", label: "Riprendi" },
-          ]
-        : [
-            { button: "A", label: onPausedRow ? "Opzioni" : onAppsRow ? "Apri" : "Dettagli" },
-            { button: "X", label: onAppsRow ? "Dettagli" : "Gioca" },
-            { button: "Y", label: onAppsRow ? "Preferita" : "Preferito" },
-          ],
-    [onPausedRow, onAppsRow, onWakeRow, onSystemCard],
+      : onCaptureRow
+        ? [{ button: "A", label: "Visualizza" }]
+        : onWakeRow
+          ? [
+              { button: "A", label: "Seleziona" },
+              { button: "X", label: "Riprendi" },
+            ]
+          : [
+              { button: "A", label: onPausedRow ? "Opzioni" : onAppsRow ? "Apri" : "Dettagli" },
+              { button: "X", label: onAppsRow ? "Dettagli" : "Gioca" },
+              { button: "Y", label: onAppsRow ? "Preferita" : "Preferito" },
+            ],
+    [onPausedRow, onAppsRow, onWakeRow, onSystemCard, onCaptureRow],
   );
 
   // The card comes and goes while Home is up (a wake, the game ending):
@@ -130,6 +135,7 @@ export function Home({ focusId }: { focusId?: string }) {
     setOnPausedRow(false);
     setOnAppsRow(false);
     setOnSystemCard(false);
+    setOnCaptureRow(false);
   }, [wokeId, setBackdrop]);
 
   const onFocus = useCallback(
@@ -139,6 +145,7 @@ export function Home({ focusId }: { focusId?: string }) {
       setOnAppsRow(false);
       setOnWakeRow(false);
       setOnSystemCard(false);
+      setOnCaptureRow(false);
     },
     [setBackdrop],
   );
@@ -149,6 +156,7 @@ export function Home({ focusId }: { focusId?: string }) {
       setOnAppsRow(false);
       setOnWakeRow(false);
       setOnSystemCard(false);
+      setOnCaptureRow(false);
     },
     [setBackdrop],
   );
@@ -159,6 +167,7 @@ export function Home({ focusId }: { focusId?: string }) {
       setOnAppsRow(true);
       setOnWakeRow(false);
       setOnSystemCard(false);
+      setOnCaptureRow(false);
     },
     [setBackdrop],
   );
@@ -167,6 +176,14 @@ export function Home({ focusId }: { focusId?: string }) {
     setOnPausedRow(false);
     setOnAppsRow(false);
     setOnWakeRow(false);
+    setOnCaptureRow(false);
+  }, []);
+  const onFocusCapture = useCallback(() => {
+    setOnCaptureRow(true);
+    setOnPausedRow(false);
+    setOnAppsRow(false);
+    setOnWakeRow(false);
+    setOnSystemCard(false);
   }, []);
   const onSelect = useCallback((g: Game) => open({ name: "detail", gameId: g.id }), [open]);
   const onSelectPaused = useCallback((g: Game) => setSheet(g), []);
@@ -174,7 +191,7 @@ export function Home({ focusId }: { focusId?: string }) {
   const sheetKnown = !!sheet && games.some((g) => g.id === sheet.id);
 
   useAction((action, repeat) => {
-    if (repeat || !featured || sheet || onSystemCard) return;
+    if (repeat || !featured || sheet || onSystemCard || onCaptureRow) return;
     if (onWakeRow && wokeGame) {
       // The buttons speak for the game left open, not for the last card.
       if (action === "x") {
@@ -286,6 +303,7 @@ export function Home({ focusId }: { focusId?: string }) {
             </div>
           </section>
         ))}
+        <CaptureRow onFocus={onFocusCapture} />
       </div>
       <AnimatePresence>
         {sheet && (

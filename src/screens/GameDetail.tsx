@@ -2,6 +2,7 @@ import { AnimatePresence } from "motion/react";
 import { useEffect, useState } from "react";
 
 import { ActionSheet, type SheetAction } from "../components/ActionSheet";
+import { CaptureGallery } from "../components/CaptureGallery";
 import { CollectionsDialog } from "../components/CollectionsDialog";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { SavesDialog } from "../components/SavesDialog";
@@ -187,6 +188,7 @@ export function GameDetail({ gameId }: { gameId: string }) {
         </div>
         {!isApp && <GameInfo game={game} onShots={setShots} />}
         {game.steamAppid && game.store === "steam" && <SteamExtras appid={game.steamAppid} />}
+        <CaptureGallery game={game} />
       </div>
       <AnimatePresence>
         {dialog === "options" && <ActionSheet key="options" title={game.name} actions={options} onClose={() => setDialog(null)} />}

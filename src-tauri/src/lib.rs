@@ -49,6 +49,8 @@ mod osd;
 mod idle;
 mod lifecycle;
 mod winupdate;
+mod capture;
+mod capture_osd;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -1018,6 +1020,41 @@ fn clear_crashes() {
     diag::clear_crashes();
 }
 
+/// A screenshot of the running game, from the overlay. `None`: it failed and
+/// the in-game card already says why.
+#[tauri::command]
+async fn take_screenshot(app: AppHandle) -> CmdResult<Option<capture::Capture>> {
+    let handle = app.clone();
+    blocking(move || capture::take(&handle)).await
+}
+
+/// Screenshots, newest first; of one game when `game_id` is given.
+#[tauri::command]
+async fn list_captures(app: AppHandle, game_id: Option<String>) -> Vec<capture::Capture> {
+    let root = capture::root(&app.state::<AppState>().data_dir);
+    tauri::async_runtime::spawn_blocking(move || capture::list(&root, game_id.as_deref())).await.unwrap_or_default()
+}
+
+#[tauri::command]
+fn delete_capture(state: State<AppState>, path: PathBuf) -> CmdResult<()> {
+    capture::delete(&capture::root(&state.data_dir), &path).map_err(|e| format!("{e:#}"))
+}
+
+/// Opens the screenshots folder (of one game, or all) in Explorer.
+#[tauri::command]
+fn open_captures_folder(app: AppHandle, state: State<AppState>, game_id: Option<String>) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = capture::folder_of(&capture::root(&state.data_dir), game_id.as_deref());
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(err)
+}
+
+/// What the in-game card is showing, for its page when it loads.
+#[tauri::command]
+fn capture_notice() -> Option<capture_osd::Notice> {
+    capture_osd::current()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // The console-mode watchdog is this same executable with `--watchdog`.
@@ -1146,6 +1183,7 @@ pub fn run() {
             keyboard::watch(handle.clone());
             shutdown::install(&handle);
             lifecycle::start(&handle);
+            capture::init(&handle);
             updates::watch_packages();
             status::start(handle.clone());
             winupdate::watch(handle.clone());
@@ -1278,6 +1316,11 @@ pub fn run() {
             clear_crashes,
             refresh_metadata,
             metadata_running,
+            take_screenshot,
+            list_captures,
+            delete_capture,
+            open_captures_folder,
+            capture_notice,
         ])
         .on_window_event(|window, event| {
             // Alt+F4 on the launcher: the hidden overlay window would keep

@@ -7,6 +7,7 @@ import type {
   AudioOutput,
   BackupInfo,
   BtDevice,
+  Capture,
   Catalog,
   Cleanup,
   CatalogItem,
@@ -25,6 +26,7 @@ import type {
   MediaAction,
   NowPlaying,
   AppVolume,
+  CaptureNotice,
   PowerAction,
   PowerMode,
   PowerSchedule,
@@ -177,6 +179,11 @@ export const api = {
   clearCrashes: () => call<void>("clear_crashes"),
   refreshMetadata: () => call<void>("refresh_metadata"),
   metadataRunning: () => call<boolean>("metadata_running"),
+  takeScreenshot: () => call<Capture | null>("take_screenshot"),
+  listCaptures: (gameId?: string) => call<Capture[]>("list_captures", { gameId: gameId ?? null }),
+  deleteCapture: (path: string) => call<void>("delete_capture", { path }),
+  openCapturesFolder: (gameId?: string) => call<void>("open_captures_folder", { gameId: gameId ?? null }),
+  captureNotice: () => call<CaptureNotice | null>("capture_notice"),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

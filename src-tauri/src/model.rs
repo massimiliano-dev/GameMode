@@ -327,6 +327,8 @@ pub struct Settings {
     /// critic score, time to beat).
     pub igdb_client_id: Option<String>,
     pub igdb_client_secret: Option<String>,
+    /// View+RB held during a game takes a screenshot.
+    pub capture_combo: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -372,6 +374,7 @@ impl Default for Settings {
             backup_on_exit: true,
             igdb_client_id: None,
             igdb_client_secret: None,
+            capture_combo: true,
         }
     }
 }

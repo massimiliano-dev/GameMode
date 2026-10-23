@@ -159,6 +159,11 @@ export function OverlayApp() {
             <QmButton autofocus onClick={resume}>
               {isApp ? "Torna all'app" : "Torna al gioco"}
             </QmButton>
+            {session?.phase === "running" && !isApp && (
+              <QmButton onClick={() => void api.takeScreenshot().catch((e) => toast(String(e), "error"))}>
+                Scatta una schermata
+              </QmButton>
+            )}
             {wand && game && !isApp && (
               <>
                 <QmButton onClick={() => void api.openWandApp()}>App Wand: scegli le mod e premi Play</QmButton>

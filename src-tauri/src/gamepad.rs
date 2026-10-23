@@ -214,6 +214,8 @@ mod xinput {
     pub const DESKTOP_COMBO: u32 = B | BACK;
     /// How long a pad gets to report the start-up combination.
     const STARTUP_WINDOW: Duration = Duration::from_millis(500);
+    /// View+RB held during a game takes a screenshot.
+    const CAPTURE_HOLD: Duration = Duration::from_millis(400);
 
     const MAPPING: &[(u32, Action)] = &[
         (DPAD_UP, Action::Up),
@@ -316,6 +318,8 @@ mod xinput {
             let mut haptics = crate::haptics::PulseQueue::default();
             // Per slot, the state that last counted as activity.
             let mut last_motion = [None::<super::PadSnapshot>; 4];
+            let mut capture_since: Option<Instant> = None;
+            let mut capture_fired = false;
 
             loop {
                 let now = Instant::now();
@@ -491,6 +495,23 @@ mod xinput {
                     for slot in (0..4u32).filter(|&s| connected[s as usize]) {
                         unsafe { XInputSetState(slot, &vibration) };
                     }
+                }
+
+                // View+RB held during a game: a screenshot (not with Start,
+                // which is the Back+Start combo above).
+                if target.is_none() && buttons & (BACK | RB | START) == BACK | RB {
+                    let since = *capture_since.get_or_insert(now);
+                    if !capture_fired && now - since >= CAPTURE_HOLD {
+                        capture_fired = true;
+                        let state = app.state::<crate::AppState>();
+                        let playing = state.launcher.current().is_some_and(|s| s.phase == crate::launcher::Phase::Running);
+                        if playing && state.db.lock().settings.capture_combo {
+                            crate::capture::take_async(app.clone());
+                        }
+                    }
+                } else {
+                    capture_since = None;
+                    capture_fired = false;
                 }
 
                 std::thread::sleep(POLL);

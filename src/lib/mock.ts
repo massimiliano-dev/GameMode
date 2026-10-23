@@ -1,7 +1,7 @@
 // In-browser stand-in for the Rust backend, so the UI can be developed and
 // tested with `npm run dev` in any browser.
 
-import type { AppVolume, Cleanup, Collection, Game, GameMeta, ManualGame, NowPlaying, PowerSchedule, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
+import type { AppVolume, Capture, Cleanup, Collection, Game, GameMeta, ManualGame, NowPlaying, PowerSchedule, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
 
 const CDN = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps";
 
@@ -113,7 +113,7 @@ games = [
   })),
 ];
 
-let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true, keyboardAuto: true, backupOnExit: true, igdbClientId: null, igdbClientSecret: null };
+let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true, keyboardAuto: true, backupOnExit: true, igdbClientId: null, igdbClientSecret: null, captureCombo: true };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
 let suspended: SessionState[] = [];
@@ -164,6 +164,14 @@ function mockStorage() {
     xboxMount: "C:\\",
   };
 }
+// Screenshots: the game's hero image stands in for the PNG on disk (artUrl
+// passes https through), with a query string telling the shots apart.
+const captureUrl = (gameId: string, n: number) =>
+  `${CDN}/${games.find((g) => g.id === gameId)?.steamAppid ?? 0}/library_hero.jpg?c=${n}`;
+let captures: Capture[] = [0, 3, 6, 9, 0, 12]
+  .map((i) => games[i])
+  .filter((g) => g.steamAppid)
+  .map((g, n) => ({ gameId: g.id, gameName: g.name, path: captureUrl(g.id, n), takenAt: now() - n * day - n * 3600 }));
 
 function mockEmulators() {
   const systems: [string, string, string][] = [
@@ -723,6 +731,21 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         return;
       case "touch_input":
         return;
+      case "take_screenshot": {
+        if (!session || session.phase !== "running") throw "Nessun gioco in corso";
+        await wait(300);
+        const c: Capture = { gameId: session.gameId, gameName: session.gameName, path: captureUrl(session.gameId, Date.now()), takenAt: now() };
+        captures = [c, ...captures];
+        emit("capture://saved", c);
+        return c;
+      }
+      case "list_captures":
+        return captures.filter((c) => !args.gameId || c.gameId === args.gameId);
+      case "delete_capture":
+        captures = captures.filter((c) => c.path !== args.path);
+        return;
+      case "capture_notice":
+        return null;
       case "open_store":
         console.info("[mock] open_store", args);
         return ["steam", "xbox", "epic"].includes(args.store) ? "client" : "browser";

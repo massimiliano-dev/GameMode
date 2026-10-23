@@ -97,6 +97,8 @@ export interface Settings {
   /** Twitch app credentials for IGDB (game cards). */
   igdbClientId: string | null;
   igdbClientSecret: string | null;
+  /** View+RB held during a game takes a screenshot. */
+  captureCombo: boolean;
 }
 
 export interface ShellStatus {
@@ -560,3 +562,14 @@ export interface StartupInfo {
   crashCount: number;
   logPath: string;
 }
+
+export interface Capture {
+  gameId: string;
+  gameName: string;
+  path: string;
+  /** Unix seconds. */
+  takenAt: number;
+}
+
+/** What the in-game card shows after a screenshot. */
+export type CaptureNotice = { kind: "saved"; capture: Capture } | { kind: "error"; message: string };
