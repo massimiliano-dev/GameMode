@@ -64,6 +64,9 @@ export function Home({ focusId }: { focusId?: string }) {
   const suspended = useApp((s) => s.suspended);
   const resumeSuspended = useApp((s) => s.resumeSuspended);
   const closeSuspended = useApp((s) => s.closeSuspended);
+  // The PC just woke up with a game still running.
+  const wokeGame = useApp((s) => (s.wokeAt && s.session ? s.games.find((g) => g.id === s.session?.gameId) : undefined));
+  const resumeAfterWake = useApp((s) => s.resumeAfterWake);
   const rows = useMemo(() => buildRows(games, collections), [games, collections]);
   // Frozen games (Quick Resume), with their sessions.
   const paused = useMemo(() => pausedGames(games, suspended), [games, suspended]);
@@ -117,6 +120,28 @@ export function Home({ focusId }: { focusId?: string }) {
     <div className="screen home">
       <section className="home-hero">{featured && <FeaturedInfo game={featured} />}</section>
       <div className="rows">
+        {wokeGame && (
+          <section className="row wake-row" data-nav-group="row:wake">
+            <h2 className="row-title">Bentornato</h2>
+            <div className="wake-card">
+              <div className="wake-cover">
+                <Cover game={wokeGame} />
+              </div>
+              <div className="wake-info">
+                <span className="wake-title">{wokeGame.name}</span>
+                <span className="wake-text">La partita è rimasta aperta durante la sospensione</span>
+              </div>
+              <div className="wake-actions">
+                <button type="button" className="btn btn-primary" data-nav data-nav-autofocus onClick={() => void resumeAfterWake()}>
+                  Riprendi la partita
+                </button>
+                <button type="button" className="btn" data-nav onClick={() => useApp.setState({ wokeAt: null })}>
+                  Resta qui
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
         {paused.length > 0 && (
           <section className="row" data-nav-group="row:paused">
             <h2 className="row-title">
@@ -132,7 +157,7 @@ export function Home({ focusId }: { focusId?: string }) {
                   onFocus={onFocusPaused}
                   onSelect={onSelectPaused}
                   paused
-                  autofocus={i === 0}
+                  autofocus={!wokeGame && i === 0}
                 />
               ))}
             </div>
@@ -154,7 +179,7 @@ export function Home({ focusId }: { focusId?: string }) {
                   onSelect={onSelect}
                   playing={sessionGame === g.id}
                   paused={suspended.some((p) => p.gameId === g.id)}
-                  autofocus={!paused.length && rowIndex === 0 && i === 0}
+                  autofocus={!wokeGame && !paused.length && rowIndex === 0 && i === 0}
                 />
               ))}
             </div>

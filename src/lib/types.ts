@@ -44,6 +44,8 @@ export interface Settings {
   wandCombo: boolean;
   /** Freeze the game while Wand has the screen. */
   wandPause: boolean;
+  /** Sleep after this many idle minutes (keyboard, mouse and controller still, no game); null never. */
+  autoSleepMinutes: number | null;
 }
 
 export interface ShellStatus {
@@ -296,3 +298,15 @@ export interface Catalog {
 export type UninstallOutcome = "started" | "removed";
 
 export type PowerAction = "shutdown" | "restart" | "sleep";
+
+/** What the PC is doing: sleep, wake, lock screen, the automatic sleep timer. */
+export type PowerEvent =
+  | { kind: "suspended" }
+  | { kind: "resumed"; slept: number }
+  | { kind: "locked" }
+  | { kind: "unlocked" }
+  | { kind: "displayOff" }
+  | { kind: "displayOn" }
+  | { kind: "sleepSoon"; seconds: number }
+  | { kind: "sleepCancelled" }
+  | { kind: "sessionEnding" };

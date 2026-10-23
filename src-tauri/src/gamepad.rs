@@ -49,6 +49,34 @@ pub fn controllers() -> Vec<Controller> {
     CONTROLLERS.lock().unwrap().clone()
 }
 
+/// Unix seconds of the last controller activity (buttons, sticks or
+/// triggers moved); 0 before any. Windows doesn't count the pad as input,
+/// so the idle timer asks here.
+static LAST_INPUT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+pub fn last_input() -> i64 {
+    LAST_INPUT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn note_input() {
+    LAST_INPUT.store(crate::model::now(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A coarse picture of a controller's state: buttons, sticks in 16 steps
+/// and triggers in 8, so a stick's drift doesn't look like activity.
+pub fn motion_signature(buttons: u16, sticks: [i16; 4], triggers: [u8; 2]) -> u64 {
+    let mut sig = u64::from(buttons);
+    for (i, axis) in sticks.iter().enumerate() {
+        // Offset by half a bucket so a centred stick sits mid-bucket.
+        let bucket = ((i32::from(*axis) + 32_768 + 2_048) >> 12) as u64;
+        sig |= bucket << (16 + 5 * i);
+    }
+    for (i, trigger) in triggers.iter().enumerate() {
+        sig |= u64::from(trigger >> 5) << (36 + 3 * i);
+    }
+    sig
+}
+
 /// Starts the polling thread. Returns false when no native backend exists on
 /// this platform, so the frontend falls back to the Gamepad API.
 pub fn start(app: AppHandle) -> bool {
@@ -234,10 +262,12 @@ mod xinput {
             let mut wand_since: Option<Instant> = None;
             let mut wand_fired = false;
             let mut wand_checked = Instant::now();
+            let mut last_motion = 0u64;
 
             loop {
                 let now = Instant::now();
                 let mut buttons = 0u32;
+                let mut motion = 0u64;
                 for slot in 0..4 {
                     if !connected[slot] && last_probe[slot].is_some_and(|t| now - t < PROBE_INTERVAL) {
                         continue;
@@ -247,7 +277,18 @@ mod xinput {
                     connected[slot] = unsafe { get_state(slot as u32, &mut state) } == 0;
                     if connected[slot] {
                         buttons |= read_buttons(&state);
+                        let pad = &state.Gamepad;
+                        let sig = super::motion_signature(
+                            pad.wButtons.0,
+                            [pad.sThumbLX, pad.sThumbLY, pad.sThumbRX, pad.sThumbRY],
+                            [pad.bLeftTrigger, pad.bRightTrigger],
+                        );
+                        motion = motion.wrapping_mul(1_000_003).wrapping_add(sig + 1);
                     }
+                }
+                if motion != last_motion {
+                    last_motion = motion;
+                    super::note_input();
                 }
 
                 // Input goes only to the GameMode window that has focus.
@@ -449,6 +490,15 @@ mod xinput {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn stick_drift_is_not_activity() {
+        let rest = motion_signature(0, [0, 0, 0, 0], [0, 0]);
+        assert_eq!(motion_signature(0, [900, -700, 300, 0], [10, 0]), rest);
+        assert_ne!(motion_signature(0, [20_000, 0, 0, 0], [0, 0]), rest);
+        assert_ne!(motion_signature(0, [0, 0, 0, 0], [200, 0]), rest);
+        assert_ne!(motion_signature(0x1000, [0, 0, 0, 0], [0, 0]), rest);
+    }
 
     #[test]
     fn repeats_only_repeatable_buttons_after_delay() {

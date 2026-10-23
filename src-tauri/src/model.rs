@@ -233,6 +233,9 @@ pub struct Settings {
     pub wand_combo: bool,
     /// Freeze the game while Wand has the screen.
     pub wand_pause: bool,
+    /// Put the PC to sleep after this many idle minutes (keyboard, mouse
+    /// and controller all still, no game running); `None` never does.
+    pub auto_sleep_minutes: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -266,6 +269,7 @@ impl Default for Settings {
             wand_backtick: false,
             wand_combo: false,
             wand_pause: true,
+            auto_sleep_minutes: None,
         }
     }
 }

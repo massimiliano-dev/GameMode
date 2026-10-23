@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Backdrop } from "./components/Backdrop";
 import { HintBar, Toasts, TopBar } from "./components/Chrome";
 import { LaunchOverlay } from "./components/LaunchOverlay";
+import { SleepNotice } from "./components/SleepNotice";
 import { VirtualKeyboard } from "./components/VirtualKeyboard";
 import { Priority, setKeyboardOpener, useAction } from "./input/dispatcher";
 import { play } from "./input/sfx";
@@ -115,6 +116,7 @@ export default function App() {
       </AnimatePresence>
       {keyboardField && <VirtualKeyboard field={keyboardField} onClose={() => useApp.getState().setKeyboardField(null)} />}
       <Toasts />
+      <SleepNotice />
     </div>
   );
 }

@@ -32,6 +32,7 @@ mod uninstall;
 mod updates;
 mod wand;
 mod window;
+mod lifecycle;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -403,11 +404,19 @@ fn toggle_fullscreen(app: AppHandle) {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
+    shutdown(&app);
+}
+
+/// The one clean way out: from the quick menu or the window's close button.
+fn shutdown(app: &AppHandle) {
     // Never leave a game frozen behind.
     wand::forget();
-    launcher::thaw_all(&app);
+    launcher::thaw_all(app);
     display::reset_mode();
-    shell::start_explorer();
+    // Signing out: Windows is taking the desktop down, not asking for it.
+    if !lifecycle::session_ending() {
+        shell::start_explorer();
+    }
     app.exit(0);
 }
 
@@ -789,6 +798,7 @@ pub fn run() {
                 std::thread::spawn(launcher::preload_steam);
             }
             overlay::create(&handle);
+            lifecycle::start(&handle);
             updates::watch_packages();
             let native = gamepad::start(handle.clone());
             app.state::<AppState>().native_gamepad.store(native, Ordering::SeqCst);
@@ -884,6 +894,16 @@ pub fn run() {
             remove_collection,
             set_in_collection,
         ])
+        .on_window_event(|window, event| {
+            // Alt+F4 on the launcher: the hidden overlay window would keep the
+            // process alive with nothing on screen, so it is a real quit.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    shutdown(window.app_handle());
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {

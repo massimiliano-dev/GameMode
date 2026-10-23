@@ -10,6 +10,7 @@ import type {
   Game,
   GameUpdate,
   LibraryUpdate,
+  PowerEvent,
   Profile,
   ScanError,
   SessionState,
@@ -71,6 +72,10 @@ interface AppState {
   collections: Collection[];
   /** Game updates the stores report, by game id. */
   gameUpdates: Record<string, GameUpdate>;
+  /** The PC just woke up with a game still running: Home offers to go back to it. */
+  wokeAt: number | null;
+  /** Seconds before the automatic sleep, while the warning is up. */
+  sleepSoon: number | null;
 
   init: () => Promise<void>;
   refreshGameUpdates: () => Promise<void>;
@@ -107,6 +112,8 @@ interface AppState {
   createCollection: (name: string) => Promise<Collection | null>;
   setInCollection: (collectionId: string, gameId: string, value: boolean) => Promise<void>;
   removeCollection: (id: string) => Promise<void>;
+  /** Back to the game that survived the sleep. */
+  resumeAfterWake: () => Promise<void>;
 }
 
 let toastId = 0;
@@ -141,6 +148,8 @@ export const useApp = create<AppState>((set, get) => ({
   update: null,
   collections: [],
   gameUpdates: {},
+  wokeAt: null,
+  sleepSoon: null,
 
   init: async () => {
     if (initialized) return;
@@ -161,6 +170,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({ rescanOnReturn: false });
       get().toast("Download avviato in Steam: lo trovi in Libreria quando ha finito");
     });
+    on<PowerEvent>("power://state", (e) => onPowerEvent(e, set, get));
     void api.getControllers().then((controllers) => set({ controllers })).catch(() => {});
 
     const [games, settings, session, suspended, profiles, collections, shell] = await Promise.all([
@@ -419,6 +429,12 @@ export const useApp = create<AppState>((set, get) => ({
     set({ collections: await api.setInCollection(collectionId, gameId, value) });
   },
 
+  resumeAfterWake: async () => {
+    set({ wokeAt: null });
+    if (!get().session) return;
+    if (!(await api.resumeGame().catch(() => false))) get().toast("Finestra del gioco non trovata");
+  },
+
   removeCollection: async (id) => {
     await api.removeCollection(id);
     set({ collections: get().collections.filter((c) => c.id !== id) });
@@ -452,6 +468,35 @@ function onSessionEvent(
     get().toast(`${name} in pausa: lo riprendi dalla Home`);
   } else {
     set({ session: s, suspended: others });
+    return;
+  }
+  // No game to go back to after the wake.
+  if (mine) set({ wokeAt: null });
+}
+
+/** Sleep, wake and the lock screen, as the backend reports them. */
+function onPowerEvent(e: PowerEvent, set: (partial: Partial<AppState>) => void, get: () => AppState) {
+  switch (e.kind) {
+    case "suspended":
+    case "locked":
+    case "sessionEnding":
+      set({ sleepSoon: null });
+      break;
+    case "resumed":
+      // The game may have died in its sleep: the session is read again.
+      void Promise.all([api.getSession(), api.getSuspended().catch(() => get().suspended)]).then(([session, suspended]) => {
+        set({ session, suspended, wokeAt: session ? Date.now() : null, sleepSoon: null });
+        get().toast(session ? "Bentornato: la partita ti aspetta" : "Bentornato");
+      });
+      break;
+    case "sleepSoon":
+      set({ sleepSoon: e.seconds });
+      break;
+    case "sleepCancelled":
+      set({ sleepSoon: null });
+      break;
+    default:
+      break;
   }
 }
 

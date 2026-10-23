@@ -10,13 +10,23 @@ import { Toggle } from "./common";
 
 const label = (m: DisplayMode) => `${m.width} × ${m.height} · ${m.refresh} Hz`;
 
+/** Idle minutes before the automatic sleep. */
+export const SLEEP_CHOICES: { minutes: number | null; label: string }[] = [
+  { minutes: null, label: "Mai" },
+  { minutes: 15, label: "Dopo 15 minuti" },
+  { minutes: 30, label: "Dopo 30 minuti" },
+  { minutes: 60, label: "Dopo un'ora" },
+];
+
+export const sleepLabel = (minutes: number | null) => SLEEP_CHOICES.find((c) => c.minutes === minutes)?.label ?? `Dopo ${minutes} minuti`;
+
 /** TV mode (display + audio output) and performance mode. */
 export function SystemSettings({ settings }: { settings: Settings }) {
   const saveSettings = useApp((s) => s.saveSettings);
   const toast = useApp((s) => s.toast);
   const [display, setDisplay] = useState<DisplayInfo | null>(null);
   const [outputs, setOutputs] = useState<AudioOutput[]>([]);
-  const [sheet, setSheet] = useState<"display" | "audio" | null>(null);
+  const [sheet, setSheet] = useState<"display" | "audio" | "sleep" | null>(null);
   const [apps, setApps] = useState(settings.closeApps.join(", "));
 
   useEffect(() => {
@@ -49,6 +59,11 @@ export function SystemSettings({ settings }: { settings: Settings }) {
     ...outputs.map((o) => ({ label: o.name, hint: o.default ? "In uso adesso" : undefined, onSelect: () => void save({ tvAudio: o.id }) })),
   ];
   const audioName = outputs.find((o) => o.id === settings.tvAudio)?.name;
+  const sleepActions: SheetAction[] = SLEEP_CHOICES.map(({ minutes, label }) => ({
+    label,
+    hint: minutes === settings.autoSleepMinutes ? "Scelta attuale" : undefined,
+    onSelect: () => void saveSettings({ ...settings, autoSleepMinutes: minutes }),
+  }));
 
   return (
     <>
@@ -100,9 +115,23 @@ export function SystemSettings({ settings }: { settings: Settings }) {
         </div>
       </Section>
 
+      <Section title="Risparmio energetico">
+        <Row
+          label="Sospendi il PC se inattivo"
+          hint={sleepLabel(settings.autoSleepMinutes)}
+          onClick={() => setSheet("sleep")}
+          control={<span className="setting-action">Cambia</span>}
+        />
+        <p className="setting-hint settings-note">
+          Conta anche il controller, che Windows ignora. Un minuto prima compare un avviso; durante una partita il PC resta
+          acceso.
+        </p>
+      </Section>
+
       <AnimatePresence>
         {sheet === "display" && <ActionSheet key="display" title="Risoluzione" actions={displayActions} onClose={() => setSheet(null)} />}
         {sheet === "audio" && <ActionSheet key="audio" title="Uscita audio" actions={audioActions} onClose={() => setSheet(null)} />}
+        {sheet === "sleep" && <ActionSheet key="sleep" title="Sospensione automatica" actions={sleepActions} onClose={() => setSheet(null)} />}
       </AnimatePresence>
     </>
   );
