@@ -162,7 +162,7 @@ mod imp {
         GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status,
     };
     use windows::Storage::Streams::DataReader;
-    use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+    use windows::Win32::System::Com::{CoIncrementMTAUsage, CoInitializeEx, COINIT_MULTITHREADED};
 
     use super::{source_of, MediaAction, NowPlaying};
 
@@ -173,15 +173,27 @@ mod imp {
     /// The session being followed and its event tokens.
     static BOUND: Mutex<Option<(Session, i64, i64)>> = Mutex::new(None);
     /// Cover art of the last track, keyed by (title, artist, album): the
-    /// thumbnail is read once per track, not on every play/pause.
-    static THUMB: Mutex<Option<((String, String, String), Option<String>)>> = Mutex::new(None);
+    /// thumbnail is read once per track, not on every play/pause. Only a
+    /// cover actually read is kept, so a track whose art comes late is
+    /// retried on its next event.
+    static THUMB: Mutex<Option<((String, String, String), String)>> = Mutex::new(None);
+    /// The events arrive on thread-pool threads, possibly at the same time:
+    /// rebinding and reading happen one at a time, in arrival order, so the
+    /// last published state is the latest one. The event handlers never take
+    /// this themselves; they only call into `rebind`/`refresh`.
+    static SYNC: Mutex<()> = Mutex::new(());
 
     /// Connects to the media session manager and follows the current
     /// session from now on; the events arrive on MTA threads.
     pub fn init(app: AppHandle) {
         std::thread::spawn(move || {
             unsafe {
-                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+                // Keeps the multithreaded apartment alive for the whole
+                // process even though this thread ends right away: the
+                // manager's proxies and event registrations live in it.
+                if CoIncrementMTAUsage().is_err() {
+                    let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+                }
             }
             let manager = match Manager::RequestAsync().and_then(|op| op.join()) {
                 Ok(m) => m,
@@ -208,6 +220,7 @@ mod imp {
 
     /// Follows whatever session is current now and publishes its state.
     fn rebind(app: &AppHandle) {
+        let _guard = SYNC.lock().unwrap_or_else(|e| e.into_inner());
         let manager = MANAGER.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let session = manager.and_then(|m| m.GetCurrentSession().ok());
         let old = BOUND.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -219,33 +232,42 @@ mod imp {
             let playback = app.clone();
             let a = session
                 .PlaybackInfoChanged(&TypedEventHandler::new(move |_, _| {
-                    refresh(&playback);
+                    refresh(&playback, false);
                     Ok(())
                 }))
                 .unwrap_or(0);
             let props = app.clone();
             let b = session
                 .MediaPropertiesChanged(&TypedEventHandler::new(move |_, _| {
-                    refresh(&props);
+                    // The player may publish the title before the cover (or
+                    // the previous cover with the new title): read it again.
+                    refresh(&props, true);
                     Ok(())
                 }))
                 .unwrap_or(0);
             *BOUND.lock().unwrap_or_else(|e| e.into_inner()) = Some((session, a, b));
         }
-        refresh(app);
+        refresh_locked(app, false);
     }
 
     fn session() -> Option<Session> {
         BOUND.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|(s, _, _)| s.clone())
     }
 
-    /// Reads the followed session and publishes what it plays.
-    fn refresh(app: &AppHandle) {
-        let now = session().and_then(|s| read(&s).ok());
+    /// Reads the followed session and publishes what it plays. `fresh`
+    /// re-reads the cover even when it is cached for this track.
+    fn refresh(app: &AppHandle, fresh: bool) {
+        let _guard = SYNC.lock().unwrap_or_else(|e| e.into_inner());
+        refresh_locked(app, fresh);
+    }
+
+    /// `refresh` for callers already holding `SYNC`.
+    fn refresh_locked(app: &AppHandle, fresh: bool) {
+        let now = session().and_then(|s| read(&s, fresh).ok());
         super::publish(app, now);
     }
 
-    fn read(session: &Session) -> Result<NowPlaying> {
+    fn read(session: &Session, fresh: bool) -> Result<NowPlaying> {
         let (source, source_exe) = source_of(&session.SourceAppUserModelId()?.to_string());
         let playing = session.GetPlaybackInfo().and_then(|i| i.PlaybackStatus()).is_ok_and(|s| s == Status::Playing);
         let props = session.TryGetMediaPropertiesAsync()?.join()?;
@@ -253,12 +275,16 @@ mod imp {
         let artist = props.Artist().map(|s| s.to_string()).unwrap_or_default();
         let album = props.AlbumTitle().map(|s| s.to_string()).unwrap_or_default();
         let key = (title.clone(), artist.clone(), album.clone());
-        let cached = THUMB.lock().unwrap_or_else(|e| e.into_inner()).clone().filter(|(k, _)| *k == key).map(|(_, t)| t);
+        let cached = if fresh {
+            None
+        } else {
+            THUMB.lock().unwrap_or_else(|e| e.into_inner()).clone().filter(|(k, _)| *k == key).map(|(_, t)| t)
+        };
         let thumbnail = match cached {
-            Some(t) => t,
+            Some(t) => Some(t),
             None => {
                 let t = props.Thumbnail().ok().and_then(|r| thumbnail(&r).ok());
-                *THUMB.lock().unwrap_or_else(|e| e.into_inner()) = Some((key, t.clone()));
+                *THUMB.lock().unwrap_or_else(|e| e.into_inner()) = t.clone().map(|data| (key, data));
                 t
             }
         };

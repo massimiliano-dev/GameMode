@@ -131,17 +131,25 @@ fn is_game(pid: u32, procs: &HashMap<u32, Proc>, game_pids: &[u32]) -> bool {
 
 /// The mixer rows: sessions grouped by app, game first, then music and chat.
 /// Returns each row with the indexes of its sessions in `sessions`.
-pub fn group(sessions: &[RawSession], procs: &HashMap<u32, Proc>, game_pids: &[u32], music_exe: Option<&str>) -> Vec<(AppVolume, Vec<usize>)> {
+/// `self_pid` is GameMode itself: its own sounds (played by its WebView2
+/// children) are not something to mix.
+pub fn group(
+    sessions: &[RawSession],
+    procs: &HashMap<u32, Proc>,
+    game_pids: &[u32],
+    music_exe: Option<&str>,
+    self_pid: u32,
+) -> Vec<(AppVolume, Vec<usize>)> {
     let mut rows: Vec<(AppVolume, Vec<usize>)> = Vec::new();
     for (i, s) in sessions.iter().enumerate() {
-        if s.pid == 0 {
+        if s.pid == 0 || s.pid == self_pid {
             continue;
         }
         let (key, label, kind) = if is_game(s.pid, procs, game_pids) {
             ("game".to_string(), "Gioco".to_string(), AppKind::Game)
         } else {
-            let (_, exe) = root_of(s.pid, procs);
-            if exe.is_empty() {
+            let (root, exe) = root_of(s.pid, procs);
+            if exe.is_empty() || root == self_pid {
                 continue;
             }
             let (label, kind) = describe(&exe, music_exe);
@@ -164,6 +172,7 @@ pub fn group(sessions: &[RawSession], procs: &HashMap<u32, Proc>, game_pids: &[u
 #[cfg(windows)]
 mod imp {
     use std::collections::HashMap;
+    use std::sync::Mutex;
 
     use anyhow::{anyhow, Result};
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
@@ -176,6 +185,10 @@ mod imp {
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
 
     use super::{AppVolume, Proc, RawSession};
+
+    /// Changes are applied one at a time, in the order they were asked for,
+    /// so a later level never loses to an earlier one still in flight.
+    static APPLY: Mutex<()> = Mutex::new(());
 
     /// The sessions on the default output with their volume controls.
     fn sessions() -> Result<Vec<(RawSession, ISimpleAudioVolume)>> {
@@ -225,7 +238,7 @@ mod imp {
     fn grouped(game_pids: &[u32]) -> Result<(Vec<(AppVolume, Vec<usize>)>, Vec<ISimpleAudioVolume>)> {
         let (raw, controls): (Vec<RawSession>, Vec<ISimpleAudioVolume>) = sessions()?.into_iter().unzip();
         let music = crate::media::source_exe();
-        Ok((super::group(&raw, &processes(), game_pids, music.as_deref()), controls))
+        Ok((super::group(&raw, &processes(), game_pids, music.as_deref(), std::process::id()), controls))
     }
 
     pub fn app_volumes(game_pids: &[u32]) -> Result<Vec<AppVolume>> {
@@ -233,6 +246,7 @@ mod imp {
     }
 
     fn apply(key: &str, game_pids: &[u32], f: impl Fn(&ISimpleAudioVolume) -> windows::core::Result<()>) -> Result<()> {
+        let _guard = APPLY.lock().unwrap_or_else(|e| e.into_inner());
         let (rows, controls) = grouped(game_pids)?;
         let (_, idx) = rows.into_iter().find(|(r, _)| r.key == key).ok_or_else(|| anyhow!("Questa app non suona più"))?;
         for i in idx {
@@ -323,7 +337,7 @@ mod tests {
     #[test]
     fn browser_audio_utility_joins_its_browser() {
         let procs = procs(&[(10, "chrome.exe", Some(1)), (11, "chrome.exe", Some(10)), (12, "chrome.exe", Some(10)), (1, "explorer.exe", None)]);
-        let rows = group(&[session(11, 0.5), session(12, 0.9)], &procs, &[], None);
+        let rows = group(&[session(11, 0.5), session(12, 0.9)], &procs, &[], None, 0);
         assert_eq!(rows.len(), 1);
         let (row, idx) = &rows[0];
         assert_eq!(row.key, "chrome.exe");
@@ -336,7 +350,7 @@ mod tests {
     #[test]
     fn game_is_found_through_its_launcher_child() {
         let procs = procs(&[(100, "game.exe", Some(1)), (101, "game-audio.exe", Some(100)), (1, "steam.exe", None)]);
-        let rows = group(&[session(101, 1.0), session(1, 1.0)], &procs, &[100], None);
+        let rows = group(&[session(101, 1.0), session(1, 1.0)], &procs, &[100], None, 0);
         assert_eq!(rows[0].0.key, "game");
         assert_eq!(rows[0].0.label, "Gioco");
         assert_eq!(rows[0].0.kind, AppKind::Game);
@@ -346,7 +360,7 @@ mod tests {
     #[test]
     fn music_player_is_labelled_from_media_session() {
         let procs = procs(&[(20, "spotify.exe", Some(1)), (21, "spotify.exe", Some(20)), (30, "msedge.exe", Some(1)), (31, "msedge.exe", Some(30))]);
-        let rows = group(&[session(21, 0.3), session(31, 0.7)], &procs, &[], Some("msedge"));
+        let rows = group(&[session(21, 0.3), session(31, 0.7)], &procs, &[], Some("msedge"), 0);
         let labels: Vec<_> = rows.iter().map(|(r, _)| (r.label.as_str(), r.kind)).collect();
         assert_eq!(labels, vec![("Musica · Edge", AppKind::Music), ("Musica · Spotify", AppKind::Music)]);
     }
@@ -354,7 +368,7 @@ mod tests {
     #[test]
     fn webview_host_belongs_to_its_parent() {
         let procs = procs(&[(40, "myapp.exe", Some(1)), (41, "msedgewebview2.exe", Some(40)), (42, "msedgewebview2.exe", Some(41))]);
-        let rows = group(&[session(42, 1.0)], &procs, &[], None);
+        let rows = group(&[session(42, 1.0)], &procs, &[], None, 0);
         assert_eq!(rows[0].0.key, "myapp.exe");
         assert_eq!(rows[0].0.label, "Myapp");
     }
@@ -369,7 +383,7 @@ mod tests {
             session(3, 1.0),
             session(4, 1.0),
         ];
-        let rows = group(&sessions, &procs, &[4], None);
+        let rows = group(&sessions, &procs, &[4], None, 0);
         let keys: Vec<_> = rows.iter().map(|(r, _)| r.key.as_str()).collect();
         assert_eq!(keys, vec!["game", "spotify.exe", "discord.exe", "vlc.exe"]);
         let discord = &rows[2].0;
@@ -378,9 +392,20 @@ mod tests {
     }
 
     #[test]
+    fn gamemode_own_sounds_are_hidden() {
+        let procs = procs(&[(50, "gamemode.exe", Some(1)), (51, "msedgewebview2.exe", Some(50)), (52, "msedgewebview2.exe", Some(51)), (60, "vlc.exe", Some(1))]);
+        let rows = group(&[session(52, 1.0), session(50, 1.0), session(60, 0.5)], &procs, &[], None, 50);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0.key, "vlc.exe");
+        // Another app's WebView2 host is still listed.
+        let rows = group(&[session(52, 1.0)], &procs, &[], None, 999);
+        assert_eq!(rows[0].0.label, "Gamemode");
+    }
+
+    #[test]
     fn unknown_and_system_sessions_are_skipped() {
         let procs = procs(&[(1, "x.exe", None)]);
-        let rows = group(&[session(0, 1.0), session(999, 1.0), session(1, 1.0)], &procs, &[], None);
+        let rows = group(&[session(0, 1.0), session(999, 1.0), session(1, 1.0)], &procs, &[], None, 0);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0.label, "X");
     }

@@ -39,6 +39,8 @@ export function OverlayApp() {
       void api.getVolume().then(setVolume).catch(() => setVolume(null));
       void api.getSession().then((s) => useApp.setState({ session: s }));
       void api.wandInstalled().then(setWand).catch(() => setWand(false));
+      // Settings are saved in the main window: re-read them at every opening.
+      void api.getSettings().then((settings) => useApp.setState({ settings })).catch(() => {});
       setArmed(false);
       setSuspendArmed(false);
       setSuspending(false);
