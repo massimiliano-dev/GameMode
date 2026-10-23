@@ -295,6 +295,10 @@ mod xinput {
                         dpad |= state.Gamepad.wButtons.0 as u32 & (DPAD_UP | DPAD_DOWN);
                     }
                 }
+                // Windows doesn't count controllers as activity: GameMode does.
+                if buttons != 0 {
+                    crate::idle::touch_input();
+                }
 
                 // Input goes only to the GameMode window that has focus.
                 let target = if overlay::is_open() {

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 
 import { CheatsPanel } from "../components/CheatsPanel";
 import { Toasts } from "../components/Chrome";
+import { PowerCountdown } from "../components/PowerCountdown";
 import { Cover } from "../components/GameCard";
 import { Glyph, useClock } from "../components/common";
 import { MusicPanel } from "../components/NowPlaying";
@@ -13,6 +14,7 @@ import { api, on } from "../lib/api";
 import { formatClock, formatDate, formatPlaytime } from "../lib/format";
 import type { Volume, VolumeEvent } from "../lib/types";
 import { useApp } from "../store/app";
+import { useIdle } from "../store/idle";
 import { QmButton, VolumeRow } from "./QuickMenu";
 
 const VOLUME_STEP = 0.05;
@@ -40,6 +42,7 @@ export function OverlayApp() {
 
   useEffect(() => {
     void useApp.getState().init();
+    useIdle.getState().init();
     void setupInput();
     const refresh = () => {
       void api.getVolume().then(setVolume).catch(() => setVolume(null));
@@ -192,6 +195,7 @@ export function OverlayApp() {
         )}
       </motion.aside>
       <Toasts />
+      <PowerCountdown />
     </div>
   );
 }

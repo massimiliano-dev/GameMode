@@ -9,10 +9,12 @@ import { MusicPanel } from "../components/NowPlaying";
 import { Priority, useAction } from "../input/dispatcher";
 import { api, on } from "../lib/api";
 import { formatClock, formatDate, formatPlaytime } from "../lib/format";
-import type { AudioOutput, PowerAction, Volume, VolumeEvent } from "../lib/types";
+import type { AudioOutput, PowerAction, PowerMode, Volume, VolumeEvent } from "../lib/types";
 import { useApp } from "../store/app";
+import { useIdle } from "../store/idle";
 
 const VOLUME_STEP = 0.05;
+const POWER_VERB: Record<PowerAction, string> = { shutdown: "Spegnimento", restart: "Riavvio", sleep: "Sospensione", restartToDesktop: "Riavvio in modalità desktop" };
 
 export function QuickMenu() {
   const close = () => useApp.getState().setQuickMenu(false);
@@ -31,6 +33,9 @@ export function QuickMenu() {
   const output = outputs?.find((o) => o.default);
   const [consoleMode, setConsoleMode] = useState(false);
   const [desktopOnce, setDesktopOnce] = useState(false);
+  const schedule = useIdle((s) => s.schedule);
+  const cancelPower = useIdle((s) => s.cancelPower);
+  const [powerSheet, setPowerSheet] = useState(false);
   // The screen below keeps the hint bar; the panel shows its own.
   useEffect(() => {
     void api.getVolume().then(setVolume).catch(() => setVolume(null));
@@ -65,6 +70,13 @@ export function QuickMenu() {
       void api.power(action).catch((e) => toast(String(e), "error"));
     });
 
+  /** "Shut down in…": the backend warns a minute before. */
+  const schedulePower = (action: PowerAction, mode: PowerMode) => () =>
+    void api
+      .schedulePower(action, mode)
+      .then((s) => toast(s.at ? `${POWER_VERB[action]} alle ${formatClock(new Date(s.at * 1000))}` : `${POWER_VERB[action]} a fine download`))
+      .catch((e) => toast(String(e), "error"));
+
   const changeVolume = async (delta: number) => {
     if (!volume) return;
     const level = Math.min(1, Math.max(0, Math.round((volume.level + delta) * 20) / 20));
@@ -74,6 +86,8 @@ export function QuickMenu() {
 
   const elapsed = session ? Math.max(0, Math.floor(Date.now() / 1000) - session.startedAt) : 0;
   const pausedNote = paused ? `${paused === 1 ? "Il gioco in pausa viene chiuso" : `I ${paused} giochi in pausa vengono chiusi`} · premi di nuovo` : undefined;
+  // A scheduled shutdown closes paused games too, without a second press.
+  const scheduledNote = paused ? (paused === 1 ? "Il gioco in pausa verrà chiuso" : `I ${paused} giochi in pausa verranno chiusi`) : undefined;
   const pausedQuitNote = paused ? `${paused === 1 ? "Il gioco in pausa riprende sul desktop" : "I giochi in pausa riprendono sul desktop"} · premi di nuovo` : undefined;
 
   return (
@@ -201,8 +215,29 @@ export function QuickMenu() {
           </QmButton>
         </div>
 
+        {schedule && (
+          <div className="qm-paused qm-scheduled">
+            <span className="qm-label">Programmato</span>
+            <span className="qm-sub">
+              {schedule.at ? `${POWER_VERB[schedule.action]} alle ${formatClock(new Date(schedule.at * 1000))}` : `${POWER_VERB[schedule.action]} a fine download`}
+              {schedule.action !== "sleep" && scheduledNote ? ` · ${scheduledNote}` : ""}
+            </span>
+            <QmButton onClick={() => void cancelPower().then(() => toast("Programmazione annullata"))}>Annulla</QmButton>
+          </div>
+        )}
+
         <div className="qm-list qm-power">
           <QmButton armed={armed === "sleep"} onClick={power("sleep")}>Sospendi</QmButton>
+          <QmButton
+            onClick={() => {
+              close();
+              void api.restMode().catch((e) => toast(String(e), "error"));
+            }}
+          >
+            Modalità riposo
+            <span className="qm-sub">Schermo spento, i download continuano</span>
+          </QmButton>
+          <QmButton onClick={() => setPowerSheet(true)}>Spegni fra…</QmButton>
           <QmButton armed={armed === "restart"} confirmText={pausedNote} onClick={power("restart")}>
             {desktopOnce ? "Riavvia in modalità console" : "Riavvia"}
           </QmButton>
@@ -222,6 +257,24 @@ export function QuickMenu() {
         </div>
       </motion.aside>
       <AnimatePresence>
+        {powerSheet && (
+          <ActionSheet
+            key="power"
+            title="Spegni fra"
+            onClose={() => setPowerSheet(false)}
+            actions={[
+              { label: "30 minuti", hint: scheduledNote, onSelect: schedulePower("shutdown", { kind: "in", secs: 30 * 60 }) },
+              { label: "1 ora", hint: scheduledNote, onSelect: schedulePower("shutdown", { kind: "in", secs: 60 * 60 }) },
+              { label: "2 ore", hint: scheduledNote, onSelect: schedulePower("shutdown", { kind: "in", secs: 2 * 60 * 60 }) },
+              {
+                label: "A fine download",
+                hint: scheduledNote ? `Quando non scarica più nulla da un minuto · ${scheduledNote}` : "Quando non scarica più nulla da un minuto",
+                onSelect: schedulePower("shutdown", { kind: "atDownloadsEnd" }),
+              },
+              { label: "Sospendi a fine download", hint: "Il PC si sospende invece di spegnersi", onSelect: schedulePower("sleep", { kind: "atDownloadsEnd" }) },
+            ]}
+          />
+        )}
         {outputs && (
           <ActionSheet
             key="audio"

@@ -239,6 +239,16 @@ pub struct Settings {
     pub music_controls: bool,
     /// Volume keys and View + D-pad show the volume over the game (OSD).
     pub osd_volume: bool,
+    /// Minutes of inactivity before the ambient screensaver; 0 = never.
+    pub idle_screensaver_min: u32,
+    /// Minutes of inactivity before the display is turned off; 0 = never.
+    pub idle_display_off_min: u32,
+    /// Minutes of inactivity before `idle_action`; 0 = never.
+    pub idle_sleep_min: u32,
+    /// Sleep or shut down after `idle_sleep_min`.
+    pub idle_action: crate::system::PowerAction,
+    /// Inactivity never sleeps the PC while a game is downloading or updating.
+    pub idle_wait_downloads: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -275,6 +285,11 @@ impl Default for Settings {
             haptics: 1,
             music_controls: true,
             osd_volume: true,
+            idle_screensaver_min: 10,
+            idle_display_off_min: 30,
+            idle_sleep_min: 60,
+            idle_action: crate::system::PowerAction::Sleep,
+            idle_wait_downloads: true,
         }
     }
 }

@@ -2,7 +2,7 @@ import { AnimatePresence } from "motion/react";
 import { useEffect, useState } from "react";
 
 import { api } from "../lib/api";
-import type { AudioOutput, DisplayInfo, DisplayMode, Settings } from "../lib/types";
+import type { AudioOutput, DisplayInfo, DisplayMode, PowerAction, Settings } from "../lib/types";
 import { useApp } from "../store/app";
 import { ActionSheet, type SheetAction } from "./ActionSheet";
 import { Row, Section } from "./SettingsRows";
@@ -10,13 +10,18 @@ import { Toggle } from "./common";
 
 const label = (m: DisplayMode) => `${m.width} × ${m.height} · ${m.refresh} Hz`;
 
+const IDLE_MINUTES = [0, 5, 10, 15, 30, 60, 120];
+const minutes = (m: number) => (m === 0 ? "Mai" : m < 60 ? `${m} minuti` : m === 60 ? "1 ora" : `${m / 60} ore`);
+const IDLE_ACTION: Record<PowerAction, string> = { sleep: "Sospendi il PC", shutdown: "Spegni il PC", restart: "Riavvia il PC", restartToDesktop: "Riavvia in modalità desktop" };
+type IdleKey = "idleScreensaverMin" | "idleDisplayOffMin" | "idleSleepMin";
+
 /** TV mode (display + audio output) and performance mode. */
 export function SystemSettings({ settings }: { settings: Settings }) {
   const saveSettings = useApp((s) => s.saveSettings);
   const toast = useApp((s) => s.toast);
   const [display, setDisplay] = useState<DisplayInfo | null>(null);
   const [outputs, setOutputs] = useState<AudioOutput[]>([]);
-  const [sheet, setSheet] = useState<"display" | "audio" | null>(null);
+  const [sheet, setSheet] = useState<"display" | "audio" | IdleKey | null>(null);
   const [apps, setApps] = useState(settings.closeApps.join(", "));
 
   useEffect(() => {
@@ -49,6 +54,8 @@ export function SystemSettings({ settings }: { settings: Settings }) {
     ...outputs.map((o) => ({ label: o.name, hint: o.default ? "In uso adesso" : undefined, onSelect: () => void save({ tvAudio: o.id }) })),
   ];
   const audioName = outputs.find((o) => o.id === settings.tvAudio)?.name;
+  const idleActions = (key: IdleKey): SheetAction[] =>
+    IDLE_MINUTES.map((m) => ({ label: minutes(m), hint: settings[key] === m ? "Adesso" : undefined, onSelect: () => void saveSettings({ ...settings, [key]: m }) }));
 
   return (
     <>
@@ -100,9 +107,50 @@ export function SystemSettings({ settings }: { settings: Settings }) {
         </div>
       </Section>
 
+      <Section title="Inattività e alimentazione">
+        <Row
+          label="Salvaschermo dopo"
+          hint="Orologio e copertine dei giochi più giocati; qualsiasi tasto lo chiude"
+          onClick={() => setSheet("idleScreensaverMin")}
+          control={<span className="setting-action">{minutes(settings.idleScreensaverMin)}</span>}
+        />
+        <Row
+          label="Spegni lo schermo dopo"
+          hint="Il PC resta acceso; il controller, il mouse o la tastiera lo riaccendono"
+          onClick={() => setSheet("idleDisplayOffMin")}
+          control={<span className="setting-action">{minutes(settings.idleDisplayOffMin)}</span>}
+        />
+        <Row
+          label={`${settings.idleAction === "shutdown" ? "Spegni" : "Sospendi"} il PC dopo`}
+          hint="Mai durante una partita, con un gioco in pausa escluso, o mentre un'altra app è in primo piano"
+          onClick={() => setSheet("idleSleepMin")}
+          control={<span className="setting-action">{minutes(settings.idleSleepMin)}</span>}
+        />
+        <Row
+          label="Cosa fare dopo l'inattività"
+          hint="La sospensione riprende in pochi secondi; lo spegnimento chiude tutto"
+          onClick={() => void saveSettings({ ...settings, idleAction: settings.idleAction === "shutdown" ? "sleep" : "shutdown" })}
+          control={<span className="setting-action">{IDLE_ACTION[settings.idleAction]}</span>}
+        />
+        <Row
+          label="Aspetta i download"
+          hint="Finché un gioco scarica o si aggiorna il PC resta sveglio (lo schermo può spegnersi)"
+          onClick={() => void saveSettings({ ...settings, idleWaitDownloads: !settings.idleWaitDownloads })}
+          control={<Toggle on={settings.idleWaitDownloads} />}
+        />
+        <p className="setting-hint settings-note">
+          Il controller conta come attività. Se Windows chiede la password al risveglio serve la tastiera: puoi disattivarla in Impostazioni di Windows → Account → Opzioni di accesso. Anche il piano energetico di Windows ha i suoi tempi: vince il più breve.
+        </p>
+      </Section>
+
       <AnimatePresence>
         {sheet === "display" && <ActionSheet key="display" title="Risoluzione" actions={displayActions} onClose={() => setSheet(null)} />}
         {sheet === "audio" && <ActionSheet key="audio" title="Uscita audio" actions={audioActions} onClose={() => setSheet(null)} />}
+        {sheet === "idleScreensaverMin" && <ActionSheet key="saver" title="Salvaschermo dopo" actions={idleActions("idleScreensaverMin")} onClose={() => setSheet(null)} />}
+        {sheet === "idleDisplayOffMin" && <ActionSheet key="off" title="Spegni lo schermo dopo" actions={idleActions("idleDisplayOffMin")} onClose={() => setSheet(null)} />}
+        {sheet === "idleSleepMin" && (
+          <ActionSheet key="sleep" title={`${settings.idleAction === "shutdown" ? "Spegni" : "Sospendi"} il PC dopo`} actions={idleActions("idleSleepMin")} onClose={() => setSheet(null)} />
+        )}
       </AnimatePresence>
     </>
   );

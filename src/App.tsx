@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { Backdrop } from "./components/Backdrop";
 import { HintBar, Toasts, TopBar } from "./components/Chrome";
 import { LaunchOverlay } from "./components/LaunchOverlay";
+import { PowerCountdown } from "./components/PowerCountdown";
+import { Screensaver } from "./components/Screensaver";
 import { VirtualKeyboard } from "./components/VirtualKeyboard";
 import { Priority, setKeyboardOpener, useAction } from "./input/dispatcher";
 import { play } from "./input/sfx";
@@ -20,6 +22,7 @@ import { Settings } from "./screens/Settings";
 import { Stats } from "./screens/Stats";
 import { Stores } from "./screens/Stores";
 import { currentScreen, type Tab, useApp } from "./store/app";
+import { useIdle } from "./store/idle";
 
 const TAB_ORDER: Tab[] = ["home", "library", "downloads", "stores", "stats", "settings"];
 
@@ -34,6 +37,7 @@ export default function App() {
 
   useEffect(() => {
     void useApp.getState().init();
+    useIdle.getState().init();
     void setupInput();
     setKeyboardOpener((field) => useApp.getState().setKeyboardField(field));
     const onWindowFocus = () => {
@@ -115,6 +119,8 @@ export default function App() {
       </AnimatePresence>
       {keyboardField && <VirtualKeyboard field={keyboardField} onClose={() => useApp.getState().setKeyboardField(null)} />}
       <Toasts />
+      <PowerCountdown />
+      <Screensaver />
     </div>
   );
 }

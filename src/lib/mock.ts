@@ -1,7 +1,7 @@
 // In-browser stand-in for the Rust backend, so the UI can be developed and
 // tested with `npm run dev` in any browser.
 
-import type { AppVolume, Collection, Game, ManualGame, NowPlaying, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
+import type { AppVolume, Collection, Game, ManualGame, NowPlaying, PowerSchedule, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
 
 const CDN = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps";
 
@@ -48,7 +48,7 @@ let games: Game[] = SEED.map(([store, name, appid], i) => ({
   playtimeSecs: i % 3 === 0 ? (i + 1) * 5400 : 0,
 }));
 
-let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true };
+let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
 let suspended: SessionState[] = [];
@@ -112,6 +112,8 @@ let systemInfo: SystemInfo = {
   bluetooth: { on: true, connected: 1 },
 };
 let systemDemo = false;
+let powerSchedule: PowerSchedule | null = null;
+let powerTimer: ReturnType<typeof setInterval> | undefined;
 
 type Listener = (payload: unknown) => void;
 const listeners = new Map<string, Set<Listener>>();
@@ -192,6 +194,32 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let cheatScan: { kind: string; count: number; hits: { address: number; value: string; frozen: boolean }[] } | null = null;
 let cheatFrozen: { address: number; value: string; frozen: boolean }[] = [];
+/** "Shut down in…": counts the last minute down out loud, then just logs. */
+function fakeSchedule(action: PowerSchedule["action"], mode: { kind: "in"; secs: number } | { kind: "atDownloadsEnd" }) {
+  clearInterval(powerTimer);
+  // Like the backend, "at the end of the downloads" has no time until the
+  // downloads are over; nothing downloads here, so that's a quiet minute away.
+  const armAt = mode.kind === "atDownloadsEnd" ? now() + 60 : 0;
+  powerSchedule = { action, at: mode.kind === "in" ? now() + mode.secs : null, atDownloadsEnd: mode.kind === "atDownloadsEnd" };
+  emit("power://schedule", powerSchedule);
+  powerTimer = setInterval(() => {
+    if (!powerSchedule) return;
+    if (powerSchedule.at === null) {
+      if (now() < armAt) return;
+      powerSchedule = { ...powerSchedule, at: now() + 60 };
+      emit("power://schedule", powerSchedule);
+    }
+    const left = Math.max(0, (powerSchedule.at ?? 0) - now());
+    if (left <= 60) emit("power://countdown", { action, secondsLeft: left });
+    if (left === 0) {
+      clearInterval(powerTimer);
+      powerSchedule = null;
+      emit("power://schedule", null);
+      console.info("[mock] power", action);
+    }
+  }, 1000);
+  return powerSchedule;
+}
 
 export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {}): Promise<T> {
   const result = await (async (): Promise<unknown> => {
@@ -551,6 +579,22 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         emit("library://updated", { games, errors: [] });
         return game?.store === "steam" ? "started" : "removed";
       }
+      case "schedule_power":
+        return fakeSchedule(args.action, args.mode);
+      case "cancel_power":
+        clearInterval(powerTimer);
+        if (powerSchedule) emit("power://schedule", (powerSchedule = null));
+        return;
+      case "get_power_schedule":
+        return powerSchedule;
+      case "rest_mode":
+        emit("idle://state", { stage: "displayOff" });
+        return;
+      case "idle_wake":
+        emit("idle://state", { stage: "active" });
+        return;
+      case "touch_input":
+        return;
       case "open_store":
         console.info("[mock] open_store", args);
         return ["steam", "xbox", "epic"].includes(args.store) ? "client" : "browser";
