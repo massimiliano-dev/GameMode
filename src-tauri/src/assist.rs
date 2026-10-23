@@ -61,6 +61,9 @@ pub enum Key {
     Tab,
     ShiftTab,
     Space,
+    /// Wand's overlay shortcuts.
+    AltW,
+    AltBacktick,
 }
 
 /// Types `key` into whatever window has focus.
@@ -68,7 +71,7 @@ pub enum Key {
 pub fn press(key: Key) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_DOWN,
-        VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+        VK_ESCAPE, VK_LEFT, VK_MENU, VK_OEM_3, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP, VK_W,
     };
 
     fn input(vk: VIRTUAL_KEY, up: bool) -> INPUT {
@@ -95,15 +98,22 @@ pub fn press(key: Key) {
         Key::Right => VK_RIGHT,
         Key::Tab | Key::ShiftTab => VK_TAB,
         Key::Space => VK_SPACE,
+        Key::AltW => VK_W,
+        Key::AltBacktick => VK_OEM_3,
+    };
+    let modifier = match key {
+        Key::ShiftTab => Some(VK_SHIFT),
+        Key::AltW | Key::AltBacktick => Some(VK_MENU),
+        _ => None,
     };
     let mut inputs = Vec::with_capacity(4);
-    if key == Key::ShiftTab {
-        inputs.push(input(VK_SHIFT, false));
+    if let Some(m) = modifier {
+        inputs.push(input(m, false));
     }
     inputs.push(input(vk, false));
     inputs.push(input(vk, true));
-    if key == Key::ShiftTab {
-        inputs.push(input(VK_SHIFT, true));
+    if let Some(m) = modifier {
+        inputs.push(input(m, true));
     }
     unsafe {
         SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);

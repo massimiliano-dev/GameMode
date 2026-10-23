@@ -28,6 +28,7 @@ mod storefront;
 mod system;
 mod uninstall;
 mod updates;
+mod wand;
 mod window;
 
 use db::Db;
@@ -88,6 +89,16 @@ fn scan(app: &AppHandle) -> LibraryUpdate {
 #[tauri::command]
 fn get_library(state: State<AppState>) -> Vec<Game> {
     state.db.lock().view()
+}
+
+#[tauri::command]
+fn wand_installed() -> bool {
+    wand::installed()
+}
+
+#[tauri::command]
+fn open_wand(app: AppHandle) {
+    wand::open(&app);
 }
 
 #[tauri::command]
@@ -763,6 +774,8 @@ pub fn run() {
             get_session,
             resume_game,
             get_game_updates,
+            wand_installed,
+            open_wand,
             close_game,
             power,
             get_volume,

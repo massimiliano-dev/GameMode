@@ -38,6 +38,10 @@ export interface Settings {
   steamBigPicture: boolean;
   /** In Steam games Guide is left to Steam; Back+Start opens GameMode's overlay. */
   steamGuide: boolean;
+  /** Wand's overlay shortcut is Alt+` instead of Alt+W. */
+  wandBacktick: boolean;
+  /** LB+RB held during a game opens Wand's overlay. */
+  wandCombo: boolean;
 }
 
 export interface ShellStatus {

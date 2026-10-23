@@ -4,6 +4,7 @@ import { ConsoleSettings } from "../components/ConsoleSettings";
 import { EmulatorSettings } from "../components/EmulatorSettings";
 import { SystemSettings } from "../components/SystemSettings";
 import { UpdateSettings } from "../components/UpdateSettings";
+import { WandSettings } from "../components/WandSettings";
 import { ProfileSettings } from "../components/ProfileSettings";
 import { Row, Section } from "../components/SettingsRows";
 import { Toggle, useHints, useScreenFocus } from "../components/common";
@@ -158,6 +159,8 @@ export function Settings() {
             control={<Toggle on={settings.preloadSteam} />}
           />
         </Section>
+
+        <WandSettings />
 
         <ConsoleSettings />
 

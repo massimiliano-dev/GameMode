@@ -467,6 +467,7 @@ fn end(app: &AppHandle, generation: u64, phase: Phase, seconds: u64) {
     let _ = app.emit("game://state", &session);
     crate::performance::end();
     crate::overlay::hide(app);
+    crate::wand::forget();
     // A failed launch leaves GameMode where it is, unless it stepped aside;
     // and it never jumps over a full-screen app (a game it lost track of).
     if (phase == Phase::Exited || window::is_minimized(app)) && !window::fullscreen_app_in_front(app) {

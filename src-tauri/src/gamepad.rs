@@ -146,6 +146,8 @@ mod xinput {
     const STICK_THRESHOLD: i16 = 16_000;
     const TRIGGER_THRESHOLD: u8 = 128;
     const COMBO_HOLD: Duration = Duration::from_secs(1);
+    /// LB+RB hold that opens Wand's overlay during a game.
+    const WAND_HOLD: Duration = Duration::from_millis(800);
     /// During a game Back+Start toggles the overlay quickly: unlike Guide,
     /// neither Steam nor Game Bar grab this combination.
     const COMBO_HOLD_IN_GAME: Duration = Duration::from_millis(300);
@@ -227,6 +229,8 @@ mod xinput {
             let mut last_battery: Option<Instant> = None;
             let mut was_connected = connected;
             let mut view_since: Option<Instant> = None;
+            let mut wand_since: Option<Instant> = None;
+            let mut wand_fired = false;
 
             loop {
                 let now = Instant::now();
@@ -251,17 +255,29 @@ mod xinput {
                 } else {
                     None
                 };
-                // Keyboard assist ends once GameMode is back, and never runs during a game.
+                // Keyboard assist ends once GameMode is back, and never runs
+                // during a game (it does while one is starting: store dialogs).
                 if assist::is_active() {
-                    let playing = app.state::<crate::AppState>().launcher.current().is_some();
+                    let playing = app
+                        .state::<crate::AppState>()
+                        .launcher
+                        .current()
+                        .is_some_and(|s| s.phase == crate::launcher::Phase::Running);
                     if playing || (target.is_some() && assist::age_ms() > assist::GRACE_MS) {
                         assist::disable();
                     }
                 }
                 let assisting = target.is_none() && assist::is_active();
+                // Wand's overlay is up over the game: the controller drives it.
+                if target.is_some() {
+                    crate::wand::forget();
+                }
+                let wand = target.is_none() && crate::wand::is_open();
                 for (bit, repeat) in repeater.step(buttons, DIRECTIONS, now) {
                     let Some(&(_, action)) = MAPPING.iter().find(|(b, _)| *b == bit) else { continue };
-                    if action == Action::Guide {
+                    if wand {
+                        wand_key(&app, action);
+                    } else if action == Action::Guide {
                         summon(&app, target, true);
                     } else if let Some(label) = target {
                         let _ = app.emit_to(label, "gamepad://nav", NavEvent { action, repeat });
@@ -308,6 +324,26 @@ mod xinput {
                     combo_fired = false;
                 }
 
+                // LB+RB held during a game: Wand's overlay, when switched on.
+                if target.is_none() && buttons & (LB | RB) == LB | RB {
+                    let since = *wand_since.get_or_insert(now);
+                    if !wand_fired && now - since >= WAND_HOLD {
+                        wand_fired = true;
+                        let state = app.state::<crate::AppState>();
+                        let playing = state.launcher.current().is_some_and(|s| s.phase == crate::launcher::Phase::Running);
+                        if playing && state.db.lock().settings.wand_combo {
+                            if crate::wand::is_open() {
+                                crate::wand::close(&app);
+                            } else if crate::wand::installed() {
+                                crate::wand::open(&app);
+                            }
+                        }
+                    }
+                } else {
+                    wand_since = None;
+                    wand_fired = false;
+                }
+
                 std::thread::sleep(POLL);
             }
         });
@@ -328,6 +364,27 @@ mod xinput {
             *current = list.clone();
             let _ = app.emit("gamepad://controllers", &list);
         }
+    }
+
+    /// Drives Wand's overlay: A = Enter, D-pad = arrows, LB/RB = Shift+Tab/Tab,
+    /// X = Space; B or Guide close it. (The game still sees the controller.)
+    fn wand_key(app: &AppHandle, action: Action) {
+        let key = match action {
+            Action::Back | Action::Guide => {
+                crate::wand::close(app);
+                return;
+            }
+            Action::Confirm => Key::Enter,
+            Action::Up => Key::Up,
+            Action::Down => Key::Down,
+            Action::Left => Key::Left,
+            Action::Right => Key::Right,
+            Action::Rb => Key::Tab,
+            Action::Lb => Key::ShiftTab,
+            Action::X => Key::Space,
+            _ => return,
+        };
+        assist::press(key);
     }
 
     /// Drives a store dialog with the keys it understands; View goes back.

@@ -48,7 +48,7 @@ let games: Game[] = SEED.map(([store, name, appid], i) => ({
   playtimeSecs: i % 3 === 0 ? (i + 1) * 5400 : 0,
 }));
 
-let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false };
+let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
 let volume: Volume = { level: 0.6, muted: false };
@@ -172,6 +172,10 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         return true;
       case "resume_game":
         return false;
+      case "wand_installed":
+        return true;
+      case "open_wand":
+        return;
       case "get_game_updates":
         return games[1] ? [{ gameId: games[1].id, state: "downloading", done: 1.2 * 1024 ** 3, total: 4.5 * 1024 ** 3, progress: 0.27 }] : [];
       case "get_volume":

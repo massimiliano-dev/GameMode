@@ -25,6 +25,7 @@ export function OverlayApp() {
   const [volume, setVolume] = useState<Volume | null>(null);
   const [armed, setArmed] = useState(false);
   const [openedAt, setOpenedAt] = useState(0);
+  const [wand, setWand] = useState(false);
 
   useEffect(() => {
     void useApp.getState().init();
@@ -32,6 +33,7 @@ export function OverlayApp() {
     const refresh = () => {
       void api.getVolume().then(setVolume).catch(() => setVolume(null));
       void api.getSession().then((s) => useApp.setState({ session: s }));
+      void api.wandInstalled().then(setWand).catch(() => setWand(false));
       setArmed(false);
       setOpenedAt(Date.now());
       requestAnimationFrame(() => focusInitial());
@@ -109,6 +111,11 @@ export function OverlayApp() {
           <QmButton autofocus onClick={resume}>
             Torna al gioco
           </QmButton>
+          {wand && game && (
+            <QmButton onClick={() => void api.openWand()}>
+              Mod (Wand)
+            </QmButton>
+          )}
           <QmButton onClick={() => void api.overlayToLauncher()}>Vai a GameMode</QmButton>
           <QmButton
             danger

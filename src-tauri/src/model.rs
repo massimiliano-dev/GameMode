@@ -227,6 +227,10 @@ pub struct Settings {
     /// In Steam games Guide is left to Steam (its overlay); Back+Start
     /// still opens GameMode's.
     pub steam_guide: bool,
+    /// Wand's overlay shortcut is Alt+` instead of Alt+W.
+    pub wand_backtick: bool,
+    /// LB+RB held during a game opens Wand's overlay.
+    pub wand_combo: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -257,6 +261,8 @@ impl Default for Settings {
             keyboard_assist: true,
             steam_big_picture: true,
             steam_guide: false,
+            wand_backtick: false,
+            wand_combo: false,
         }
     }
 }
