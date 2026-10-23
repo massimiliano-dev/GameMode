@@ -22,7 +22,7 @@ use crate::procinfo::{ProcInfo, Probe};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::model::{now, Game, LaunchSpec, Session, Store};
+use crate::model::{now, Game, LaunchSpec, Session, Settings, Store};
 use crate::updates::GameUpdate;
 use crate::{freeze, lifecycle, live, window, AppState};
 
@@ -96,6 +96,8 @@ pub struct SessionState {
     /// An anti-cheat lives in the install folder: freezing an online game
     /// gets the player kicked, so the UI asks first.
     pub anti_cheat: bool,
+    /// What the launch is waiting on before the game starts (`steam_direct::STAGE_*`).
+    pub stage: Option<String>,
 }
 
 struct Active {
@@ -282,7 +284,11 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<()> {
     if settings.performance_mode && game.store != Store::App {
         crate::performance::begin(&settings.close_apps);
     }
-    let spawned = match spawn(app, &game.launch) {
+    // Steam games go to a silent, signed-in Steam with `-applaunch`.
+    if let (Some(appid), Some(exe)) = (crate::steam_direct::appid_of(game), steam_exe()) {
+        return launch_steam(app, game, &exe, appid);
+    }
+    let spawned = match spawn(app, &launch_spec(&settings, game)) {
         Ok(spawned) => spawned,
         Err(err) => {
             // The app didn't start: the game it made room for comes back.
@@ -298,7 +304,45 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<()> {
     let track_child = matches!(game.store, Store::Manual | Store::Mock | Store::App) || game.install_dir.is_none();
     let child_pid = spawned.filter(|_| track_child);
     retire_foreground(app);
-    track(app, game, child_pid, None, 0, None);
+    let _ = track(app, game, child_pid, None, 0, None);
+    Ok(())
+}
+
+/// How to start `game`: GOG games skip Galaxy, unless the user wants it, when
+/// their folder says how they start.
+fn launch_spec(settings: &Settings, game: &Game) -> LaunchSpec {
+    if game.store == Store::Gog && settings.gog_direct {
+        if let Some(spec) = game.install_dir.as_deref().and_then(|dir| crate::library::gog::direct_launch(dir, native_id(game))) {
+            return spec;
+        }
+    }
+    game.launch.clone()
+}
+
+/// Starts a Steam game: the launch screen shows while Steam gets ready
+/// (started silently, signed in), then the game goes to it with
+/// `-applaunch`, so neither the library nor the protocol handler shows up.
+/// Cancelling the launch meanwhile starts nothing.
+fn launch_steam(app: &AppHandle, game: &Game, exe: &Path, appid: u32) -> Result<()> {
+    retire_foreground(app);
+    let generation = track(app, game, None, None, 0, None);
+    let launcher = &app.state::<AppState>().launcher;
+    let wanted = || launcher.phase(generation) == Some(Phase::Launching);
+    let show = |stage: Option<&str>| {
+        if let Some(state) = launcher.update(generation, |a| a.state.stage = stage.map(String::from)) {
+            let _ = app.emit("game://state", &state);
+        }
+    };
+    if !crate::steam_direct::ensure_ready(exe, wanted, show) {
+        return Ok(());
+    }
+    if let Err(err) = crate::steam_direct::applaunch(exe, appid) {
+        log::warn!("steam -applaunch failed, using the link: {err}");
+        if let Err(err) = spawn(app, &game.launch) {
+            end(app, generation, Phase::Failed, 0);
+            return Err(err.context(format!("avvio di {}", game.name)));
+        }
+    }
     Ok(())
 }
 
@@ -327,8 +371,8 @@ fn retire_foreground(app: &AppHandle) {
 /// Follows a game: creates its session and starts the monitor. With
 /// `running_since` the game is already up (reattached after a restart) and
 /// its play time counts from there; with `frozen` it is up but suspended,
-/// and those are its frozen processes.
-fn track(app: &AppHandle, game: &Game, child_pid: Option<u32>, running_since: Option<i64>, paused_secs: u64, frozen: Option<Vec<u32>>) {
+/// and those are its frozen processes. Returns the session's generation.
+fn track(app: &AppHandle, game: &Game, child_pid: Option<u32>, running_since: Option<i64>, paused_secs: u64, frozen: Option<Vec<u32>>) -> u64 {
     let launcher = &app.state::<AppState>().launcher;
     let generation = launcher.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let phase = match (running_since, &frozen) {
@@ -345,6 +389,7 @@ fn track(app: &AppHandle, game: &Game, child_pid: Option<u32>, running_since: Op
         update: None,
         suspended_at: (phase == Phase::Suspended).then(now),
         anti_cheat: game.install_dir.as_deref().is_some_and(freeze::anti_cheat_in),
+        stage: None,
     };
     launcher.insert(Active {
         generation,
@@ -362,6 +407,7 @@ fn track(app: &AppHandle, game: &Game, child_pid: Option<u32>, running_since: Op
     let app = app.clone();
     let game = game.clone();
     std::thread::spawn(move || monitor(app, generation, game, target, timeout, running_since.is_some()));
+    generation
 }
 
 /// After a restart (crash, update): picks up the games the live-session
@@ -412,7 +458,7 @@ pub fn reattach(app: &AppHandle) {
                     foreground_taken = true;
                     None
                 };
-                track(app, &game, None, Some(s.started_at), s.paused_until(at), frozen);
+                let _ = track(app, &game, None, Some(s.started_at), s.paused_until(at), frozen);
             }
             _ => {
                 live::update(|l| l.remove(&s.game_id));
@@ -672,6 +718,7 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
                     a.running_since.get_or_insert(at);
                     a.state.seconds = a.played(at);
                     a.state.update = None;
+                    a.state.stage = None;
                 }
                 Some(a.state.clone())
             });
@@ -1178,6 +1225,7 @@ mod tests {
                 update: None,
                 suspended_at: None,
                 anti_cheat: false,
+                stage: None,
             },
             pids: vec![7],
             live_pids: vec![(7, 99)],

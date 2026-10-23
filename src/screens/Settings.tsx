@@ -264,6 +264,12 @@ export function Settings() {
                 onClick={() => void saveSettings({ ...settings, keyboardAuto: !settings.keyboardAuto })}
                 control={<Toggle on={settings.keyboardAuto} />}
               />
+              <Row
+                label="Avvia i giochi GOG senza Galaxy"
+                hint="Il gioco parte direttamente dalla sua cartella; disattiva per passare da Galaxy (salvataggi cloud, obiettivi)"
+                onClick={() => void saveSettings({ ...settings, gogDirect: !settings.gogDirect })}
+                control={<Toggle on={settings.gogDirect} />}
+              />
             </Section>
             <WandSettings />
             <CaptureSettings />

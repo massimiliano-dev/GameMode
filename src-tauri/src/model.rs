@@ -334,6 +334,9 @@ pub struct Settings {
     /// Read DualSense, DualShock 4 and Switch Pro directly over HID; off
     /// when Steam Input or DS4Windows already turn them into XInput pads.
     pub hid_pads: bool,
+    /// GOG games start from their own folder (`goggame-<id>.info`) instead
+    /// of through Galaxy.
+    pub gog_direct: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -382,6 +385,7 @@ impl Default for Settings {
             capture_combo: true,
             companion_enabled: false,
             hid_pads: true,
+            gog_direct: true,
         }
     }
 }
