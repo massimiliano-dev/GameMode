@@ -41,15 +41,22 @@ export function StorageSettings() {
   const [picked, setPicked] = useState<Game | null>(null);
   const [dialog, setDialog] = useState<"options" | "uninstall" | "cleanup" | null>(null);
 
-  const load = useCallback(() => {
-    void api.storageOverview().then(setOverview).catch(() => setOverview(null));
-    void api.storageCleanup(false).then(setCleanup).catch(() => setCleanup(null));
+  const loadOverview = useCallback((measure = false) => {
+    void api.storageOverview(measure).then(setOverview).catch(() => setOverview(null));
   }, []);
+  const load = useCallback(() => {
+    loadOverview();
+    void api.storageCleanup(false).then(setCleanup).catch(() => setCleanup(null));
+  }, [loadOverview]);
 
   useEffect(() => {
-    load();
-    return on("storage://measured", load);
-  }, [load]);
+    // Opening the tab resumes the sizes still to measure (a game may have
+    // been running at the last scan); the end of a measure only refreshes
+    // the totals, so it can't start another one.
+    loadOverview(true);
+    void api.storageCleanup(false).then(setCleanup).catch(() => setCleanup(null));
+    return on("storage://measured", () => loadOverview());
+  }, [loadOverview]);
 
   const bySize = useMemo(
     () =>
@@ -60,6 +67,7 @@ export function StorageSettings() {
   );
   const shown = showAll ? bySize : bySize.slice(0, SHORT_LIST);
   const unknown = overview?.unknown ?? 0;
+  const unreadable = overview?.unreadable ?? 0;
 
   const runCleanup = async () => {
     setDialog(null);
@@ -129,6 +137,12 @@ export function StorageSettings() {
             in corso.
           </p>
         ) : null}
+        {unreadable > 0 && (
+          <p className="setting-hint settings-note">
+            {unreadable === 1 ? "Un gioco non ha" : `${unreadable} giochi non hanno`} una dimensione misurabile: cartelle protette da
+            Windows o che contengono altri giochi.
+          </p>
+        )}
       </Section>
 
       <Section title="Giochi per dimensione">
@@ -178,7 +192,7 @@ export function StorageSettings() {
           onClick={() => {
             void api.storageRemeasure();
             toast("Misurazione avviata in background");
-            setTimeout(load, 500);
+            setTimeout(() => loadOverview(), 500);
           }}
         />
         <p className="setting-hint settings-note">

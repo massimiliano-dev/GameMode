@@ -321,8 +321,10 @@ export interface StorageOverview {
   drives: Drive[];
   /** Sizes are still being measured in the background. */
   measuring: boolean;
-  /** Installed games whose size isn't known. */
+  /** Installed games whose size isn't known yet: a measure is pending. */
   unknown: number;
+  /** Games measured that came out without a size (protected or shared folders). */
+  unreadable: number;
   /** Where the Xbox app installs, as far as GameMode can tell. */
   xboxMount: string | null;
 }

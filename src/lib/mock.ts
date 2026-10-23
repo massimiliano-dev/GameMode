@@ -80,7 +80,8 @@ function mockStorage() {
       { mount: "E:\\", label: "", total: 476 * 1024 ** 3, available: 20 * 1024 ** 3, removable: true, gamesBytes: 0, games: 0 },
     ],
     measuring: false,
-    unknown: games.filter((g) => g.installDir && g.sizeBytes == null).length,
+    unknown: games.filter((g) => g.installDir && g.sizeBytes == null && g.sizeCheckedAt == null).length,
+    unreadable: games.filter((g) => g.installDir && g.sizeBytes == null && g.sizeCheckedAt != null).length,
     xboxMount: "C:\\",
   };
 }

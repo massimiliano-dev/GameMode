@@ -23,6 +23,8 @@ pub const KEEP_AUTO_BACKUPS: usize = 3;
 const NEVER_WALK: &[&str] = &["windows", "program files", "program files (x86)", "windowsapps", "users", "programdata"];
 
 static MEASURING: AtomicBool = AtomicBool::new(false);
+/// A measure was asked for while one was running: run another round after it.
+static RERUN: AtomicBool = AtomicBool::new(false);
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -46,8 +48,11 @@ pub struct Overview {
     pub drives: Vec<Drive>,
     /// Sizes are still being measured in the background.
     pub measuring: bool,
-    /// Installed games whose size isn't known.
+    /// Installed games whose size isn't known yet: a measure is pending.
     pub unknown: u32,
+    /// Games already measured that came out without a size (folders Windows
+    /// doesn't let us read, or shared with other games).
+    pub unreadable: u32,
     /// Where the Xbox app installs, as far as we can tell: the drive holding
     /// the most Xbox games, else the one with the most free space.
     pub xbox_mount: Option<String>,
@@ -112,15 +117,29 @@ pub fn location(game: &Game) -> Option<PathBuf> {
     }
 }
 
-/// Sums the library's games onto the drives. Returns how many games have no
-/// size and the drive index that looks like the Xbox app's install drive.
-pub fn attribute(drives: &mut [Drive], games: &[Game]) -> (u32, Option<usize>) {
-    let mut unknown = 0;
+/// What `attribute` finds besides the per-drive sums.
+#[derive(Debug, Default, PartialEq)]
+pub struct Attribution {
+    /// Games without a size that `measure` will still look at.
+    pub unknown: u32,
+    /// Games without a size that measuring won't give one.
+    pub unreadable: u32,
+    /// The drive that looks like the Xbox app's install drive.
+    pub xbox: Option<usize>,
+}
+
+/// Sums the library's games onto the drives.
+pub fn attribute(drives: &mut [Drive], games: &[Game]) -> Attribution {
+    let mut out = Attribution::default();
     let mut xbox = vec![0u32; drives.len()];
     for game in games {
         let Some(path) = location(game) else { continue };
         if game.size_bytes.is_none() {
-            unknown += 1;
+            if game.install_dir.is_some() && game.size_checked_at.is_none() {
+                out.unknown += 1;
+            } else {
+                out.unreadable += 1;
+            }
         }
         let Some(i) = drive_of(drives, &path) else { continue };
         drives[i].games += 1;
@@ -131,15 +150,22 @@ pub fn attribute(drives: &mut [Drive], games: &[Game]) -> (u32, Option<usize>) {
     }
     let by_games = (0..drives.len()).filter(|&i| xbox[i] > 0).max_by_key(|&i| xbox[i]);
     let by_space = (0..drives.len()).filter(|&i| !drives[i].removable).max_by_key(|&i| drives[i].available);
-    (unknown, by_games.or(by_space))
+    out.xbox = by_games.or(by_space);
+    out
 }
 
 pub fn overview(app: &AppHandle) -> Overview {
     let games = app.state::<AppState>().db.lock().games.clone();
     let mut drives = drives();
-    let (unknown, xbox) = attribute(&mut drives, &games);
-    let xbox_mount = xbox.map(|i| drives[i].mount.clone());
-    Overview { drives, measuring: MEASURING.load(Ordering::SeqCst), unknown, xbox_mount }
+    let found = attribute(&mut drives, &games);
+    let xbox_mount = found.xbox.map(|i| drives[i].mount.clone());
+    Overview {
+        drives,
+        measuring: MEASURING.load(Ordering::SeqCst),
+        unknown: found.unknown,
+        unreadable: found.unreadable,
+        xbox_mount,
+    }
 }
 
 // ---- measuring ----
@@ -154,9 +180,11 @@ pub struct Walk {
 /// Bytes of the files under `path`, without following symlinks or junctions
 /// (WindowsApps and XboxGames are full of them) and tolerating what can't be
 /// read. Iterative: game folders can be tens of thousands of files deep.
+/// `path` itself is followed when it is a link: a game folder moved to
+/// another drive often leaves a junction in its place.
 pub fn walk(path: &Path) -> Walk {
     let mut out = Walk::default();
-    let Ok(meta) = fs::symlink_metadata(path) else {
+    let Ok(meta) = fs::metadata(path) else {
         out.partial = true;
         return out;
     };
@@ -165,6 +193,7 @@ pub fn walk(path: &Path) -> Walk {
         return out;
     }
     if !meta.is_dir() {
+        out.partial = true;
         return out;
     }
     let mut stack = vec![path.to_path_buf()];
@@ -213,53 +242,102 @@ pub fn is_due(game: &Game, now: i64) -> bool {
     }
 }
 
-/// A folder it makes sense to add up: not a drive root, not Windows itself.
+/// A folder it makes sense to add up: not a drive root, not Windows itself,
+/// not a user's Desktop or Downloads (where a hand-added exe may sit).
 pub fn walkable(dir: &Path) -> bool {
     // By text, so Windows paths are judged the same way on every platform.
     let text = dir.to_string_lossy().replace('\\', "/").to_lowercase();
     let parts: Vec<&str> = text.split('/').filter(|p| !p.is_empty() && !(p.len() == 2 && p.ends_with(':'))).collect();
-    parts.last().is_some_and(|last| !NEVER_WALK.contains(last))
+    let (Some(first), Some(last)) = (parts.first(), parts.last()) else { return false };
+    if NEVER_WALK.contains(last) {
+        return false;
+    }
+    match *first {
+        "windows" => false,
+        // C:\Users\<name>\Desktop: a game folder is at least one level deeper.
+        "users" => parts.len() > 3,
+        _ => true,
+    }
+}
+
+/// Whether `dir` holds the folder of another game: walking it would count
+/// that game twice (a hand-added `Steam\steam.exe`, `D:\Games\launcher.exe`).
+pub fn holds_other_games(dir: &Path, others: &[PathBuf]) -> bool {
+    let dir = norm(dir);
+    others.iter().map(|o| norm(o)).any(|o| o != dir && o.starts_with(&dir))
+}
+
+/// Games to measure now: a folder, and a size unknown or stale.
+fn due_games(app: &AppHandle) -> Vec<Game> {
+    let ts = now();
+    app.state::<AppState>().db.lock().games.iter().filter(|g| g.install_dir.is_some() && is_due(g, ts)).cloned().collect()
 }
 
 /// Measures, in a background thread, every game whose size is unknown or
-/// stale (`force`: all of them), saving each result as it comes. Idle
-/// while a game is running: the walk competes for the disk.
-pub fn measure(app: &AppHandle, force: bool) {
+/// stale, saving each result as it comes. Does nothing while a game is
+/// running (the walk competes for the disk) or when nothing is due, and
+/// emits `storage://measured` only after a round that actually ran.
+pub fn measure(app: &AppHandle) {
+    if app.state::<AppState>().launcher.current().is_some() {
+        return;
+    }
     if MEASURING.swap(true, Ordering::SeqCst) {
+        RERUN.store(true, Ordering::SeqCst);
+        return;
+    }
+    let due = due_games(app);
+    if due.is_empty() {
+        MEASURING.store(false, Ordering::SeqCst);
         return;
     }
     let app = app.clone();
     std::thread::spawn(move || {
         lower_priority();
-        let state = app.state::<AppState>();
-        let ts = now();
-        let due: Vec<Game> =
-            state.db.lock().games.iter().filter(|g| g.install_dir.is_some() && (force || is_due(g, ts))).cloned().collect();
-        for game in due {
-            if !force && state.launcher.current().is_some() {
+        let mut due = due;
+        loop {
+            measure_round(&app, due);
+            MEASURING.store(false, Ordering::SeqCst);
+            // Someone asked while this round ran (a remeasure, a scan): its
+            // games weren't in this round's list.
+            if !RERUN.swap(false, Ordering::SeqCst) || MEASURING.swap(true, Ordering::SeqCst) {
                 break;
             }
-            let Some(dir) = game.install_dir.as_deref() else { continue };
-            let result = if walkable(dir) { walk(dir) } else { Walk { bytes: 0, partial: true } };
-            // Nothing readable at all (WindowsApps ACLs): unknown, not "0 MB".
-            let size = (result.bytes > 0 || !result.partial).then_some(result.bytes);
-            let updated = state.db.update(|d| {
-                let g = d.game_mut(&game.id)?;
-                g.size_bytes = size;
-                g.size_checked_at = Some(now());
-                g.size_partial = result.partial;
-                d.view_game(&game.id)
-            });
-            if let Ok(Some(g)) = updated {
-                let _ = app.emit("library://game", &g);
+            due = if app.state::<AppState>().launcher.current().is_some() { Vec::new() } else { due_games(&app) };
+            if due.is_empty() {
+                MEASURING.store(false, Ordering::SeqCst);
+                break;
             }
         }
-        MEASURING.store(false, Ordering::SeqCst);
         let _ = app.emit("storage://measured", ());
     });
 }
 
-/// Forgets every walked size, so `measure` does them all again.
+fn measure_round(app: &AppHandle, due: Vec<Game>) {
+    let state = app.state::<AppState>();
+    let folders: Vec<PathBuf> = state.db.lock().games.iter().filter_map(|g| g.install_dir.clone()).collect();
+    for game in due {
+        if state.launcher.current().is_some() {
+            break;
+        }
+        let Some(dir) = game.install_dir.as_deref() else { continue };
+        let result = if walkable(dir) && !holds_other_games(dir, &folders) { walk(dir) } else { Walk { bytes: 0, partial: true } };
+        // Nothing readable at all (WindowsApps ACLs): unknown, not "0 MB".
+        let size = (result.bytes > 0 || !result.partial).then_some(result.bytes);
+        let updated = state.db.update(|d| {
+            let g = d.game_mut(&game.id)?;
+            g.size_bytes = size;
+            g.size_checked_at = Some(now());
+            g.size_partial = result.partial;
+            d.view_game(&game.id)
+        });
+        if let Ok(Some(g)) = updated {
+            let _ = app.emit("library://game", &g);
+        }
+    }
+}
+
+/// Forgets every walked size, so `measure` does them all again. Sizes from a
+/// store manifest stay: they are refreshed by every scan.
 pub fn remeasure(app: &AppHandle) {
     let state = app.state::<AppState>();
     let _ = state.db.update(|d| {
@@ -269,7 +347,7 @@ pub fn remeasure(app: &AppHandle) {
             g.size_partial = false;
         }
     });
-    measure(app, true);
+    measure(app);
 }
 
 /// Background mode: lower CPU and I/O priority, so a walk over a big HDD
@@ -390,15 +468,20 @@ mod tests {
             game(Store::Xbox, "3", Some(r"C:\XboxGames\C"), Some(40)),
             game(Store::Steam, "4", None, None),
         ];
-        let (unknown, xbox) = attribute(&mut drives, &games);
-        assert_eq!(unknown, 1, "games without a folder don't count as unknown");
+        let found = attribute(&mut drives, &games);
+        assert_eq!((found.unknown, found.unreadable), (1, 0), "games without a folder don't count as unknown");
         assert_eq!((drives[1].games, drives[1].games_bytes), (2, 100));
         assert_eq!((drives[0].games, drives[0].games_bytes), (1, 40));
-        assert_eq!(xbox, Some(0));
+        assert_eq!(found.xbox, Some(0));
 
         // No Xbox games: the roomiest fixed drive.
-        let (_, xbox) = attribute(&mut drives, &games[..2]);
-        assert_eq!(xbox, Some(1));
+        assert_eq!(attribute(&mut drives, &games[..2]).xbox, Some(1));
+
+        // Measured and still without a size: not waiting for anything.
+        let mut protected = game(Store::Xbox, "5", Some(r"C:\Program Files\WindowsApps\X"), None);
+        protected.size_checked_at = Some(1);
+        let found = attribute(&mut drives, &[protected]);
+        assert_eq!((found.unknown, found.unreadable), (0, 1));
     }
 
     #[test]
@@ -434,6 +517,23 @@ mod tests {
         assert!(!walkable(Path::new(r"C:\Program Files (x86)")));
         assert!(walkable(Path::new(r"C:\Program Files (x86)\Steam\steamapps\common\X")));
         assert!(walkable(Path::new(r"D:\Games")));
+        assert!(!walkable(Path::new(r"C:\Windows\System32")));
+        assert!(!walkable(Path::new(r"C:\Users\max\Desktop")));
+        assert!(walkable(Path::new(r"C:\Users\max\Desktop\Celeste")));
+        assert!(walkable(Path::new(r"C:\Users\max\AppData\Local\Programs\Game")));
+    }
+
+    #[test]
+    fn folders_holding_other_games_are_not_walked() {
+        let others = vec![
+            PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Hades"),
+            PathBuf::from(r"C:\Program Files (x86)\Steam"),
+            PathBuf::from(r"D:\Games\Celeste"),
+        ];
+        assert!(holds_other_games(Path::new(r"C:\Program Files (x86)\Steam"), &others));
+        assert!(holds_other_games(Path::new(r"d:\games\"), &others));
+        assert!(!holds_other_games(Path::new(r"D:\Games\Celeste"), &others), "a game's own folder");
+        assert!(!holds_other_games(Path::new(r"D:\Games\Cel"), &others), "a prefix by text only");
     }
 
     #[test]
@@ -447,6 +547,12 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&game_dir, game_dir.join("loop")).unwrap();
         assert_eq!(walk(&game_dir), Walk { bytes: 1024, partial: false });
+        // The game folder itself moved elsewhere, a link left in its place.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&game_dir, tmp.join("moved")).unwrap();
+            assert_eq!(walk(&tmp.join("moved")), Walk { bytes: 1024, partial: false });
+        }
         assert_eq!(walk(&tmp.join("missing")), Walk { bytes: 0, partial: true });
 
         // Artwork: the folder of a game that is gone.

@@ -126,7 +126,7 @@ export const api = {
   removeCollection: (id: string) => call<void>("remove_collection", { id }),
   setInCollection: (collectionId: string, gameId: string, value: boolean) =>
     call<Collection[]>("set_in_collection", { collectionId, gameId, value }),
-  storageOverview: () => call<StorageOverview>("storage_overview"),
+  storageOverview: (measure = false) => call<StorageOverview>("storage_overview", { measure }),
   storageCleanup: (apply: boolean) => call<Cleanup>("storage_cleanup", { apply }),
   storageRemeasure: () => call<void>("storage_remeasure"),
 };

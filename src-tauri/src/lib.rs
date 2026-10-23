@@ -86,7 +86,7 @@ fn scan(app: &AppHandle) -> LibraryUpdate {
     let update = LibraryUpdate { games, errors: result.errors };
     let _ = app.emit("library://updated", &update);
     artwork::refresh(app, false);
-    storage::measure(app, false);
+    storage::measure(app);
     update
 }
 
@@ -722,11 +722,13 @@ async fn open_store(app: AppHandle, store: model::Store, game_id: Option<String>
     blocking(move || storefront::open(&handle, store, game.as_ref())).await
 }
 
-/// Drives, their free space and what the library takes on each. Sizes still
-/// unknown get measured in the background meanwhile.
+/// Drives, their free space and what the library takes on each. With
+/// `measure`, sizes still unknown get measured in the background meanwhile.
 #[tauri::command]
-async fn storage_overview(app: AppHandle) -> CmdResult<storage::Overview> {
-    storage::measure(&app, false);
+async fn storage_overview(app: AppHandle, measure: Option<bool>) -> CmdResult<storage::Overview> {
+    if measure == Some(true) {
+        storage::measure(&app);
+    }
     let handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || storage::overview(&handle)).await.map_err(err)
 }
@@ -738,7 +740,8 @@ async fn storage_cleanup(app: AppHandle, apply: bool) -> CmdResult<storage::Clea
     tauri::async_runtime::spawn_blocking(move || storage::cleanup(&handle, apply)).await.map_err(err)
 }
 
-/// Measures every game folder again.
+/// Measures again every game folder walked before (not the sizes a store
+/// manifest declares).
 #[tauri::command]
 fn storage_remeasure(app: AppHandle) {
     storage::remeasure(&app);
