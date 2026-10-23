@@ -18,6 +18,8 @@ use crate::AppState;
 /// the keyboard. Only then does the controller type keys: sent to the game
 /// instead, they'd flip it between controller and keyboard controls.
 static OPEN: AtomicBool = AtomicBool::new(false);
+/// The Wand app itself is in front (picking a game, pressing Play).
+static IN_APP: AtomicBool = AtomicBool::new(false);
 
 const PROCESSES: &[&str] = &["wand.exe", "wemod.exe"];
 
@@ -45,7 +47,50 @@ pub fn installed() -> bool {
 }
 
 pub fn is_open() -> bool {
-    OPEN.load(Ordering::SeqCst)
+    OPEN.load(Ordering::SeqCst) || IN_APP.load(Ordering::SeqCst)
+}
+
+/// Opens the Wand app (or brings it in front), where mods are attached to
+/// a game: pick it and press Play, which also hooks into a game already
+/// running. The controller drives the app meanwhile.
+pub fn open_app(app: &AppHandle) {
+    crate::overlay::hide(app);
+    let Some(exe) = candidates().into_iter().find(|p| p.is_file()) else { return };
+    std::thread::spawn(move || {
+        if crate::window::windows_of(PROCESSES).is_empty() {
+            let _ = std::process::Command::new(exe).spawn();
+        }
+        // Wand takes a few seconds to start; push its window up once it's there.
+        for _ in 0..40 {
+            if has_focus() {
+                IN_APP.store(true, Ordering::SeqCst);
+                return;
+            }
+            if let Some(&hwnd) = crate::window::windows_of(PROCESSES).first() {
+                crate::window::force_foreground_raw(hwnd);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    });
+}
+
+/// B: Esc in the app, closes the overlay.
+pub fn back(app: &AppHandle) {
+    if IN_APP.load(Ordering::SeqCst) {
+        assist::press(Key::Escape);
+    } else {
+        close(app);
+    }
+}
+
+/// View or Guide: out of Wand, back to the game (or GameMode).
+pub fn leave(app: &AppHandle) {
+    close(app);
+    forget();
+    let pids = app.state::<AppState>().launcher.running_pids();
+    if !crate::window::resume_game(app, &pids) {
+        crate::window::bring_to_front(app);
+    }
 }
 
 fn hotkey(app: &AppHandle) -> Key {
@@ -88,4 +133,5 @@ pub fn close(app: &AppHandle) {
 /// The game ended or GameMode came back: Wand's overlay went with it.
 pub fn forget() {
     OPEN.store(false, Ordering::SeqCst);
+    IN_APP.store(false, Ordering::SeqCst);
 }

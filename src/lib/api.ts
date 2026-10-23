@@ -59,6 +59,7 @@ export const api = {
   getGameUpdates: () => call<GameUpdate[]>("get_game_updates"),
   wandInstalled: () => call<boolean>("wand_installed"),
   openWand: () => call<void>("open_wand"),
+  openWandApp: () => call<void>("open_wand_app"),
   closeGame: () => call<boolean>("close_game"),
   power: (action: PowerAction) => call<void>("power", { action }),
   getVolume: () => call<Volume>("get_volume"),

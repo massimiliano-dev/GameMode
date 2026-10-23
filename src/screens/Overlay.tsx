@@ -112,9 +112,10 @@ export function OverlayApp() {
             Torna al gioco
           </QmButton>
           {wand && game && (
-            <QmButton onClick={() => void api.openWand()}>
-              Mod (Wand)
-            </QmButton>
+            <>
+              <QmButton onClick={() => void api.openWandApp()}>App Wand: scegli le mod e premi Play</QmButton>
+              <QmButton onClick={() => void api.openWand()}>Overlay di Wand</QmButton>
+            </>
           )}
           <QmButton onClick={() => void api.overlayToLauncher()}>Vai a GameMode</QmButton>
           <QmButton

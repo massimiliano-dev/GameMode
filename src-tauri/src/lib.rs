@@ -102,6 +102,11 @@ fn open_wand(app: AppHandle) {
 }
 
 #[tauri::command]
+fn open_wand_app(app: AppHandle) {
+    wand::open_app(&app);
+}
+
+#[tauri::command]
 async fn get_game_updates(app: AppHandle) -> Vec<updates::GameUpdate> {
     let games = app.state::<AppState>().db.lock().view();
     tauri::async_runtime::spawn_blocking(move || updates::all(&games)).await.unwrap_or_default()
@@ -776,6 +781,7 @@ pub fn run() {
             get_game_updates,
             wand_installed,
             open_wand,
+            open_wand_app,
             close_game,
             power,
             get_volume,

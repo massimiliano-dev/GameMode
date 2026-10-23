@@ -20,6 +20,11 @@ export function WandSettings() {
   return (
     <Section title="Wand (mod)">
       <Row
+        label="Apri Wand"
+        hint="Scegli il gioco e premi Play: Wand lo avvia con le mod, o si aggancia se è già aperto. Col controller: croce e A, B indietro, View torna a GameMode"
+        onClick={() => void api.openWandApp()}
+      />
+      <Row
         label="Scorciatoia dell'overlay di Wand"
         hint="Deve essere la stessa scelta in Wand → Impostazioni → Personalizzazione"
         onClick={() => void saveSettings({ ...settings, wandBacktick: !settings.wandBacktick })}
@@ -27,7 +32,7 @@ export function WandSettings() {
       />
       <Row
         label="LB+RB per aprire Wand"
-        hint="Durante un gioco, tieni premuti LB e RB per aprire o chiudere l'overlay di Wand. Lo apri anche dall'overlay di GameMode → Mod (Wand)"
+        hint="Durante un gioco, tieni premuti LB e RB per aprire o chiudere l'overlay di Wand. Lo apri anche dall'overlay di GameMode → Overlay di Wand"
         onClick={() => void saveSettings({ ...settings, wandCombo: !settings.wandCombo })}
         control={<Toggle on={settings.wandCombo} />}
       />

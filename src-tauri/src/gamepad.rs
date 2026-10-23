@@ -373,12 +373,16 @@ mod xinput {
         }
     }
 
-    /// Drives Wand's overlay: A = Enter, D-pad = arrows, LB/RB = Shift+Tab/Tab,
-    /// X = Space; B or Guide close it. (The game still sees the controller.)
+    /// Drives Wand (overlay or app): A = Enter, D-pad = arrows,
+    /// LB/RB = Shift+Tab/Tab, X = Space, B = back; View or Guide leave.
     fn wand_key(app: &AppHandle, action: Action) {
         let key = match action {
-            Action::Back | Action::Guide => {
-                crate::wand::close(app);
+            Action::Back => {
+                crate::wand::back(app);
+                return;
+            }
+            Action::View | Action::Guide => {
+                crate::wand::leave(app);
                 return;
             }
             Action::Confirm => Key::Enter,

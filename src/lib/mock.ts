@@ -175,6 +175,7 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "wand_installed":
         return true;
       case "open_wand":
+      case "open_wand_app":
         return;
       case "get_game_updates":
         return games[1] ? [{ gameId: games[1].id, state: "downloading", done: 1.2 * 1024 ** 3, total: 4.5 * 1024 ** 3, progress: 0.27 }] : [];
