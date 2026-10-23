@@ -5,6 +5,7 @@ import { rumble, setHaptics, type Pattern } from "../input/haptics";
 import { setSoundsEnabled } from "../input/sfx";
 import { api, on } from "../lib/api";
 import { formatPlaytime } from "../lib/format";
+import { isLegendary } from "../lib/legendary";
 import type {
   Collection,
   Controller,
@@ -180,6 +181,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({ rescanOnReturn: false });
       get().toast(`${name} disinstallato`);
     });
+    on<string>("legendary://error", (message) => get().toast(message, "error"));
     on<string>("install://queued", () => {
       set({ rescanOnReturn: false });
       get().toast("Download avviato in Steam: lo trovi in Libreria quando ha finito");
@@ -418,7 +420,9 @@ export const useApp = create<AppState>((set, get) => ({
 
   uninstall: async (game, stay = false) => {
     try {
-      if (!["manual", "xbox", "mock"].includes(game.store)) {
+      if (isLegendary(game)) {
+        get().toast(`Disinstallo ${game.name}…`);
+      } else if (!["manual", "xbox", "mock"].includes(game.store)) {
         const what = `Apro la disinstallazione di ${game.name}.`;
         get().toast(game.store === "steam" && get().settings?.steamBigPicture ? nativeHint(what) : assistHint(get().settings, what));
         await sleep(HANDOFF_DELAY);

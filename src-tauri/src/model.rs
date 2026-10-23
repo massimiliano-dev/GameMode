@@ -334,6 +334,9 @@ pub struct Settings {
     /// Read DualSense, DualShock 4 and Switch Pro directly over HID; off
     /// when Steam Input or DS4Windows already turn them into XInput pads.
     pub hid_pads: bool,
+    /// Epic games are installed, updated and launched through legendary
+    /// instead of the Epic Games Launcher (`legendary`).
+    pub epic_legendary: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -382,6 +385,7 @@ impl Default for Settings {
             capture_combo: true,
             companion_enabled: false,
             hid_pads: true,
+            epic_legendary: false,
         }
     }
 }

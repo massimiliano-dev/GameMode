@@ -15,9 +15,17 @@ impl LibraryProvider for EpicProvider {
     }
 
     fn scan(&self) -> Result<Vec<Game>> {
-        let Some(program_data) = std::env::var_os("ProgramData") else { return Ok(Vec::new()) };
+        // Games legendary manages come first; the launcher's own installs
+        // it hasn't taken over keep launching through the launcher.
+        let mut games = crate::legendary::installed_games();
+        let Some(program_data) = std::env::var_os("ProgramData") else { return Ok(games) };
         let dir = PathBuf::from(program_data).join(r"Epic\EpicGamesLauncher\Data\Manifests");
-        scan_manifests(&dir)
+        for game in scan_manifests(&dir)? {
+            if !games.iter().any(|g| g.id.eq_ignore_ascii_case(&game.id)) {
+                games.push(game);
+            }
+        }
+        Ok(games)
     }
 }
 

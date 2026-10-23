@@ -13,6 +13,7 @@ import { StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
 import { api, artUrl } from "../lib/api";
 import { formatGameSize, formatLastPlayed, formatPlaytime, SHOP_LABEL, UPDATE_LABEL, updateProgress } from "../lib/format";
+import { isLegendary } from "../lib/legendary";
 import type { Game } from "../lib/types";
 import { useApp } from "../store/app";
 
@@ -34,6 +35,8 @@ export function GameDetail({ gameId }: { gameId: string }) {
   const back = useApp((s) => s.back);
   const update = useApp((s) => s.gameUpdates[gameId] ?? (s.session?.gameId === gameId ? s.session.update : null));
   const showGameUpdate = useApp((s) => s.showGameUpdate);
+  const refreshGameUpdates = useApp((s) => s.refreshGameUpdates);
+  const toast = useApp((s) => s.toast);
   const [dialog, setDialog] = useState<Dialog>(null);
 
   useEffect(() => setBackdrop(gameId), [gameId, setBackdrop]);
@@ -71,6 +74,16 @@ export function GameDetail({ gameId }: { gameId: string }) {
   const inCollections = collections.filter((c) => c.gameIds.includes(game.id));
   // Applications: opened, not played; no saves or uninstaller to offer.
   const isApp = game.store === "app";
+  // Epic games GameMode installed or imported through legendary.
+  const legendary = isLegendary(game);
+  const runLegendary = (action: "update" | "repair") =>
+    void api
+      .legendaryGameAction(game.id, action)
+      .then(() => {
+        toast(action === "update" ? `Aggiornamento di ${game.name} avviato` : `Verifica dei file di ${game.name} avviata`);
+        void refreshGameUpdates();
+      })
+      .catch((e) => toast(String(e), "error"));
 
   const options: SheetAction[] = [
     ...(SHOP_LABEL[game.store]
@@ -78,6 +91,9 @@ export function GameDetail({ gameId }: { gameId: string }) {
       : []),
     ...(game.store !== "mock" && !isApp
       ? [{ label: "Salvataggi", hint: "Backup e ripristino", onSelect: () => setDialog("saves") }]
+      : []),
+    ...(legendary
+      ? [{ label: "Verifica e ripara", hint: "Controlla i file del gioco e scarica di nuovo quelli danneggiati", onSelect: () => runLegendary("repair") }]
       : []),
     {
       label: game.hidden ? "Mostra nella libreria" : "Nascondi",
@@ -144,6 +160,11 @@ export function GameDetail({ gameId }: { gameId: string }) {
               {update && (game.store === "steam" || game.store === "xbox") && (
                 <button type="button" className="btn" data-nav onClick={() => void showGameUpdate(game)}>
                   {game.store === "steam" ? "Download di Steam" : "Apri nell'app Xbox"}
+                </button>
+              )}
+              {update?.state === "available" && legendary && (
+                <button type="button" className="btn" data-nav onClick={() => runLegendary("update")}>
+                  Aggiorna
                 </button>
               )}
               <button type="button" className="btn" data-nav onClick={() => void toggleFavorite(game)}>
@@ -215,5 +236,6 @@ export function GameDetail({ gameId }: { gameId: string }) {
 function uninstallText(game: Game) {
   if (game.store === "manual") return "Il gioco sparisce da GameMode, i suoi file restano dove sono.";
   if (game.store === "xbox") return "Il gioco viene rimosso dal PC. I salvataggi nel cloud restano sul tuo account Xbox.";
+  if (isLegendary(game)) return "I file del gioco vengono eliminati dal PC.";
   return "Si apre la disinstallazione dello store, che potrebbe chiederti un'ulteriore conferma.";
 }

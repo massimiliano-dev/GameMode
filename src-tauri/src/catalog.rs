@@ -96,6 +96,11 @@ pub async fn load(app: &AppHandle, force: bool) -> Catalog {
     };
     let client = reqwest::Client::builder().timeout(Duration::from_secs(20)).build().unwrap_or_default();
 
+    // legendary's owned list, when it manages Epic games (a slow process: in parallel).
+    let legendary = {
+        let installed = installed.clone();
+        tauri::async_runtime::spawn_blocking(move || crate::legendary::catalog_items(&installed))
+    };
     let (steam, gamepass) = tokio::join!(steam_owned(&client, key, &installed), gamepass(&client, &installed));
     let mut catalog = Catalog::default();
     match steam {
@@ -109,11 +114,16 @@ pub async fn load(app: &AppHandle, force: bool) -> Catalog {
         }
         Err(err) => log::warn!("Game Pass catalog failed: {err:#}"),
     }
-    catalog.items.extend(epic_owned(&installed));
+    catalog.items.extend(legendary.await.ok().flatten().unwrap_or_else(|| epic_owned(&installed)));
     catalog.items.extend(gog_owned(&installed));
     catalog.items.sort_by_key(|i| i.name.to_lowercase());
     *state.catalog.catalog.lock().unwrap() = Some((Instant::now(), catalog.clone()));
     catalog
+}
+
+/// Forgets the cached catalog (Epic sign-in or legendary switched).
+pub fn invalidate(app: &AppHandle) {
+    *app.state::<AppState>().catalog.catalog.lock().unwrap() = None;
 }
 
 /// Xbox Cloud Gaming titles. Kept apart from `load` because the list is long
@@ -347,6 +357,9 @@ pub fn install(app: &AppHandle, id: &str) -> Result<()> {
         "epic" => {
             let parts: Vec<&str> = native.splitn(3, ':').collect();
             let [ns, item, app_name] = parts[..] else { bail!("Gioco non valido") };
+            if crate::legendary::active() {
+                return crate::legendary::install(app, app_name, None);
+            }
             format!("com.epicgames.launcher://apps/{ns}%3A{item}%3A{app_name}?action=install")
         }
         "gog" if storefront::scheme_registered("goggalaxy") => format!("goggalaxy://openGameView/{native}"),

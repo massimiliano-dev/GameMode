@@ -103,6 +103,8 @@ export interface Settings {
   companionEnabled: boolean;
   /** DualSense, DualShock 4 and Switch Pro read directly over HID. */
   hidPads: boolean;
+  /** Epic games go through legendary instead of the Epic Games Launcher. */
+  epicLegendary: boolean;
 }
 
 export interface ShellStatus {
@@ -602,4 +604,46 @@ export interface RemoteText {
   text: string;
   enter: boolean;
   backspace: boolean;
+}
+
+/** legendary (Epic games without the Epic Games Launcher). */
+export interface LegendaryStatus {
+  /** Windows only. */
+  supported: boolean;
+  downloaded: boolean;
+  enabled: boolean;
+  /** Epic account legendary is signed in with. */
+  account: string | null;
+  /** The Epic Games Launcher is signed in here: its session can be imported. */
+  eglSignedIn: boolean;
+  /** Games the Epic Games Launcher installed that legendary doesn't manage yet. */
+  eglGames: number;
+  version: string;
+  projectUrl: string;
+  licenseUrl: string;
+}
+
+export type LegendaryJobKind = "install" | "update" | "repair" | "uninstall" | "import";
+
+export interface LegendaryJob {
+  id: number;
+  appName: string;
+  title: string;
+  kind: LegendaryJobKind;
+  state: "queued" | "running" | "done" | "failed" | "cancelled";
+  phase: "preparing" | "verifying" | "downloading";
+  /** 0…1, when known. */
+  progress: number | null;
+  /** Bytes downloaded and to download; 0 when unknown. */
+  done: number;
+  total: number;
+  etaSecs: number | null;
+  error: string | null;
+}
+
+export interface InstallTarget {
+  path: string;
+  /** Free bytes on its drive; 0 when unknown. */
+  free: number;
+  default: boolean;
 }

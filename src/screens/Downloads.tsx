@@ -1,15 +1,17 @@
 import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ActionSheet } from "../components/ActionSheet";
 import { CatalogCard } from "../components/CatalogCard";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 
 import { Glyph, StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
 import { forgetGroup } from "../input/focus";
-import { api } from "../lib/api";
+import { api, on, pickFolder } from "../lib/api";
 import { formatBytes, formatPlaytime } from "../lib/format";
-import type { Catalog, CatalogItem, Deals, Drive } from "../lib/types";
+import { describeJob, jobActive } from "../lib/legendary";
+import type { Catalog, CatalogItem, Deals, Drive, InstallTarget, LegendaryJob, LegendaryStatus } from "../lib/types";
 import { useApp } from "../store/app";
 
 type Filter = "all" | CatalogItem["source"];
@@ -62,6 +64,19 @@ export function Downloads() {
   const focusedRef = useRef<CatalogItem | null>(null);
   /** An install that doesn't fit on the drive it would go to, waiting for a yes. */
   const [tight, setTight] = useState<{ item: CatalogItem; drive: Drive } | null>(null);
+  /** Epic through legendary: its state, its operations, and an install waiting for a folder. */
+  const [legendary, setLegendary] = useState<LegendaryStatus | null>(null);
+  const [jobs, setJobs] = useState<LegendaryJob[]>([]);
+  const [epicInstall, setEpicInstall] = useState<{ item: CatalogItem; targets: InstallTarget[] } | null>(null);
+  const legendaryOn = !!legendary?.enabled && legendary.downloaded;
+
+  useEffect(() => {
+    const status = () => void api.legendaryStatus().then(setLegendary).catch(() => {});
+    status();
+    void api.legendaryJobs().then(setJobs).catch(() => {});
+    const offs = [on<LegendaryJob[]>("legendary://jobs", setJobs), on("legendary://changed", status)];
+    return () => offs.forEach((off) => off());
+  }, []);
 
   const load = useCallback(async (force: boolean) => {
     setLoading(true);
@@ -86,9 +101,21 @@ export function Downloads() {
     () => ALL_FILTERS.filter((f) => f.key === "all" || items.some((i) => i.source === f.key)),
     [items],
   );
+  // Epic games legendary is installing (or just installed) leave the list.
+  const takenKey = jobs
+    .filter((j) => j.kind === "install" && (jobActive(j) || j.state === "done"))
+    .map((j) => j.appName.toLowerCase())
+    .sort()
+    .join("\n");
+  const takenApps = useMemo(() => new Set(takenKey.split("\n")), [takenKey]);
   const shown = useMemo(
-    () => items.filter((i) => (filter === "all" ? IN_ALL.has(i.source) : i.source === filter)),
-    [items, filter],
+    () =>
+      items.filter(
+        (i) =>
+          (filter === "all" ? IN_ALL.has(i.source) : i.source === filter) &&
+          !(i.source === "epic" && takenApps.has(epicAppName(i).toLowerCase())),
+      ),
+    [items, filter, takenApps],
   );
 
   useScreenFocus(undefined, !loading);
@@ -128,6 +155,15 @@ export function Downloads() {
       if (item.source === "deal") {
         void api.openLink(`steam://store/${item.id.slice("deal:".length)}`);
         toast(`${item.name} a ${item.price} nel negozio Steam. Premi Guide per tornare qui`);
+      } else if (item.source === "epic" && legendaryOn) {
+        if (!legendary?.account) {
+          toast("Accedi al tuo account Epic in Impostazioni → Librerie", "error");
+          return;
+        }
+        void api
+          .legendaryInstallTargets()
+          .then((targets) => setEpicInstall({ item, targets }))
+          .catch((e) => toast(String(e), "error"));
       } else if (item.source === "gamepass" && item.sizeBytes) {
         // The Xbox app picks the drive itself: a heads-up, not a wall.
         void api
@@ -142,7 +178,19 @@ export function Downloads() {
         void installFromCatalog(item.id, item.name);
       }
     },
-    [installFromCatalog, toast],
+    [installFromCatalog, toast, legendaryOn, legendary],
+  );
+
+  const installEpic = useCallback(
+    async (item: CatalogItem, path: string) => {
+      try {
+        await api.legendaryInstall(epicAppName(item), path);
+        toast(`Download di ${item.name} avviato`);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+    },
+    [toast],
   );
 
   const steamNotice = catalog && catalog.steam !== "ok" && (filter === "all" || filter === "steam") ? STEAM_NOTICE[catalog.steam] : null;
@@ -165,7 +213,7 @@ export function Downloads() {
         {focused && (
           <span className="sort-label catalog-focus">
             <StoreBadge store={focused.store} />
-            {describe(focused)}
+            {describe(focused, legendaryOn)}
           </span>
         )}
       </header>
@@ -184,6 +232,29 @@ export function Downloads() {
         <div className="notice">Catalogo PC Game Pass non raggiungibile: controlla la connessione e premi X per riprovare.</div>
       )}
 
+      {jobs.length > 0 && (
+        <section className="legendary-jobs" data-nav-group="legendary-jobs" aria-label="Operazioni sui giochi Epic">
+          {jobs.map((job) => (
+            <div key={job.id} className={`legendary-job is-${job.state}`}>
+              <div className="legendary-job-text">
+                <span className="legendary-job-title">{job.title}</span>
+                <span className="legendary-job-status">{describeJob(job)}</span>
+              </div>
+              {jobActive(job) && job.progress != null && (
+                <span className="meter" role="img" aria-label={`${Math.round(job.progress * 100)}%`}>
+                  <span className="meter-fill" style={{ width: `${Math.round(job.progress * 100)}%` }} />
+                </span>
+              )}
+              {jobActive(job) && job.kind !== "uninstall" && job.kind !== "import" && (
+                <button type="button" className="btn" data-nav onClick={() => void api.legendaryCancel(job.id)}>
+                  {job.state === "queued" ? "Togli dalla coda" : "Annulla"}
+                </button>
+              )}
+            </div>
+          ))}
+        </section>
+      )}
+
       {loading && !catalog ? (
         <div className="screen empty">
           <div className="spinner" />
@@ -199,6 +270,27 @@ export function Downloads() {
         </div>
       )}
       <AnimatePresence>
+        {epicInstall && (
+          <ActionSheet
+            key="epic-install"
+            title={`Dove installare ${epicInstall.item.name}?`}
+            actions={[
+              ...epicInstall.targets.map((t) => ({
+                label: t.path,
+                hint: [t.default ? "Consigliata" : null, t.free > 0 ? `${formatBytes(t.free)} liberi` : null].filter(Boolean).join(" · ") || undefined,
+                onSelect: () => void installEpic(epicInstall.item, t.path),
+              })),
+              {
+                label: "Scegli un'altra cartella…",
+                onSelect: () =>
+                  void pickFolder().then((path) => {
+                    if (path) void installEpic(epicInstall.item, path);
+                  }),
+              },
+            ]}
+            onClose={() => setEpicInstall(null)}
+          />
+        )}
         {tight && (
           <ConfirmDialog
             key="tight"
@@ -217,8 +309,15 @@ export function Downloads() {
   );
 }
 
-function describe(item: CatalogItem) {
+/** `epic:<namespace>:<catalog id>:<app name>` → the app name legendary uses. */
+function epicAppName(item: CatalogItem) {
+  return item.id.split(":").slice(3).join(":");
+}
+
+function describe(item: CatalogItem, legendaryOn: boolean) {
   switch (item.source) {
+    case "epic":
+      return legendaryOn ? "Si installa senza Epic Games Launcher" : "Mai giocato";
     case "gamepass":
       return item.sizeBytes ? `Incluso in PC Game Pass · ${formatBytes(item.sizeBytes)}` : "Incluso in PC Game Pass";
     case "cloud":

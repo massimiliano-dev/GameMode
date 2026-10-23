@@ -493,6 +493,11 @@ fn spawn(app: &AppHandle, spec: &LaunchSpec) -> Result<Option<u32>> {
             Ok(None)
         }
         LaunchSpec::Exe { path, args, cwd } => {
+            // Epic through legendary: it signs in, and may update first.
+            if crate::legendary::is_exe(path) {
+                crate::legendary::spawn_launch(app, args)?;
+                return Ok(None);
+            }
             let mut cmd = Command::new(path);
             cmd.args(args);
             if let Some(dir) = cwd.as_deref().or_else(|| path.parent()) {

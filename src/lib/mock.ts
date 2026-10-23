@@ -1,7 +1,7 @@
 // In-browser stand-in for the Rust backend, so the UI can be developed and
 // tested with `npm run dev` in any browser.
 
-import type { AppVolume, Capture, Cleanup, Collection, Game, GameMeta, ManualGame, NowPlaying, PadKind, PowerSchedule, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
+import type { AppVolume, Capture, Cleanup, Collection, Game, GameMeta, LegendaryJob, ManualGame, NowPlaying, PadKind, PowerSchedule, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
 
 const CDN = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps";
 
@@ -113,7 +113,7 @@ games = [
   })),
 ];
 
-let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true, keyboardAuto: true, backupOnExit: true, igdbClientId: null, igdbClientSecret: null, captureCombo: true, companionEnabled: false, hidPads: true };
+let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true, keyboardAuto: true, backupOnExit: true, igdbClientId: null, igdbClientSecret: null, captureCombo: true, companionEnabled: false, hidPads: true, epicLegendary: false };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
 let suspended: SessionState[] = [];
@@ -147,6 +147,26 @@ let appVolumes: AppVolume[] = [
 ];
 
 let cleanup: Cleanup = { artworkItems: 3, artworkBytes: 14_200_000, backupItems: 5, backupBytes: 48_000_000, applied: false };
+
+/** legendary in the browser: a pretend account and download queue. */
+const legendary = { downloaded: false, account: null as string | null, jobs: [] as LegendaryJob[], nextId: 1 };
+
+function legendaryJob(appName: string, title: string, kind: LegendaryJob["kind"]) {
+  const job: LegendaryJob = { id: legendary.nextId++, appName, title, kind, state: "running", phase: "downloading", progress: 0, done: 0, total: 8 * 1024 ** 3, etaSecs: 120, error: null };
+  legendary.jobs.push(job);
+  const tick = setInterval(() => {
+    if (job.state !== "running") return clearInterval(tick);
+    job.progress = Math.min(1, (job.progress ?? 0) + 0.05);
+    job.done = Math.round(job.total * job.progress);
+    job.etaSecs = Math.round((1 - job.progress) * 120);
+    if (job.progress >= 1) {
+      job.state = "done";
+      clearInterval(tick);
+    }
+    emit("legendary://jobs", legendary.jobs);
+  }, 600);
+  emit("legendary://jobs", legendary.jobs);
+}
 
 function mockStorage() {
   const bytesOn = (prefix: string) => games.filter((g) => g.installDir?.startsWith(prefix)).map((g) => g.sizeBytes ?? 0);
@@ -835,6 +855,66 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "companion_firewall":
         await wait(500);
         return true;
+      case "legendary_status":
+        return {
+          supported: true,
+          downloaded: legendary.downloaded,
+          enabled: settings.epicLegendary,
+          account: legendary.account,
+          eglSignedIn: true,
+          eglGames: legendary.account ? 2 : 0,
+          version: "0.21.1",
+          projectUrl: "https://github.com/legendary-gl/legendary",
+          licenseUrl: "https://github.com/legendary-gl/legendary/blob/master/LICENSE",
+        };
+      case "legendary_enable":
+        if (args.on && !legendary.downloaded) {
+          for (const p of [0.2, 0.5, 0.8, 1]) {
+            await wait(300);
+            emit("legendary://download", p);
+          }
+          legendary.downloaded = true;
+        }
+        settings = { ...settings, epicLegendary: !!args.on };
+        return settings;
+      case "legendary_login":
+        setTimeout(() => {
+          legendary.account = "Giocatore";
+          emit("legendary://login", { Ok: legendary.account });
+          emit("legendary://changed", null);
+        }, 1500);
+        return;
+      case "legendary_import_auth":
+        await wait(800);
+        legendary.account = "Giocatore";
+        return legendary.account;
+      case "legendary_logout":
+        legendary.account = null;
+        return;
+      case "legendary_import_games":
+        legendaryJob("", "Giochi dell'Epic Games Launcher", "import");
+        return;
+      case "legendary_jobs":
+        return legendary.jobs;
+      case "legendary_install":
+        legendaryJob(args.appName, args.appName, "install");
+        return;
+      case "legendary_game_action": {
+        const game = games.find((g) => g.id === args.id);
+        legendaryJob(args.id, game?.name ?? args.id, args.action);
+        return;
+      }
+      case "legendary_cancel": {
+        const job = legendary.jobs.find((j) => j.id === args.jobId);
+        if (job) job.state = "cancelled";
+        emit("legendary://jobs", legendary.jobs);
+        return;
+      }
+      case "legendary_install_targets":
+        return [
+          { path: "C:\\Games", free: 412 * 1024 ** 3, default: true },
+          { path: "D:\\Games", free: 1200 * 1024 ** 3, default: false },
+        ];
       default:
         // exit_to_desktop, toggle_fullscreen, quit_app, refresh_artwork, refresh_metadata
         console.info(`[mock] ${cmd}`, args);

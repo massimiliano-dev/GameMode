@@ -22,6 +22,9 @@ import type {
   EmulatorStatus,
   Game,
   GameUpdate,
+  InstallTarget,
+  LegendaryJob,
+  LegendaryStatus,
   LibraryUpdate,
   ManualGame,
   MediaAction,
@@ -187,6 +190,20 @@ export const api = {
   captureNotice: () => call<CaptureNotice | null>("capture_notice"),
   companionStatus: () => call<CompanionStatus>("companion_status"),
   companionFirewall: () => call<boolean>("companion_firewall"),
+  legendaryStatus: () => call<LegendaryStatus>("legendary_status"),
+  /** Turns legendary on (downloading it the first time) or off; returns the saved settings. */
+  legendaryEnable: (on: boolean) => call<Settings>("legendary_enable", { on }),
+  /** Opens Epic's sign-in page; the result arrives as `legendary://login`. */
+  legendaryLogin: () => call<void>("legendary_login"),
+  /** Signs in with the Epic Games Launcher's session; returns the account name. */
+  legendaryImportAuth: () => call<string>("legendary_import_auth"),
+  legendaryLogout: () => call<void>("legendary_logout"),
+  legendaryImportGames: () => call<void>("legendary_import_games"),
+  legendaryJobs: () => call<LegendaryJob[]>("legendary_jobs"),
+  legendaryInstall: (appName: string, basePath: string | null) => call<void>("legendary_install", { appName, basePath }),
+  legendaryGameAction: (id: string, action: "update" | "repair") => call<void>("legendary_game_action", { id, action }),
+  legendaryCancel: (jobId: number) => call<void>("legendary_cancel", { jobId }),
+  legendaryInstallTargets: () => call<InstallTarget[]>("legendary_install_targets"),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

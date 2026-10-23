@@ -39,7 +39,8 @@ impl GameUpdate {
 /// Updates for the given games, as far as their stores tell.
 pub fn all(games: &[Game]) -> Vec<GameUpdate> {
     let steam = steam_all();
-    games
+    let epic = crate::legendary::updates();
+    let mut list: Vec<GameUpdate> = games
         .iter()
         .filter_map(|game| match game.store {
             Store::Steam => {
@@ -47,9 +48,13 @@ pub fn all(games: &[Game]) -> Vec<GameUpdate> {
                 steam.iter().find(|(id, _)| *id == appid).map(|(_, u)| with_id(u, game))
             }
             Store::Xbox => xbox_update(family(game)?).map(|u| with_id(&u, game)),
+            Store::Epic => epic.iter().find(|u| u.game_id == game.id).cloned(),
             _ => None,
         })
-        .collect()
+        .collect();
+    // legendary installs of games not in the library yet.
+    list.extend(epic.into_iter().filter(|u| u.active() && !games.iter().any(|g| g.id == u.game_id)));
+    list
 }
 
 /// The update of one game, looked at a bit harder (for the launch screen).
@@ -60,6 +65,7 @@ pub fn for_game(game: &Game) -> Option<GameUpdate> {
             let family = family(game)?;
             xbox_update(family).or_else(|| servicing(family)).map(|u| with_id(&u, game))
         }
+        Store::Epic => crate::legendary::update_for(&game.id),
         _ => None,
     }
 }

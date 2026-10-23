@@ -5,6 +5,7 @@ import { CompanionSettings } from "../components/CompanionSettings";
 import { ConsoleSettings } from "../components/ConsoleSettings";
 import { DiagnosticsSettings } from "../components/DiagnosticsSettings";
 import { EmulatorSettings } from "../components/EmulatorSettings";
+import { EpicSettings } from "../components/EpicSettings";
 import { MetadataSettings } from "../components/MetadataSettings";
 import { SystemSettings } from "../components/SystemSettings";
 import { UpdateSettings } from "../components/UpdateSettings";
@@ -325,6 +326,8 @@ export function Settings() {
                 onClick={() => void rescan()}
               />
             </Section>
+
+            <EpicSettings settings={settings} />
 
             <Section title="Giochi aggiunti a mano">
               {manual.map((m) => (

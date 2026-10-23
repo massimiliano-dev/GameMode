@@ -53,6 +53,7 @@ mod winupdate;
 mod capture;
 mod capture_osd;
 mod companion;
+mod legendary;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -353,6 +354,7 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> 
     }
     companion::sync(&app);
     hidpad::set_enabled(settings.hid_pads);
+    legendary::set_enabled(settings.epic_legendary);
     Ok(settings)
 }
 
@@ -1077,6 +1079,93 @@ async fn companion_firewall() -> CmdResult<bool> {
     blocking(companion::firewall_allow).await
 }
 
+/// Reads legendary's and the Epic Games Launcher's files: off the main thread.
+#[tauri::command]
+async fn legendary_status() -> CmdResult<legendary::Status> {
+    blocking(|| Ok(legendary::status())).await
+}
+
+/// Switches Epic games over to legendary (downloading it the first time) or back.
+#[tauri::command]
+async fn legendary_enable(app: AppHandle, on: bool) -> CmdResult<Settings> {
+    if on {
+        legendary::ensure_ready(&app).await.map_err(|e| format!("{e:#}"))?;
+    }
+    let settings = app
+        .state::<AppState>()
+        .db
+        .update(|d| {
+            d.settings.epic_legendary = on;
+            d.settings.clone()
+        })
+        .map_err(err)?;
+    legendary::set_enabled(on);
+    catalog::invalidate(&app);
+    legendary::changed(&app);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        scan(&handle);
+    });
+    Ok(settings)
+}
+
+/// Async: a window built from a synchronous command deadlocks on Windows.
+#[tauri::command]
+async fn legendary_login(app: AppHandle) -> CmdResult<()> {
+    legendary::login(&app).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn legendary_import_auth(app: AppHandle) -> CmdResult<String> {
+    blocking(move || legendary::import_auth(&app)).await
+}
+
+#[tauri::command]
+async fn legendary_logout(app: AppHandle) -> CmdResult<()> {
+    blocking(move || legendary::logout(&app)).await
+}
+
+#[tauri::command]
+async fn legendary_import_games(app: AppHandle) -> CmdResult<()> {
+    blocking(move || legendary::import_games(&app)).await
+}
+
+#[tauri::command]
+fn legendary_jobs() -> Vec<legendary::jobs::Job> {
+    legendary::jobs::list()
+}
+
+#[tauri::command]
+async fn legendary_install(app: AppHandle, app_name: String, base_path: Option<PathBuf>) -> CmdResult<()> {
+    blocking(move || legendary::install(&app, &app_name, base_path)).await
+}
+
+/// `action`: "update" or "repair".
+#[tauri::command]
+async fn legendary_game_action(app: AppHandle, id: String, action: String) -> CmdResult<()> {
+    let kind = match action.as_str() {
+        "update" => legendary::jobs::Kind::Update,
+        "repair" => legendary::jobs::Kind::Repair,
+        _ => return Err("Operazione non valida".into()),
+    };
+    let game = app.state::<AppState>().db.lock().game(&id).cloned().ok_or("Gioco non trovato")?;
+    blocking(move || legendary::game_action(&app, &game, kind)).await
+}
+
+#[tauri::command]
+async fn legendary_cancel(app: AppHandle, job_id: u64) -> CmdResult<()> {
+    blocking(move || {
+        legendary::jobs::cancel(&app, job_id);
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn legendary_install_targets() -> Vec<legendary::InstallTarget> {
+    tauri::async_runtime::spawn_blocking(legendary::install_targets).await.unwrap_or_default()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // The console-mode watchdog is this same executable with `--watchdog`.
@@ -1112,6 +1201,7 @@ pub fn run() {
             live::init(&data_dir);
             let live_file = live::file_in(&data_dir);
             let db = Db::open(&data_dir)?;
+            legendary::init(&data_dir, db.lock().settings.epic_legendary);
             db.update(|d| d.upgrade_artwork(artwork::PIPELINE_VERSION))?;
             db.update(|d| d.upgrade_meta(metadata::PIPELINE_VERSION))?;
             app.manage(AppState {
@@ -1208,6 +1298,7 @@ pub fn run() {
             capture::init(&handle);
             companion::sync(&handle);
             updates::watch_packages();
+            legendary::start(&handle);
             status::start(handle.clone());
             winupdate::watch(handle.clone());
             hidpad::set_enabled(app.state::<AppState>().db.lock().settings.hid_pads);
@@ -1347,6 +1438,17 @@ pub fn run() {
             capture_notice,
             companion_status,
             companion_firewall,
+            legendary_status,
+            legendary_enable,
+            legendary_login,
+            legendary_import_auth,
+            legendary_logout,
+            legendary_import_games,
+            legendary_jobs,
+            legendary_install,
+            legendary_game_action,
+            legendary_cancel,
+            legendary_install_targets,
         ])
         .on_window_event(|window, event| {
             // Alt+F4 on the launcher: the hidden overlay window would keep
