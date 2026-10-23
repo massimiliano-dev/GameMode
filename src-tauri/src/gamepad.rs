@@ -148,6 +148,8 @@ mod xinput {
     const COMBO_HOLD: Duration = Duration::from_secs(1);
     /// LB+RB hold that opens Wand's overlay during a game.
     const WAND_HOLD: Duration = Duration::from_millis(800);
+    /// How often to check that Wand still has the keyboard.
+    const WAND_CHECK: Duration = Duration::from_millis(200);
     /// During a game Back+Start toggles the overlay quickly: unlike Guide,
     /// neither Steam nor Game Bar grab this combination.
     const COMBO_HOLD_IN_GAME: Duration = Duration::from_millis(300);
@@ -231,6 +233,7 @@ mod xinput {
             let mut view_since: Option<Instant> = None;
             let mut wand_since: Option<Instant> = None;
             let mut wand_fired = false;
+            let mut wand_checked = Instant::now();
 
             loop {
                 let now = Instant::now();
@@ -268,9 +271,13 @@ mod xinput {
                     }
                 }
                 let assisting = target.is_none() && assist::is_active();
-                // Wand's overlay is up over the game: the controller drives it.
-                if target.is_some() {
-                    crate::wand::forget();
+                // Wand's overlay is up over the game: the controller drives it,
+                // but only while Wand has the keyboard — never type into the game.
+                if crate::wand::is_open() && now - wand_checked >= WAND_CHECK {
+                    wand_checked = now;
+                    if target.is_some() || !crate::wand::has_focus() {
+                        crate::wand::forget();
+                    }
                 }
                 let wand = target.is_none() && crate::wand::is_open();
                 for (bit, repeat) in repeater.step(buttons, DIRECTIONS, now) {

@@ -14,9 +14,25 @@ use tauri::{AppHandle, Manager};
 use crate::assist::{self, Key};
 use crate::AppState;
 
-/// Wand's overlay is open over the game (as far as GameMode knows: the
-/// shortcut toggles it).
+/// Wand's overlay is open over the game, in a window of its own that has
+/// the keyboard. Only then does the controller type keys: sent to the game
+/// instead, they'd flip it between controller and keyboard controls.
 static OPEN: AtomicBool = AtomicBool::new(false);
+
+const PROCESSES: &[&str] = &["wand.exe", "wemod.exe"];
+
+/// A Wand window is in front.
+pub fn has_focus() -> bool {
+    #[cfg(windows)]
+    {
+        crate::window::foreground_process_name().is_some_and(|n| PROCESSES.contains(&n.as_str()))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = PROCESSES;
+        false
+    }
+}
 
 /// Where Wand (and WeMod before the rename) installs itself.
 fn candidates() -> Vec<PathBuf> {
@@ -51,7 +67,15 @@ pub fn open(app: &AppHandle) {
         // Let the game take the keyboard first: Wand reads the shortcut there.
         std::thread::sleep(std::time::Duration::from_millis(400));
         assist::press(hotkey(&app));
-        OPEN.store(true, Ordering::SeqCst);
+        // Controller help only if Wand's overlay came up as its own window;
+        // drawn inside the game it handles input itself (or takes the mouse).
+        for _ in 0..10 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if has_focus() {
+                OPEN.store(true, Ordering::SeqCst);
+                return;
+            }
+        }
     });
 }
 
