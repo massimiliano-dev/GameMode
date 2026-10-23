@@ -30,10 +30,11 @@ export function QuickMenu() {
   const [outputs, setOutputs] = useState<AudioOutput[] | null>(null);
   const output = outputs?.find((o) => o.default);
   const [consoleMode, setConsoleMode] = useState(false);
+  const [desktopOnce, setDesktopOnce] = useState(false);
   // The screen below keeps the hint bar; the panel shows its own.
   useEffect(() => {
     void api.getVolume().then(setVolume).catch(() => setVolume(null));
-    void api.getConsoleMode().then((s) => setConsoleMode(s.active)).catch(() => {});
+    void api.getConsoleMode().then((s) => { setConsoleMode(s.active); setDesktopOnce(s.desktopOnce); }).catch(() => {});
   }, []);
   useScreenFocus();
 
@@ -200,7 +201,14 @@ export function QuickMenu() {
 
         <div className="qm-list qm-power">
           <QmButton armed={armed === "sleep"} onClick={power("sleep")}>Sospendi</QmButton>
-          <QmButton armed={armed === "restart"} confirmText={pausedNote} onClick={power("restart")}>Riavvia</QmButton>
+          <QmButton armed={armed === "restart"} confirmText={pausedNote} onClick={power("restart")}>
+            {desktopOnce ? "Riavvia in modalità console" : "Riavvia"}
+          </QmButton>
+          {consoleMode && (
+            <QmButton armed={armed === "restartToDesktop"} confirmText={pausedNote} onClick={power("restartToDesktop")}>
+              Riavvia in modalità desktop
+            </QmButton>
+          )}
           <QmButton danger armed={armed === "shutdown"} confirmText={pausedNote} onClick={power("shutdown")}>Spegni</QmButton>
           <QmButton armed={armed === "quit"} confirmText={pausedQuitNote} onClick={() => confirmTwice("quit", () => void useApp.getState().quit())}>
             {consoleMode ? "Chiudi GameMode e apri il desktop" : "Chiudi GameMode"}

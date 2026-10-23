@@ -57,6 +57,8 @@ export interface ShellStatus {
   active: boolean;
   /** This GameMode was restarted by an update. */
   afterUpdate: boolean;
+  /** Console mode is on, but this sign-in landed on the Windows desktop once. */
+  desktopOnce: boolean;
 }
 
 export interface UpdateInfo {
@@ -299,7 +301,7 @@ export interface Catalog {
 
 export type UninstallOutcome = "started" | "removed";
 
-export type PowerAction = "shutdown" | "restart" | "sleep";
+export type PowerAction = "shutdown" | "restart" | "sleep" | "restartToDesktop";
 
 /** Trucchi: what a memory value is stored as. */
 export type CheatKind = "int" | "float" | "double";

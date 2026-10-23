@@ -519,10 +519,10 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         backups = backups.filter((b) => b.id !== args.backupId);
         return;
       case "get_console_mode":
-        return { enabled: consoleMode, active: false, afterUpdate: false };
+        return { enabled: consoleMode, active: false, afterUpdate: false, desktopOnce: false };
       case "set_console_mode":
         consoleMode = args.enabled;
-        return { enabled: consoleMode, active: false, afterUpdate: false };
+        return { enabled: consoleMode, active: false, afterUpdate: false, desktopOnce: false };
       case "check_update":
         await wait(700);
         return { version: "0.2.1", notes: "Correzioni e miglioramenti" };

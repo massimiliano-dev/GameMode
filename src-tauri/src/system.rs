@@ -10,6 +10,9 @@ pub enum PowerAction {
     Shutdown,
     Restart,
     Sleep,
+    /// Restart, and sign in on the Windows desktop once (console mode stays on).
+    #[serde(rename = "restartToDesktop")]
+    RestartToDesktop,
 }
 
 #[derive(Serialize, Clone, Copy, Debug)]
@@ -29,6 +32,11 @@ pub fn power(action: PowerAction) -> Result<()> {
         PowerAction::Restart => {
             Command::new("shutdown").args(["/r", "/t", "0"]).spawn()?;
         }
+        PowerAction::RestartToDesktop => {
+            // Only the flag differs: the shell registration is left alone.
+            crate::shell::request_desktop_boot()?;
+            Command::new("shutdown").args(["/r", "/t", "0"]).spawn()?;
+        }
         PowerAction::Sleep => unsafe {
             if !windows::Win32::System::Power::SetSuspendState(false, false, false) {
                 anyhow::bail!("sospensione non riuscita");
@@ -40,6 +48,9 @@ pub fn power(action: PowerAction) -> Result<()> {
 
 #[cfg(not(windows))]
 pub fn power(action: PowerAction) -> Result<()> {
+    if matches!(action, PowerAction::RestartToDesktop) {
+        crate::shell::request_desktop_boot()?;
+    }
     eprintln!("power action {action:?} ignored outside Windows");
     Ok(())
 }

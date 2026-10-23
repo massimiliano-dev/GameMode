@@ -22,6 +22,11 @@ pub struct ShellStatus {
     pub active: bool,
     /// This process is the new version started by an update.
     pub after_update: bool,
+    /// Console mode is on, but this session was signed in on the Windows
+    /// desktop for once ("Riavvia in modalità desktop" or B+View held at
+    /// start): GameMode waits in the tray, and the next restart is back in
+    /// console mode.
+    pub desktop_once: bool,
 }
 
 /// Splits a `Run` value into program and arguments (same rules as uninstallers).
@@ -70,6 +75,13 @@ mod imp {
         unsafe { FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()).is_ok() }
     }
 
+    /// The session is ending (a restart in progress, maybe waiting on apps
+    /// that block it).
+    pub fn shutting_down() -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SHUTTINGDOWN};
+        unsafe { GetSystemMetrics(SM_SHUTTINGDOWN) != 0 }
+    }
+
     /// GameMode is this user's shell in the registry.
     pub fn enabled() -> bool {
         RegKey::predef(HKEY_CURRENT_USER)
@@ -91,7 +103,8 @@ mod imp {
         Ok(())
     }
 
-    fn spawn_explorer() {
+    /// Starts explorer.exe: with no shell running, it becomes the desktop.
+    pub fn spawn_explorer() {
         let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
         let _ = std::process::Command::new(Path::new(&windir).join("explorer.exe")).spawn();
     }
@@ -317,12 +330,18 @@ mod imp {
         true
     }
 
+    pub fn shutting_down() -> bool {
+        false
+    }
+
     pub fn set(enabled: bool) -> Result<()> {
         ENABLED.store(enabled, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 
     pub fn start_explorer() {}
+
+    pub fn spawn_explorer() {}
 
     pub fn ensure_explorer() {}
 
@@ -385,6 +404,7 @@ pub fn console_in_front() {
 struct Start {
     as_shell: bool,
     after_update: bool,
+    desktop_once: bool,
 }
 
 static START: std::sync::OnceLock<Start> = std::sync::OnceLock::new();
@@ -392,13 +412,54 @@ static START: std::sync::OnceLock<Start> = std::sync::OnceLock::new();
 fn start() -> &'static Start {
     START.get_or_init(|| {
         let update = take_update_flag();
-        Start { as_shell: !imp::explorer_running() || update == Some(true), after_update: update.is_some() }
+        let explorer = imp::explorer_running();
+        // A stale flag is consumed even when it no longer matters.
+        let flag = take_boot_flag();
+        // Signed in as the shell, but the user asked for the desktop this
+        // once: Explorer gets the session, GameMode steps aside.
+        let asked = !explorer && update.is_none() && (flag || crate::gamepad::desktop_combo_held());
+        if asked {
+            DESKTOP_WANTED.store(true, std::sync::atomic::Ordering::SeqCst);
+            imp::spawn_explorer();
+        }
+        // Updated during a "desktop once" session: still on that desktop,
+        // Explorer already the shell.
+        let desktop_once = asked || update.is_some_and(|u| u.desktop_once);
+        let console = update.is_some_and(|u| u.console);
+        Start { as_shell: (!explorer || console) && !desktop_once, after_update: update.is_some(), desktop_once }
     })
 }
 
 pub fn status() -> ShellStatus {
     let enabled = imp::enabled();
-    ShellStatus { enabled, active: enabled && start().as_shell, after_update: start().after_update }
+    let start = start();
+    ShellStatus {
+        enabled,
+        active: enabled && start.as_shell,
+        after_update: start.after_update,
+        // Console mode turned off in this session: the next sign-in is the
+        // desktop anyway, nothing to "go back" to.
+        desktop_once: enabled && start.desktop_once,
+    }
+}
+
+/// Seconds given to Explorer to put up its taskbar in a "desktop once" sign-in.
+const DESKTOP_ONCE_WAIT_SECS: u32 = 20;
+
+/// "Desktop once": GameMode hid itself trusting Explorer to become the
+/// shell. If no taskbar shows up (explorer.exe didn't start, or crashed),
+/// the session has no shell and no window: GameMode comes back instead.
+pub fn guard_desktop_once(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        for _ in 0..DESKTOP_ONCE_WAIT_SECS {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if imp::explorer_running() {
+                return;
+            }
+        }
+        eprintln!("desktop once: Explorer never showed up, back to GameMode");
+        crate::window::bring_to_front(&app);
+    });
 }
 
 /// Console mode with nothing underneath GameMode: no desktop to step aside to.
@@ -416,18 +477,33 @@ fn update_flag() -> std::path::PathBuf {
 }
 
 /// Marks that GameMode is about to restart for an update (read by the
-/// watchdog and by the new version), noting whether it was in console mode.
+/// watchdog and by the new version), noting whether it was in console mode
+/// or on the desktop for once.
 pub fn mark_updating() {
-    let _ = std::fs::write(update_flag(), format!("{} {}", crate::model::now(), u8::from(status().active)));
+    let status = status();
+    let text = format!("{} {} {}", crate::model::now(), u8::from(status.active), u8::from(status.desktop_once));
+    let _ = std::fs::write(update_flag(), text);
 }
 
-/// `(written at, was in console mode)` of a recent update flag.
-fn read_update_flag() -> Option<(i64, bool)> {
-    let text = std::fs::read_to_string(update_flag()).ok()?;
+/// How the version being replaced was running.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct UpdateFlag {
+    console: bool,
+    desktop_once: bool,
+}
+
+/// Parses the update flag's text (`<at> <console> [<desktop once>]`, the
+/// last field missing when written by older versions) if still recent.
+fn parse_update_flag(text: &str, now: i64) -> Option<UpdateFlag> {
     let mut parts = text.split_whitespace();
     let at = parts.next()?.parse::<i64>().ok()?;
     let console = parts.next() == Some("1");
-    (crate::model::now() - at < 300).then_some((at, console))
+    let desktop_once = parts.next() == Some("1");
+    (now - at < 300).then_some(UpdateFlag { console, desktop_once })
+}
+
+fn read_update_flag() -> Option<UpdateFlag> {
+    parse_update_flag(&std::fs::read_to_string(update_flag()).ok()?, crate::model::now())
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -435,9 +511,9 @@ fn update_pending() -> bool {
     read_update_flag().is_some()
 }
 
-/// Consumes the update flag: `Some(was in console mode)` right after an update.
-fn take_update_flag() -> Option<bool> {
-    let flag = read_update_flag().map(|(_, console)| console);
+/// Consumes the update flag: `Some` right after an update.
+fn take_update_flag() -> Option<UpdateFlag> {
+    let flag = read_update_flag();
     clear_update_flag();
     flag
 }
@@ -445,6 +521,71 @@ fn take_update_flag() -> Option<bool> {
 #[cfg_attr(not(windows), allow(dead_code))]
 fn clear_update_flag() {
     let _ = std::fs::remove_file(update_flag());
+}
+
+fn boot_flag() -> std::path::PathBuf {
+    std::env::temp_dir().join("gamemode-desktop-once")
+}
+
+/// A boot flag older than this is a restart that never happened.
+const BOOT_FLAG_MAX_AGE: i64 = 24 * 3600;
+
+/// `shutdown /r` doesn't force apps to close: one refusing to end the
+/// session cancels the restart. If this process is still alive after this
+/// long and the session isn't ending, the restart didn't happen and the
+/// flag must not outlive it.
+const BOOT_FLAG_GRACE: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// Longest wait on a session that is still ending (Windows asking what to
+/// do with apps that block the restart) before the flag is withdrawn.
+const BOOT_FLAG_SHUTDOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// Asks for the next sign-in to land on the Windows desktop instead of
+/// GameMode, once, without touching the shell registration. Written right
+/// before "Riavvia in modalità desktop" restarts the PC; taken back if the
+/// PC is still up (restart cancelled) after `BOOT_FLAG_GRACE`.
+pub fn request_desktop_boot() -> Result<()> {
+    let token = boot_flag_token(crate::model::now(), std::process::id());
+    std::fs::write(boot_flag(), &token)?;
+    std::thread::spawn(move || {
+        std::thread::sleep(BOOT_FLAG_GRACE);
+        let since = std::time::Instant::now();
+        while imp::shutting_down() && since.elapsed() < BOOT_FLAG_SHUTDOWN_WAIT {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+        // A later request wrote its own flag: that one is not ours to take.
+        if std::fs::read_to_string(boot_flag()).is_ok_and(|t| t == token) && std::fs::remove_file(boot_flag()).is_ok() {
+            eprintln!("restart to desktop didn't happen: flag withdrawn");
+        }
+    });
+    Ok(())
+}
+
+/// Unique text of one request: the time it was made (what
+/// `boot_flag_valid` reads) and a nonce telling requests apart.
+fn boot_flag_token(now: i64, pid: u32) -> String {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static SEQ: AtomicU32 = AtomicU32::new(0);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+    format!("{now} {pid}-{}-{nanos}", SEQ.fetch_add(1, Ordering::SeqCst))
+}
+
+/// Whether the flag's text (written by `request_desktop_boot`) still counts:
+/// written before this boot (so a restart really followed it, and a
+/// watchdog restart of GameMode in the same session doesn't see it) and
+/// not too long ago.
+fn boot_flag_valid(text: &str, boot_time: i64, now: i64) -> bool {
+    let at = text.split_whitespace().next().and_then(|t| t.parse::<i64>().ok());
+    at.is_some_and(|at| at < boot_time && now - at < BOOT_FLAG_MAX_AGE)
+}
+
+/// Consumes the "desktop once" flag: true when a recent one was there.
+fn take_boot_flag() -> bool {
+    let path = boot_flag();
+    let boot_time = sysinfo::System::boot_time() as i64;
+    let valid = std::fs::read_to_string(&path).is_ok_and(|t| boot_flag_valid(&t, boot_time, crate::model::now()));
+    let _ = std::fs::remove_file(path);
+    valid
 }
 
 /// Links handled by packaged apps, which don't start without Explorer.
@@ -488,5 +629,39 @@ mod tests {
         assert!(!approved_disabled(&[2, 0, 0, 0]));
         assert!(approved_disabled(&[3, 0, 0, 0]));
         assert!(!approved_disabled(&[]));
+    }
+
+    #[test]
+    fn boot_flag_expires_and_rejects_garbage() {
+        assert!(boot_flag_valid("1000\n", 1030, 1000 + 60));
+        assert!(boot_flag_valid("1000", 1030, 1000 + BOOT_FLAG_MAX_AGE - 1));
+        assert!(!boot_flag_valid("1000", 1030, 1000 + BOOT_FLAG_MAX_AGE));
+        assert!(!boot_flag_valid("", 1030, 1000));
+        assert!(!boot_flag_valid("soon", 1030, 1000));
+    }
+
+    #[test]
+    fn boot_flag_token_is_unique_and_readable() {
+        let a = boot_flag_token(1000, 7);
+        let b = boot_flag_token(1000, 7);
+        assert_ne!(a, b);
+        assert!(boot_flag_valid(&a, 1030, 1000 + 60));
+    }
+
+    #[test]
+    fn update_flag_remembers_desktop_once() {
+        let flag = |console, desktop_once| Some(UpdateFlag { console, desktop_once });
+        assert_eq!(parse_update_flag("1000 1", 1010), flag(true, false));
+        assert_eq!(parse_update_flag("1000 0 1", 1010), flag(false, true));
+        assert_eq!(parse_update_flag("1000 0 0\n", 1010), flag(false, false));
+        assert_eq!(parse_update_flag("1000 0 1", 1000 + 300), None);
+        assert_eq!(parse_update_flag("", 1010), None);
+    }
+
+    #[test]
+    fn boot_flag_needs_a_boot_after_it() {
+        // Written in this very session (restart cancelled, GameMode restarted).
+        assert!(!boot_flag_valid("1000", 900, 1000 + 60));
+        assert!(!boot_flag_valid("1000", 1000, 1000 + 60));
     }
 }

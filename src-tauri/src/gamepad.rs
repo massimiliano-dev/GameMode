@@ -64,6 +64,20 @@ pub fn start(app: AppHandle) -> bool {
     }
 }
 
+/// B + View held on a controller while GameMode starts, like a console's
+/// "boot to desktop" hold. Read once, before the polling thread runs; a
+/// wired pad or a dongle works, a Bluetooth pad isn't connected yet at sign-in.
+pub fn desktop_combo_held() -> bool {
+    #[cfg(windows)]
+    {
+        xinput::combo_held_at_startup(xinput::DESKTOP_COMBO)
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 /// Edge detection and key repeat over a merged button bitmask.
 pub struct Repeater {
     prev: u32,
@@ -159,6 +173,10 @@ mod xinput {
     const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
     /// Holding View this long during a hand-off returns to GameMode.
     const VIEW_HOLD: Duration = Duration::from_millis(500);
+    /// Held at start to sign in on the Windows desktop for once.
+    pub const DESKTOP_COMBO: u32 = B | BACK;
+    /// How long a pad gets to report the start-up combination.
+    const STARTUP_WINDOW: Duration = Duration::from_millis(500);
 
     const MAPPING: &[(u32, Action)] = &[
         (DPAD_UP, Action::Up),
@@ -218,6 +236,30 @@ mod xinput {
             bits |= RT;
         }
         bits
+    }
+
+    /// Whether every button of `combo` is down on some pad right now (or
+    /// within a short window, so a pad still enumerating gets its say).
+    /// Returns at once when no pad is connected.
+    pub fn combo_held_at_startup(combo: u32) -> bool {
+        let get_state = get_state_fn();
+        let deadline = Instant::now() + STARTUP_WINDOW;
+        loop {
+            let mut any = false;
+            for slot in 0..4 {
+                let mut state = XINPUT_STATE::default();
+                if unsafe { get_state(slot, &mut state) } == 0 {
+                    any = true;
+                    if read_buttons(&state) & combo == combo {
+                        return true;
+                    }
+                }
+            }
+            if !any || Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
     }
 
     pub fn start(app: AppHandle) {
