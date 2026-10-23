@@ -24,7 +24,9 @@ mod imp {
     };
     use windows::Win32::System::Com::StructuredStorage::PropVariantToStringAlloc;
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ};
-    use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, HOT_KEY_MODIFIERS, VK_VOLUME_DOWN, VK_VOLUME_MUTE, VK_VOLUME_UP};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        RegisterHotKey, HOT_KEY_MODIFIERS, MOD_NOREPEAT, VK_VOLUME_DOWN, VK_VOLUME_MUTE, VK_VOLUME_UP,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, MSG, WM_HOTKEY};
 
     use crate::osd;
@@ -172,9 +174,15 @@ mod imp {
     pub fn hotkeys(app: AppHandle) {
         std::thread::spawn(move || unsafe {
             let mut claimed = false;
-            for (id, key) in [(HOTKEY_UP, VK_VOLUME_UP), (HOTKEY_DOWN, VK_VOLUME_DOWN), (HOTKEY_MUTE, VK_VOLUME_MUTE)] {
-                // No MOD_NOREPEAT: holding the key keeps stepping.
-                match RegisterHotKey(None, id, HOT_KEY_MODIFIERS(0), u32::from(key.0)) {
+            // Volume keys repeat (holding one keeps stepping); mute must not,
+            // or holding it would flip the state at the typematic rate.
+            let keys = [
+                (HOTKEY_UP, VK_VOLUME_UP, HOT_KEY_MODIFIERS(0)),
+                (HOTKEY_DOWN, VK_VOLUME_DOWN, HOT_KEY_MODIFIERS(0)),
+                (HOTKEY_MUTE, VK_VOLUME_MUTE, MOD_NOREPEAT),
+            ];
+            for (id, key, modifiers) in keys {
+                match RegisterHotKey(None, id, modifiers, u32::from(key.0)) {
                     Ok(()) => claimed = true,
                     Err(err) => eprintln!("volume key {}: {err}", key.0),
                 }

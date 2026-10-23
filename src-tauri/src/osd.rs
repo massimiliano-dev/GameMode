@@ -50,9 +50,10 @@ pub struct VolumeEvent {
 
 /// Whether a volume change deserves the indicator. Own changes come from a
 /// visible GameMode panel; with Explorer around and no game running, Windows
-/// shows its own flyout.
-pub fn wants(own: bool, console: bool, explorer: bool, playing: bool, enabled: bool) -> bool {
-    enabled && !own && (console || !explorer || playing)
+/// shows its own flyout — except for keys GameMode itself swallowed
+/// (`shortcut`), which never reach Windows.
+pub fn wants(own: bool, shortcut: bool, console: bool, explorer: bool, playing: bool, enabled: bool) -> bool {
+    enabled && !own && (shortcut || console || !explorer || playing)
 }
 
 /// The next level after a step: snapped to the step grid so repeated presses
@@ -117,9 +118,10 @@ pub fn combo_active(app: &AppHandle) -> bool {
 /// indicator comes up when nothing else shows it.
 pub fn on_volume(app: &AppHandle, volume: Volume, source: Option<Source>) {
     let own = source == Some(Source::Ui);
+    let shortcut = source == Some(Source::Shortcut);
     let _ = app.emit("audio://volume", VolumeEvent { level: volume.level, muted: volume.muted, own });
     let console = crate::shell::status().active;
-    if wants(own, console, crate::shell::explorer_running(), playing(app), enabled(app)) {
+    if wants(own, shortcut, console, crate::shell::explorer_running(), playing(app), enabled(app)) {
         show(app, OsdPayload { level: volume.level, muted: volume.muted, label: None });
     }
 }
@@ -152,53 +154,71 @@ pub fn toggle_mute(app: &AppHandle) {
 }
 
 /// Puts the indicator at the bottom centre of the screen the foreground
-/// window (the game) is on.
-fn place(w: &WebviewWindow) {
-    #[cfg(windows)]
-    {
-        use tauri::{PhysicalPosition, PhysicalSize};
-        use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
-        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
-        // With no foreground window this is the primary monitor.
-        let found = unsafe {
-            GetMonitorInfoW(MonitorFromWindow(GetForegroundWindow(), MONITOR_DEFAULTTONEAREST), &mut info).as_bool()
-        };
-        if !found {
-            return;
-        }
-        let screen = info.rcMonitor;
-        let cx = f64::from(screen.left + screen.right) / 2.0;
-        let cy = f64::from(screen.top + screen.bottom) / 2.0;
-        let scale = w.monitor_from_point(cx, cy).ok().flatten().map(|m| m.scale_factor()).unwrap_or(1.0);
-        let (pw, ph) = ((WIDTH * scale) as u32, (HEIGHT * scale) as u32);
-        let x = cx as i32 - (pw / 2) as i32;
-        let y = screen.bottom - ph as i32 - (MARGIN * scale) as i32;
-        let _ = w.set_size(PhysicalSize::new(pw, ph));
-        let _ = w.set_position(PhysicalPosition::new(x, y));
+/// window (the game) is on and shows it without activating it.
+///
+/// Done with raw `SetWindowPos` rather than `show()`: tao shows windows with
+/// `SW_SHOW`, which activates them and could steal focus from the game.
+/// Moving to a monitor with a different DPI makes tao rescale (and hide) the
+/// window on `WM_DPICHANGED`, so the move is repeated until it sticks.
+#[cfg(windows)]
+fn place_and_show(w: &WebviewWindow) {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowRect, IsWindowVisible, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    };
+    let Ok(raw) = w.hwnd() else { return };
+    let hwnd = HWND(raw.0 as *mut core::ffi::c_void);
+    let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+    // With no foreground window this is the primary monitor.
+    let found = unsafe {
+        GetMonitorInfoW(MonitorFromWindow(GetForegroundWindow(), MONITOR_DEFAULTTONEAREST), &mut info).as_bool()
+    };
+    if !found {
+        return;
     }
-    #[cfg(not(windows))]
-    let _ = w;
+    let screen = info.rcMonitor;
+    let cx = f64::from(screen.left + screen.right) / 2.0;
+    let cy = f64::from(screen.top + screen.bottom) / 2.0;
+    let scale = w.monitor_from_point(cx, cy).ok().flatten().map(|m| m.scale_factor()).unwrap_or(1.0);
+    let (pw, ph) = ((WIDTH * scale) as i32, (HEIGHT * scale) as i32);
+    let x = cx as i32 - pw / 2;
+    let y = screen.bottom - ph - (MARGIN * scale) as i32;
+    let wanted = RECT { left: x, top: y, right: x + pw, bottom: y + ph };
+    for _ in 0..3 {
+        unsafe {
+            let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, pw, ph, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+        let mut rect = RECT::default();
+        let placed = unsafe { GetWindowRect(hwnd, &mut rect).is_ok() && IsWindowVisible(hwnd).as_bool() };
+        if placed && rect == wanted {
+            break;
+        }
+    }
 }
 
 /// Shows (or refreshes) the indicator without taking focus from the game;
 /// it goes away by itself after `SHOW_FOR`.
 pub fn show(app: &AppHandle, payload: OsdPayload) {
     let Some(w) = window(app) else { return };
-    place(&w);
-    let _ = app.emit_to(LABEL, "osd://show", payload);
-    let _ = w.show();
-    #[cfg(windows)]
-    if let Ok(hwnd) = w.hwnd() {
-        crate::window::raise_topmost_raw(hwnd.0 as isize);
-    }
+    // Bumped first, so an older timer about to fire no longer matches.
     let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    let _ = app.emit_to(LABEL, "osd://show", payload);
+    #[cfg(windows)]
+    place_and_show(&w);
+    #[cfg(not(windows))]
+    let _ = w.show();
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(SHOW_FOR);
-        if GENERATION.load(std::sync::atomic::Ordering::SeqCst) == generation {
-            hide(&app);
-        }
+        // Checked on the main thread, in line with the window calls of a
+        // newer show, so a stale timer can't hide it.
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if GENERATION.load(std::sync::atomic::Ordering::SeqCst) == generation {
+                hide(&handle);
+            }
+        });
     });
 }
 
@@ -226,16 +246,18 @@ mod tests {
     #[test]
     fn own_changes_and_windows_flyout_skip_the_indicator() {
         // Keys in console mode, no game: ours to show.
-        assert!(wants(false, true, false, false, true));
-        // Explorer in the background in console mode still shows nothing.
-        assert!(wants(false, true, true, false, true));
-        // Desktop mode, Windows' flyout handles it.
-        assert!(!wants(false, false, true, false, true));
+        assert!(wants(false, false, true, false, false, true));
+        // Explorer in the background in console mode: still ours.
+        assert!(wants(false, false, true, true, false, true));
+        // Desktop mode, a change from another app: Windows' flyout handles it.
+        assert!(!wants(false, false, false, true, false, true));
+        // Desktop mode but keys GameMode swallowed: Windows shows nothing.
+        assert!(wants(false, true, false, true, false, true));
         // Desktop mode but a game is up: flyouts don't reach it.
-        assert!(wants(false, false, true, true, true));
+        assert!(wants(false, false, false, true, true, true));
         // The quick menu or the overlay already shows the bar.
-        assert!(!wants(true, true, false, true, true));
+        assert!(!wants(true, false, true, false, true, true));
         // Switched off.
-        assert!(!wants(false, true, false, true, false));
+        assert!(!wants(false, true, true, false, true, false));
     }
 }
