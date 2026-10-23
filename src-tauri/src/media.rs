@@ -324,14 +324,22 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
+    use std::sync::OnceLock;
+
     use anyhow::Result;
     use tauri::AppHandle;
 
     use super::{MediaAction, NowPlaying};
 
-    fn fake(playing: bool) -> NowPlaying {
+    /// Fake tracks cycled by next/prev, so the change shows in the UI.
+    const TRACKS: &[&str] = &["Brano di prova", "Secondo brano", "Terzo brano"];
+
+    /// Kept from `init` so `control` publishes like the real session does.
+    static APP: OnceLock<AppHandle> = OnceLock::new();
+
+    fn fake(title: &str, playing: bool) -> NowPlaying {
         NowPlaying {
-            title: "Brano di prova".into(),
+            title: title.into(),
             artist: "Artista".into(),
             album: "Album".into(),
             playing,
@@ -342,18 +350,26 @@ mod imp {
     }
 
     pub fn init(app: AppHandle) {
-        super::publish(&app, Some(fake(true)));
+        super::publish(&app, Some(fake(TRACKS[0], true)));
+        let _ = APP.set(app);
     }
 
     pub fn control(action: MediaAction) -> Result<()> {
-        let playing = super::now_playing().is_some_and(|n| n.playing);
-        let next = match action {
-            MediaAction::Play => true,
-            MediaAction::Pause => false,
-            MediaAction::Toggle => !playing,
-            MediaAction::Next | MediaAction::Prev => playing,
+        let current = super::now_playing();
+        let playing = current.as_ref().is_some_and(|n| n.playing);
+        let i = current.and_then(|n| TRACKS.iter().position(|t| *t == n.title)).unwrap_or(0);
+        let (i, playing) = match action {
+            MediaAction::Play => (i, true),
+            MediaAction::Pause => (i, false),
+            MediaAction::Toggle => (i, !playing),
+            MediaAction::Next => ((i + 1) % TRACKS.len(), playing),
+            MediaAction::Prev => ((i + TRACKS.len() - 1) % TRACKS.len(), playing),
         };
-        *super::CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = Some(fake(next));
+        let now = Some(fake(TRACKS[i], playing));
+        match APP.get() {
+            Some(app) => super::publish(app, now),
+            None => *super::CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = now,
+        }
         Ok(())
     }
 }

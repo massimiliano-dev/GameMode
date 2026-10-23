@@ -159,7 +159,7 @@ export function QuickMenu() {
           />
         )}
 
-        <MusicPanel active showOpen />
+        <MusicPanel active showOpen onOpened={close} />
 
         <div className="qm-list">
           <QmButton

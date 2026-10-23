@@ -30,6 +30,8 @@ export function MusicPanel(props: {
   active: boolean;
   /** Offers to open Spotify when nothing is playing. */
   showOpen?: boolean;
+  /** Called once Spotify was asked to open: GameMode steps aside for it. */
+  onOpened?: () => void;
 }) {
   const enabled = useApp((s) => s.settings?.musicControls ?? true);
   const toast = useApp((s) => s.toast);
@@ -44,7 +46,15 @@ export function MusicPanel(props: {
   // Elements can vanish under the focus (a row's session ends, the open
   // button gives way to the track card); then focus is put back nearby.
   const focused = useRef<string | null>(null);
-  const active = enabled && props.active;
+  // A hidden or minimized window (Spotify or the game in front) does not poll.
+  const [visible, setVisible] = useState(() => document.visibilityState !== "hidden");
+  const active = enabled && props.active && visible;
+
+  useEffect(() => {
+    const update = () => setVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
 
   useEffect(() => on<NowPlaying | null>("media://now-playing", setTrack), []);
 
@@ -103,10 +113,18 @@ export function MusicPanel(props: {
   const control = (action: "toggle") => {
     if (!track) return;
     setTrack({ ...track, playing: !track.playing });
-    void api.mediaControl(action).catch((e) => toast(String(e), "error"));
+    void api.mediaControl(action).catch((e) => {
+      // The player refused: no event will come, so show the real state again.
+      void api.mediaNowPlaying().then(setTrack).catch(() => {});
+      toast(String(e), "error");
+    });
   };
 
-  const open = () => void api.openMusic().catch((e) => toast(String(e), "error"));
+  const open = () =>
+    void api
+      .openMusic()
+      .then(() => props.onOpened?.())
+      .catch((e) => toast(String(e), "error"));
 
   /** Sends the pending change of `key` when nothing else is in flight for it. */
   const flush = (key: string) => {
@@ -186,7 +204,7 @@ export function MusicPanel(props: {
       )}
 
       {apps.length > 0 && (
-        <div className="qm-mixer" data-nav-group="qm-mixer">
+        <div className="qm-mixer">
           {apps.map((app) => (
             <MixerRow key={app.key} app={app} onAdjust={(dir) => adjust(app, dir)} onToggleMute={() => toggleMute(app)} {...focusProps(app.key)} />
           ))}
