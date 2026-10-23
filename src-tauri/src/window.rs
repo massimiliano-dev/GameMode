@@ -75,14 +75,23 @@ pub fn is_foreground(app: &AppHandle) -> bool {
     }
 }
 
-#[cfg(windows)]
 pub fn is_hwnd_foreground(raw: isize) -> bool {
-    win::is_foreground(win::hwnd(raw))
+    #[cfg(windows)]
+    {
+        win::is_foreground(win::hwnd(raw))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = raw;
+        true
+    }
 }
 
-#[cfg(windows)]
 pub fn force_foreground_raw(raw: isize) {
+    #[cfg(windows)]
     win::force_foreground(win::hwnd(raw));
+    #[cfg(not(windows))]
+    let _ = raw;
 }
 
 /// Executable name (lowercase, e.g. "steam.exe") of the foreground window's process.
@@ -133,6 +142,32 @@ pub fn raise_topmost_raw(raw: isize) {
 }
 
 /// Brings the top-level window of one of `pids` to the front (the running game).
+pub fn is_minimized(app: &AppHandle) -> bool {
+    main_window(app).and_then(|w| w.is_minimized().ok()).unwrap_or(false)
+}
+
+/// The main window of a game's processes (the largest visible one).
+pub fn game_window(pids: &[u32]) -> Option<isize> {
+    #[cfg(windows)]
+    {
+        win::find_window(pids).map(|h| h.0 as isize)
+    }
+    #[cfg(not(windows))]
+    {
+        // No window lookup here (dev on macOS): the process stands in.
+        pids.first().map(|&p| p as isize)
+    }
+}
+
+/// Brings the running game back and gets GameMode out of its way.
+pub fn resume_game(app: &AppHandle, pids: &[u32]) -> bool {
+    let found = focus_process(pids);
+    if found {
+        minimize(app);
+    }
+    found
+}
+
 pub fn focus_process(pids: &[u32]) -> bool {
     #[cfg(windows)]
     {
@@ -154,11 +189,11 @@ pub fn focus_process(pids: &[u32]) -> bool {
 #[cfg(windows)]
 mod win {
     use windows::core::BOOL;
-    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::Foundation::{HWND, LPARAM, RECT};
     use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_MENU};
     use windows::Win32::UI::WindowsAndMessaging::{
-        BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindow,
+        BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindow, GetWindowRect,
         GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, GW_OWNER,
         SW_RESTORE, SW_SHOW,
     };
@@ -199,6 +234,7 @@ mod win {
     struct Search<'a> {
         pids: &'a [u32],
         found: Option<HWND>,
+        area: i64,
     }
 
     unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -208,17 +244,22 @@ mod win {
             GetWindowThreadProcessId(hwnd, Some(&mut pid));
             let top_level = GetWindow(hwnd, GW_OWNER).map(|o| o.is_invalid()).unwrap_or(true);
             if search.pids.contains(&pid) && IsWindowVisible(hwnd).as_bool() && top_level {
-                search.found = Some(hwnd);
-                return BOOL(0);
+                // Prefer the game itself over splash screens and launchers.
+                let mut rect = RECT::default();
+                let _ = GetWindowRect(hwnd, &mut rect);
+                let area = i64::from(rect.right - rect.left) * i64::from(rect.bottom - rect.top);
+                if search.found.is_none() || area > search.area {
+                    search.found = Some(hwnd);
+                    search.area = area;
+                }
             }
         }
         BOOL(1)
     }
 
     pub fn find_window(pids: &[u32]) -> Option<HWND> {
-        let mut search = Search { pids, found: None };
+        let mut search = Search { pids, found: None, area: 0 };
         unsafe {
-            // Returns an error when the callback stops early; that's expected.
             let _ = EnumWindows(Some(visit), LPARAM(&mut search as *mut Search as isize));
         }
         search.found

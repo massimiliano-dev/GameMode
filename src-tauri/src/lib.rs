@@ -276,8 +276,8 @@ fn get_session(state: State<AppState>) -> Option<SessionState> {
 }
 
 #[tauri::command]
-fn resume_game(state: State<AppState>) -> bool {
-    window::focus_process(&state.launcher.running_pids())
+fn resume_game(app: AppHandle, state: State<AppState>) -> bool {
+    window::resume_game(&app, &state.launcher.running_pids())
 }
 
 #[tauri::command]
@@ -310,7 +310,7 @@ fn set_muted(muted: bool) -> CmdResult<()> {
 fn overlay_hide(app: AppHandle, state: State<AppState>, resume: bool) {
     overlay::hide(&app);
     if resume {
-        window::focus_process(&state.launcher.running_pids());
+        window::resume_game(&app, &state.launcher.running_pids());
     }
 }
 

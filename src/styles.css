@@ -1319,10 +1319,17 @@ dd {
   animation: indeterminate 1.4s var(--ease) infinite;
 }
 
+.launch-note {
+  max-width: 38ch;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
 .launch-hint {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 1.4rem;
   margin-top: 0.4rem;
   color: var(--text-dim);
   font-size: 0.9rem;

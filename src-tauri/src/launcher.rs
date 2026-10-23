@@ -21,8 +21,16 @@ use crate::model::{now, Game, LaunchSpec, Session, Store};
 use crate::{window, AppState};
 
 const POLL: Duration = Duration::from_secs(2);
-/// How long a store client may take before the game process shows up.
-const LAUNCH_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a store client may take before the game process shows up
+/// (updates, sign-in, shader caches…).
+const LAUNCH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// Game Pass games can sit in Gaming Services for minutes on first start.
+const LAUNCH_TIMEOUT_XBOX: Duration = Duration::from_secs(10 * 60);
+/// Processes running this long count as the game even without a window
+/// GameMode can see (UWP games draw in a frame owned by another process).
+const CONFIRM_WITHOUT_WINDOW: Duration = Duration::from_secs(60);
+/// How many polls GameMode keeps pushing a new game window to the front.
+const HANDOFF_TRIES: u32 = 15;
 /// Games often restart themselves (launcher → game, anti-cheat…).
 const EXIT_GRACE: Duration = Duration::from_secs(10);
 
@@ -100,6 +108,7 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<()> {
     *launcher.active.lock().unwrap() = Some(Active { generation, state: state.clone(), pids: Vec::new() });
     let _ = app.emit("game://state", &state);
 
+    let timeout = if game.store == Store::Xbox { LAUNCH_TIMEOUT_XBOX } else { LAUNCH_TIMEOUT };
     let target = Target {
         dir: game.install_dir.as_deref().map(normalize).filter(|d| d.len() > 3),
         // Xbox game ids are `xbox:<PackageFamilyName>`.
@@ -107,7 +116,7 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<()> {
         child_pid,
     };
     let app = app.clone();
-    std::thread::spawn(move || monitor(app, generation, target));
+    std::thread::spawn(move || monitor(app, generation, target, timeout));
     Ok(())
 }
 
@@ -173,15 +182,22 @@ fn spawn(app: &AppHandle, spec: &LaunchSpec) -> Result<Option<u32>> {
     }
 }
 
-fn monitor(app: AppHandle, generation: u64, target: Target) {
+fn monitor(app: AppHandle, generation: u64, target: Target, timeout: Duration) {
     let launcher = &app.state::<AppState>().launcher;
     let refresh = ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet);
     let mut sys = System::new();
     let mut probe = Probe::default();
     let started = Instant::now();
-    let mut first_seen: Option<Instant> = None;
+    // Set once the game is really up: its window showed, or its processes
+    // kept running for a while. Before that, store helpers (Game Pass's
+    // launch helper, licence checks, updaters) come and go without ending
+    // the launch.
+    let mut running_since: Option<Instant> = None;
+    let mut alive_since: Option<Instant> = None;
     let mut last_seen = Instant::now();
-    let mut handed_off = false;
+    // The game window last handed the screen, and attempts at it so far.
+    let mut handed: Option<isize> = None;
+    let mut tries = 0;
 
     loop {
         // A newer launch took over.
@@ -194,34 +210,58 @@ fn monitor(app: AppHandle, generation: u64, target: Target) {
 
         if !pids.is_empty() {
             last_seen = Instant::now();
-            let was_launching = first_seen.is_none();
-            let first = *first_seen.get_or_insert(last_seen);
+            let alive = *alive_since.get_or_insert(last_seen);
             // Hand the screen to the game only once its window exists. GameMode
             // stays fullscreen behind it, so the desktop never shows through
-            // while a launcher or anti-cheat process starts first.
-            if !handed_off {
-                handed_off = window::focus_process(&pids);
+            // while a launcher or anti-cheat process starts first. A new
+            // window (splash → game) gets handed the screen again; the same
+            // one doesn't, so coming back to GameMode with Guide sticks.
+            let window = window::game_window(&pids);
+            if let Some(hwnd) = window {
+                if handed != Some(hwnd) {
+                    handed = Some(hwnd);
+                    tries = 0;
+                }
+                if tries < HANDOFF_TRIES {
+                    tries += 1;
+                    window::force_foreground_raw(hwnd);
+                    // Step aside so GameMode can't cover the game; if the
+                    // foreground lock held, this also activates the game,
+                    // the next window down.
+                    #[cfg(windows)]
+                    window::minimize(&app);
+                    if window::is_hwnd_foreground(hwnd) {
+                        tries = HANDOFF_TRIES;
+                    }
+                }
+            }
+            let was_launching = running_since.is_none();
+            if was_launching && (window.is_some() || alive.elapsed() > CONFIRM_WITHOUT_WINDOW) {
+                running_since = Some(last_seen);
             }
             let state = launcher.update(generation, |a| {
                 a.pids = pids;
-                a.state.phase = Phase::Running;
-                a.state.seconds = first.elapsed().as_secs();
+                if let Some(since) = running_since {
+                    a.state.phase = Phase::Running;
+                    a.state.seconds = since.elapsed().as_secs();
+                }
             });
-            if was_launching {
+            if was_launching && running_since.is_some() {
                 if let Some(state) = state {
                     let _ = app.emit("game://state", &state);
                 }
             }
         } else {
-            match first_seen {
-                None if started.elapsed() > LAUNCH_TIMEOUT => {
+            alive_since = None;
+            match running_since {
+                None if started.elapsed() > timeout => {
                     // Never detected: the game may well be running anyway, so
                     // don't pull the launcher over it.
                     end(&app, generation, Phase::Failed, 0);
                     return;
                 }
-                Some(first) if last_seen.elapsed() > EXIT_GRACE => {
-                    let seconds = last_seen.duration_since(first).as_secs();
+                Some(since) if last_seen.elapsed() > EXIT_GRACE => {
+                    let seconds = last_seen.duration_since(since).as_secs();
                     end(&app, generation, Phase::Exited, seconds);
                     return;
                 }
@@ -277,7 +317,8 @@ fn end(app: &AppHandle, generation: u64, phase: Phase, seconds: u64) {
     let _ = app.emit("game://state", &session);
     crate::performance::end();
     crate::overlay::hide(app);
-    if phase == Phase::Exited {
+    // A failed launch leaves GameMode where it is, unless it stepped aside.
+    if phase == Phase::Exited || window::is_minimized(app) {
         window::bring_to_front(app);
     }
 }
@@ -326,8 +367,15 @@ pub fn preload_steam() {
 
 /// Ends the running game's processes.
 pub fn close_running(app: &AppHandle) -> bool {
-    let pids = app.state::<AppState>().launcher.running_pids();
+    let launcher = &app.state::<AppState>().launcher;
+    let pids = launcher.running_pids();
     if pids.is_empty() {
+        // Still starting: stop waiting for it.
+        let generation = launcher.active.lock().unwrap().as_ref().map(|a| a.generation);
+        if let Some(generation) = generation {
+            end(app, generation, Phase::Exited, 0);
+            return true;
+        }
         return false;
     }
     let mut sys = System::new();
