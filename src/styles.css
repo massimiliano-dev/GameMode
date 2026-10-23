@@ -2232,3 +2232,162 @@ html.is-overlay .qm-volume[data-nav-current] {
   background: var(--surface-strong);
   box-shadow: inset 0 0 0 0.14rem var(--focus);
 }
+
+/* ---------- Game card (description, score, screenshots, time to beat) ---------- */
+
+.info-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.info-chips {
+  flex: 1;
+  min-width: 0;
+}
+
+.score {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 0.8rem 0.3rem 0.3rem;
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.score-value {
+  display: grid;
+  place-items: center;
+  min-width: 2.4rem;
+  height: 2.4rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #0a0d12;
+}
+
+.score-good .score-value {
+  background: #66cc33;
+}
+
+.score-mid .score-value {
+  background: #ffcc33;
+}
+
+.score-low .score-value {
+  background: #ff5c5c;
+}
+
+.score-label {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.info-summary {
+  max-width: 64rem;
+  font-size: 1.02rem;
+  line-height: 1.55;
+  color: var(--text-dim);
+  text-wrap: pretty;
+}
+
+.info-fold {
+  display: block;
+  position: relative;
+  padding: 0.2rem 0.6rem;
+  margin: 0 -0.6rem;
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  font: inherit;
+  text-align: left;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  transition: background 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+
+.info-fold.is-open {
+  -webkit-line-clamp: unset;
+  display: block;
+}
+
+.info-fold:focus {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 0.14rem var(--focus);
+}
+
+.info-more {
+  display: block;
+  margin-top: 0.3rem;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.shots {
+  display: block;
+  position: relative;
+  width: min(100%, 56rem);
+  aspect-ratio: 16 / 9;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.5);
+  transition: box-shadow 0.15s var(--ease);
+}
+
+.shots:focus {
+  box-shadow: 0 0 0 0.2rem var(--focus), 0 1rem 3rem rgba(0, 0, 0, 0.5);
+}
+
+.shot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation: rise 0.25s var(--ease);
+}
+
+.shot-dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.8rem;
+  display: flex;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.shot-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.45);
+  box-shadow: 0 0 0.4rem rgba(0, 0, 0, 0.6);
+}
+
+.shot-dot.is-active {
+  background: var(--accent);
+}
+
+.stats.ttb {
+  margin-top: 0.4rem;
+}
+
+.ttb-progress {
+  max-width: 30rem;
+  margin-top: 1rem;
+}
+
+.ttb-progress .meter {
+  margin-bottom: 0.5rem;
+}

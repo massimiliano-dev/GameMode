@@ -17,6 +17,7 @@ mod gamepad;
 mod launcher;
 mod library;
 mod live;
+mod metadata;
 mod model;
 mod overlay;
 mod performance;
@@ -85,6 +86,7 @@ fn scan(app: &AppHandle) -> LibraryUpdate {
     let update = LibraryUpdate { games, errors: result.errors };
     let _ = app.emit("library://updated", &update);
     artwork::refresh(app, false);
+    metadata::refresh(app, false);
     update
 }
 
@@ -267,10 +269,19 @@ fn get_settings(state: State<AppState>) -> Settings {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> CmdResult<Settings> {
-    let key_changed = state.db.lock().settings.steamgriddb_key != settings.steamgriddb_key;
+    let (key_changed, igdb_changed) = {
+        let old = &state.db.lock().settings;
+        (
+            old.steamgriddb_key != settings.steamgriddb_key,
+            old.igdb_client_id != settings.igdb_client_id || old.igdb_client_secret != settings.igdb_client_secret,
+        )
+    };
     state.db.update(|d| d.settings = settings.clone()).map_err(err)?;
     if key_changed {
         artwork::refresh(&app, true);
+    }
+    if igdb_changed {
+        metadata::refresh(&app, true);
     }
     Ok(settings)
 }
@@ -707,6 +718,11 @@ fn refresh_artwork(app: AppHandle) {
 }
 
 #[tauri::command]
+fn refresh_metadata(app: AppHandle) {
+    metadata::refresh(&app, true);
+}
+
+#[tauri::command]
 async fn list_storefronts() -> CmdResult<Vec<storefront::Storefront>> {
     blocking(|| Ok(storefront::list())).await
 }
@@ -740,6 +756,7 @@ pub fn run() {
             let live_file = live::file_in(&data_dir);
             let db = Db::open(&data_dir)?;
             db.update(|d| d.upgrade_artwork(artwork::PIPELINE_VERSION))?;
+            db.update(|d| d.upgrade_meta(metadata::PIPELINE_VERSION))?;
             app.manage(AppState {
                 db,
                 launcher: Launcher::default(),
@@ -883,6 +900,7 @@ pub fn run() {
             add_collection,
             remove_collection,
             set_in_collection,
+            refresh_metadata,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

@@ -6,6 +6,7 @@ import { CollectionsDialog } from "../components/CollectionsDialog";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { SavesDialog } from "../components/SavesDialog";
 import { Cover } from "../components/GameCard";
+import { GameInfo } from "../components/GameInfo";
 import { SteamExtras } from "../components/SteamExtras";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
@@ -36,11 +37,16 @@ export function GameDetail({ gameId }: { gameId: string }) {
 
   useEffect(() => setBackdrop(gameId), [gameId, setBackdrop]);
   useScreenFocus(undefined, !!game);
-  useHints([
-    { button: "A", label: "Seleziona" },
-    { button: "menu", label: "Opzioni" },
-    { button: "B", label: "Indietro" },
-  ]);
+  const shots = game?.meta?.screenshots.length ?? 0;
+  useHints(
+    [
+      { button: "A", label: "Seleziona" },
+      ...(shots > 1 ? [{ button: "LT", alt: "RT", label: "Screenshot" } as const] : []),
+      { button: "menu", label: "Opzioni" },
+      { button: "B", label: "Indietro" },
+    ],
+    [shots > 1],
+  );
   useAction((action, repeat) => {
     if (action === "menu" && !repeat && game && !dialog) {
       setDialog("options");
@@ -169,6 +175,7 @@ export function GameDetail({ gameId }: { gameId: string }) {
             <Cover game={game} />
           </div>
         </div>
+        <GameInfo game={game} />
         {game.steamAppid && game.store === "steam" && <SteamExtras appid={game.steamAppid} />}
       </div>
       <AnimatePresence>

@@ -103,6 +103,44 @@ pub struct Game {
     pub last_played: Option<i64>,
     #[serde(default)]
     pub playtime_secs: u64,
+    /// Store page facts (description, genres, score, time to beat).
+    #[serde(default)]
+    pub meta: Option<GameMeta>,
+    /// Unix seconds of the last metadata lookup that found nothing.
+    #[serde(default)]
+    pub meta_checked_at: Option<i64>,
+}
+
+/// How long a game takes, in seconds, as reported by IGDB.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TimeToBeat {
+    /// Main story only.
+    pub main: Option<u64>,
+    /// Main story plus side content.
+    pub extra: Option<u64>,
+    /// Everything.
+    pub complete: Option<u64>,
+}
+
+/// What the store pages know about a game, cached in the library.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GameMeta {
+    pub summary: Option<String>,
+    pub genres: Vec<String>,
+    pub developer: Option<String>,
+    /// Release date as the source prints it ("25 feb 2022", "2021-11-09").
+    pub release_date: Option<String>,
+    /// 0-100.
+    pub critic_score: Option<u8>,
+    /// "metacritic" or "igdb"; tells the UI what to call the score.
+    pub score_source: Option<String>,
+    /// Local files under the artwork folder.
+    pub screenshots: Vec<String>,
+    pub time_to_beat: Option<TimeToBeat>,
+    /// IGDB was asked about this game, so the gaps that remain are real.
+    pub igdb_checked: bool,
 }
 
 impl Game {
@@ -122,6 +160,8 @@ impl Game {
             added_at: 0,
             last_played: None,
             playtime_secs: 0,
+            meta: None,
+            meta_checked_at: None,
         }
     }
 
@@ -140,6 +180,8 @@ impl Game {
         self.added_at = old.added_at;
         self.last_played = old.last_played;
         self.playtime_secs = old.playtime_secs;
+        self.meta = old.meta.clone();
+        self.meta_checked_at = old.meta_checked_at;
     }
 }
 
@@ -233,6 +275,10 @@ pub struct Settings {
     pub wand_combo: bool,
     /// Freeze the game while Wand has the screen.
     pub wand_pause: bool,
+    /// Twitch app credentials for IGDB (descriptions of non-store games,
+    /// critic score, time to beat).
+    pub igdb_client_id: Option<String>,
+    pub igdb_client_secret: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -266,6 +312,8 @@ impl Default for Settings {
             wand_backtick: false,
             wand_combo: false,
             wand_pause: true,
+            igdb_client_id: None,
+            igdb_client_secret: None,
         }
     }
 }
