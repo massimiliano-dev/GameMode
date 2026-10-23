@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { ConsoleSettings } from "../components/ConsoleSettings";
+import { DiagnosticsSettings } from "../components/DiagnosticsSettings";
 import { EmulatorSettings } from "../components/EmulatorSettings";
 import { SystemSettings } from "../components/SystemSettings";
 import { UpdateSettings } from "../components/UpdateSettings";
@@ -441,6 +442,7 @@ export function Settings() {
           <>
             <SystemSettings settings={settings} />
             <ConsoleSettings />
+            <DiagnosticsSettings />
           </>
         )}
 

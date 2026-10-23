@@ -2980,3 +2980,61 @@ html.is-keyboard .osk-done[data-nav-current] {
   color: var(--text-dim);
   font-size: 0.95rem;
 }
+
+/* Diagnostics: log tail (Settings) and the safe-mode screen */
+.diag-log {
+  margin: 0.4rem 0 0;
+  padding: 0.9rem 1rem;
+  max-height: 18rem;
+  overflow: auto;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--line);
+  font: 0.78rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.safe-mode {
+  padding: var(--gutter);
+  gap: 1.3rem;
+  overflow: auto;
+  max-width: 68rem;
+}
+
+.safe-mode-badge {
+  width: fit-content;
+  padding: 0.3rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(232, 67, 75, 0.18);
+  color: #ffb3b7;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.safe-mode > p {
+  margin: 0;
+  max-width: 52rem;
+  color: var(--text-dim);
+}
+
+.safe-mode-crash {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 1rem 1.2rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.safe-mode-crash strong {
+  font-size: 1.1rem;
+}
+
+.safe-mode .row-title {
+  padding: 0;
+  margin-bottom: 0.5rem;
+  color: var(--text-dim);
+}

@@ -95,6 +95,8 @@ let radios = { wifi: true, bluetooth: true };
 let wifiConnected = "Casa";
 let btPaired = ["pad"];
 let consoleMode = false;
+// `clear_crashes` was called: `startup_info` stops reporting the simulated crash.
+let crashesCleared = false;
 let backups: { id: string; created: number; automatic: boolean; bytes: number }[] = [
   { id: "b2", created: now() - 2 * day, automatic: false, bytes: 2_400_000 },
 ];
@@ -608,6 +610,36 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "set_console_mode":
         consoleMode = args.enabled;
         return { enabled: consoleMode, active: false, afterUpdate: false, desktopOnce: false };
+      case "startup_info": {
+        // `?safe` or `?recovered` in the browser's URL simulate the watchdog.
+        const q = new URLSearchParams(window.location.search);
+        const crashed = !crashesCleared && (q.has("safe") || q.has("recovered"));
+        return {
+          recovered: q.has("recovered") ? 1 : 0,
+          safeMode: q.has("safe"),
+          lastCrash: crashed ? { at: now() - 40, exitCode: 0xc0000409, hung: false } : null,
+          lastCrashDescription: crashed ? "Errore interno (panic)" : null,
+          lastPanic: crashed && q.has("safe") ? "panic at src/launcher.rs:120: called `Option::unwrap()` on a `None` value" : null,
+          crashCount: !crashed ? 0 : q.has("safe") ? 4 : 1,
+          logPath: "C:\\Users\\demo\\AppData\\Local\\it.maxpolce.gamemode\\logs\\gamemode.log",
+        };
+      }
+      case "read_log":
+        return [
+          "2026-10-23 08:00:01 [app] INFO  gamemode_lib: GameMode 0.2.6 starting, args []",
+          "2026-10-23 08:00:01 [app] INFO  gamemode_lib: console mode on, recovered 0, safe mode false, after update false",
+          "2026-10-23 08:12:40 [app] INFO  gamemode_lib: launching Elden Ring (steam:mock-0)",
+          "2026-10-23 09:02:11 [app] WARN  launcher: saving session failed: permesso negato",
+          "2026-10-23 09:02:12 [app] PANIC src/launcher.rs:120: called `Option::unwrap()` on a `None` value",
+          "2026-10-23 09:02:13 [watchdog] INFO  shell: GameMode ended with exit code 0xC0000409",
+          "2026-10-23 09:02:15 [watchdog] INFO  shell: GameMode started again with [\"--recovered\", \"1\"]",
+        ].join("\n");
+      case "export_log":
+        await wait(500);
+        return "/Users/demo/Desktop/gamemode-log.txt";
+      case "clear_crashes":
+        crashesCleared = true;
+        return;
       case "check_update":
         await wait(700);
         return { version: "0.2.1", notes: "Correzioni e miglioramenti" };

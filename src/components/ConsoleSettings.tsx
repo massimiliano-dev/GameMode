@@ -86,7 +86,7 @@ export function ConsoleSettings() {
           <ConfirmDialog
             key="console"
             title="Attivare la modalità console?"
-            text="Dal prossimo accesso a Windows vedrai solo GameMode: niente desktop, barra o menu Start. I programmi che partono con Windows li avvia GameMode. Per il desktop usa Menu rapido → Vai al desktop; se GameMode si chiude per errore il desktop riparte da solo. Puoi disattivarla qui in ogni momento."
+            text="Dal prossimo accesso a Windows vedrai solo GameMode: niente desktop, barra o menu Start. I programmi che partono con Windows li avvia GameMode. Per il desktop usa Menu rapido → Vai al desktop; se GameMode si chiude per errore viene riavviato da solo e, dopo più errori di seguito, si apre il desktop in modalità provvisoria. Puoi disattivarla qui in ogni momento."
             confirmLabel="Attiva"
             onCancel={() => setConfirm(false)}
             onConfirm={() => {

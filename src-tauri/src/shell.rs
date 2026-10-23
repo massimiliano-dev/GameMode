@@ -12,6 +12,12 @@ pub const WATCHDOG_ARG: &str = "--watchdog";
 /// Also passed to the watchdog: `--live <live-session file>`, so it can thaw
 /// games GameMode left frozen (Quick Resume) if it dies.
 pub const LIVE_ARG: &str = "--live";
+/// Passed by the watchdog to the GameMode it starts again after a crash:
+/// `--recovered <n>` (n = crashes in a row so far).
+pub const RECOVERED_ARG: &str = "--recovered";
+/// Passed by the watchdog after too many crashes in a row: Explorer is
+/// already running, GameMode starts as a plain window with recovery options.
+pub const SAFE_MODE_ARG: &str = "--safe-mode";
 
 #[derive(Serialize, Clone, Copy, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -48,12 +54,15 @@ mod imp {
 
     use anyhow::{Context, Result};
     use windows::core::{w, PCWSTR};
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE};
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, TerminateProcess, WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION,
+        PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+    };
     use windows::core::BOOL;
     use windows::Win32::Foundation::{HWND, LPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, FindWindowW, GetClassNameW, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOWNA,
+        EnumWindows, FindWindowW, GetClassNameW, IsHungAppWindow, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOWNA,
     };
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
     use winreg::{RegKey, HKEY};
@@ -173,14 +182,55 @@ mod imp {
         }
     }
 
-    /// Body of the watchdog process.
+    /// How often the watchdog looks at GameMode while waiting for it to end.
+    const HANG_POLL_MS: u32 = 5_000;
+    /// Polls in a row with the window not answering (Task Manager's own 5 s
+    /// criterion each) before the watchdog gives up on it: 30 s.
+    const HANG_POLLS: u32 = 6;
+
+    /// Body of the watchdog process: waits for GameMode to end, then brings
+    /// the desktop back (clean exit), starts GameMode again (crash) or
+    /// starts it in safe mode (crashes in a row). A GameMode whose window
+    /// stops answering with no game running is terminated and treated as a
+    /// crash.
     pub fn run_watchdog(pid: u32) {
+        use crate::diag::{self, Recovery};
+
+        log::info!("watchdog: following GameMode pid {pid}");
+        let mut exit_code = 0u32;
         unsafe {
-            if let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
-                WaitForSingleObject(handle, INFINITE);
+            // Without PROCESS_TERMINATE the watchdog still works, minus the hang rescue.
+            let full = PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE;
+            let handle = OpenProcess(full, false, pid)
+                .or_else(|_| OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, false, pid))
+                .or_else(|_| OpenProcess(PROCESS_SYNCHRONIZE, false, pid));
+            if let Ok(handle) = handle {
+                let mut hung_polls = 0u32;
+                loop {
+                    if WaitForSingleObject(handle, HANG_POLL_MS) == WAIT_OBJECT_0 {
+                        break;
+                    }
+                    let hung = crate::window::win::find_window(&[pid]).is_some_and(|w| IsHungAppWindow(w).as_bool());
+                    hung_polls = if hung { hung_polls + 1 } else { 0 };
+                    if hung_polls == 1 {
+                        log::warn!("watchdog: GameMode's window stopped answering");
+                    }
+                    if hung_polls >= HANG_POLLS && !game_in_progress() {
+                        log::error!("watchdog: GameMode hung for {} s with no game running: terminating it", HANG_POLLS * HANG_POLL_MS / 1000);
+                        if TerminateProcess(handle, diag::HUNG_EXIT_CODE).is_ok() {
+                            WaitForSingleObject(handle, INFINITE);
+                            break;
+                        }
+                        hung_polls = 0;
+                    }
+                }
+                let _ = GetExitCodeProcess(handle, &mut exit_code);
                 let _ = CloseHandle(handle);
+            } else {
+                log::warn!("watchdog: can't open GameMode pid {pid}, assuming a clean exit");
             }
         }
+        log::info!("watchdog: GameMode ended with exit code 0x{exit_code:X}");
         // Windows is shutting down or signing out: no desktop to bring back.
         if crate::shutdown::session_ending() {
             return;
@@ -202,13 +252,68 @@ mod imp {
         if let Some(live_file) = super::watchdog_live_file() {
             crate::live::thaw_frozen_in(&live_file);
         }
-        // A clean exit to the desktop already started Explorer.
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        // GameMode died because the user is signing out: no desktop to open.
-        if shutting_down() {
+        if diag::is_clean_exit(exit_code) {
+            // A clean exit to the desktop already started Explorer.
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            // GameMode died because the user is signing out: no desktop to open.
+            if shutting_down() {
+                return;
+            }
+            start_explorer();
             return;
         }
-        start_explorer();
+        // Killed by a sign-out or a restart in progress: not a crash.
+        if shutting_down() {
+            log::info!("watchdog: GameMode ended while the session is ending, nothing to recover");
+            return;
+        }
+        let hung = exit_code == diag::HUNG_EXIT_CODE;
+        let recovery = diag::record_crash(exit_code, hung);
+        log::error!("watchdog: GameMode crashed ({}): {recovery:?}", diag::describe_exit(exit_code, hung));
+        // A TV display mode would otherwise outlive the crash.
+        crate::display::reset_mode();
+        match recovery {
+            Recovery::Restart { attempt, delay_secs } => {
+                std::thread::sleep(std::time::Duration::from_secs(delay_secs));
+                relaunch(&[super::RECOVERED_ARG, &attempt.to_string()]);
+            }
+            Recovery::SafeMode => {
+                // Explorer first: with a desktop underneath, the new GameMode
+                // starts as a plain window and console mode stays off for
+                // this session (`start()` sees Explorer running). An Explorer
+                // already running in the background gets its desktop back.
+                let spawned = !explorer_running();
+                start_explorer();
+                if spawned {
+                    for _ in 0..30 {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        if explorer_running() {
+                            break;
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                relaunch(&[super::SAFE_MODE_ARG]);
+            }
+        }
+    }
+
+    /// Starts GameMode again with `args`; a failure falls back to the desktop.
+    fn relaunch(args: &[&str]) {
+        match exe().and_then(|exe| std::process::Command::new(exe).args(args).spawn().map_err(anyhow::Error::from)) {
+            Ok(_) => log::info!("watchdog: GameMode started again with {args:?}"),
+            Err(err) => {
+                log::error!("watchdog: starting GameMode again failed: {err:#}");
+                start_explorer();
+            }
+        }
+    }
+
+    /// A game is being followed (running or suspended): then a stuck window
+    /// may just be GameMode waiting on it, never a reason to kill it. With no
+    /// live-session file to look at, assume the worst (a game).
+    fn game_in_progress() -> bool {
+        super::watchdog_live_file().is_none_or(|file| !crate::live::read_from(&file).sessions.is_empty())
     }
 
     /// Another GameMode (not this watchdog) is running.
@@ -281,7 +386,7 @@ mod imp {
             let expanded = expand_env(&cmd);
             let (program, args) = split_command(&expanded);
             if let Err(err) = std::process::Command::new(&program).raw_arg(&args).spawn() {
-                eprintln!("startup app {name}: {err}");
+                log::warn!("startup app {name}: {err}");
             }
         }
         unsafe {
@@ -440,7 +545,10 @@ fn start() -> &'static Start {
         // Explorer already the shell.
         let desktop_once = asked || update.is_some_and(|u| u.desktop_once);
         let console = update.is_some_and(|u| u.console);
-        Start { as_shell: (!explorer || console) && !desktop_once, after_update: update.is_some(), desktop_once }
+        // Only the watchdog passes `--recovered`, and it only runs in console
+        // mode: Explorer may have been running hidden in the background.
+        let recovered = recovered_count() > 0;
+        Start { as_shell: (!explorer || console || recovered) && !desktop_once, after_update: update.is_some(), desktop_once }
     })
 }
 
@@ -621,6 +729,18 @@ pub fn watchdog_pid() -> Option<u32> {
     args.get(i + 1)?.parse().ok()
 }
 
+/// `--recovered <n>` on the command line: the watchdog started this
+/// GameMode after its n-th crash in a row (0: a normal start).
+pub fn recovered_count() -> u32 {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter().position(|a| a == RECOVERED_ARG).and_then(|i| args.get(i + 1)?.parse().ok()).unwrap_or(0)
+}
+
+/// `--safe-mode` on the command line.
+pub fn safe_mode() -> bool {
+    std::env::args().any(|a| a == SAFE_MODE_ARG)
+}
+
 /// `--live <file>` on the watchdog's command line.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn watchdog_live_file() -> Option<std::path::PathBuf> {
@@ -637,6 +757,13 @@ pub fn set_enabled(enabled: bool) -> Result<ShellStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_flags_default_to_a_normal_start() {
+        // The test binary carries none of the flags.
+        assert_eq!(recovered_count(), 0);
+        assert!(!safe_mode());
+    }
 
     #[test]
     fn reads_task_manager_switches() {

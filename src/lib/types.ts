@@ -511,3 +511,24 @@ export interface SystemUpdates {
   /** Why the state is `unknown`. */
   error: string | null;
 }
+
+export interface CrashRecord {
+  /** Unix seconds when the watchdog saw GameMode die. */
+  at: number;
+  exitCode: number;
+  /** The watchdog closed GameMode because its window stopped answering. */
+  hung: boolean;
+}
+
+/** How this GameMode came up (normal start, restarted after a crash, safe mode). */
+export interface StartupInfo {
+  /** Crashes in a row the watchdog recovered from before this start (0: a normal start). */
+  recovered: number;
+  safeMode: boolean;
+  lastCrash: CrashRecord | null;
+  lastCrashDescription: string | null;
+  /** First lines of the last panic (message and location). */
+  lastPanic: string | null;
+  crashCount: number;
+  logPath: string;
+}

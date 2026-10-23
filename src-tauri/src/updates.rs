@@ -240,7 +240,7 @@ pub fn watch_packages() {
     #[cfg(windows)]
     std::thread::spawn(|| {
         if let Err(err) = xbox::watch() {
-            eprintln!("package catalog: {err}");
+            log::warn!("package catalog: {err}");
         }
     });
 }

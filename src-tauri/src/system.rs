@@ -156,7 +156,7 @@ pub fn power(action: PowerAction) -> Result<()> {
     if matches!(action, PowerAction::RestartToDesktop) {
         crate::shell::request_desktop_boot()?;
     }
-    eprintln!("power action {action:?} ignored outside Windows");
+    log::warn!("power action {action:?} ignored outside Windows");
     Ok(())
 }
 

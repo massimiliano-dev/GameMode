@@ -16,6 +16,7 @@ import type {
   ScanError,
   SessionState,
   Settings,
+  StartupInfo,
   Store,
   SystemInfo,
   SystemUpdates,
@@ -81,6 +82,8 @@ interface AppState {
   wokeAt: number | null;
   /** Windows Update's state, when known. */
   systemUpdate: SystemUpdates | null;
+  /** How this GameMode came up (restarted after a crash, safe mode…). */
+  startup: StartupInfo | null;
 
   init: () => Promise<void>;
   refreshGameUpdates: () => Promise<void>;
@@ -160,6 +163,7 @@ export const useApp = create<AppState>((set, get) => ({
   system: null,
   wokeAt: null,
   systemUpdate: null,
+  startup: null,
 
   init: async () => {
     if (initialized) return;
@@ -232,6 +236,15 @@ export const useApp = create<AppState>((set, get) => ({
     void get().refreshGameUpdates();
     setInterval(() => void get().refreshGameUpdates(), GAME_UPDATES_EVERY);
     if (games.length === 0) setTimeout(() => set({ loaded: true }), 8000);
+    if (!isOverlayWindow) {
+      void api
+        .startupInfo()
+        .then((startup) => {
+          set({ startup });
+          if (startup.recovered > 0) get().toast("GameMode è stato riavviato dopo un errore", "error");
+        })
+        .catch(() => {});
+    }
   },
 
   refreshGameUpdates: async () => {

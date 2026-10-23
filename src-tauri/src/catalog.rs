@@ -107,7 +107,7 @@ pub async fn load(app: &AppHandle, force: bool) -> Catalog {
             catalog.gamepass_ok = true;
             catalog.items.extend(items);
         }
-        Err(err) => eprintln!("Game Pass catalog failed: {err:#}"),
+        Err(err) => log::warn!("Game Pass catalog failed: {err:#}"),
     }
     catalog.items.extend(epic_owned(&installed));
     catalog.items.extend(gog_owned(&installed));
@@ -131,7 +131,7 @@ pub async fn cloud(app: &AppHandle, force: bool) -> Vec<CatalogItem> {
     let items = match cloud_titles(&client).await {
         Ok(items) => items,
         Err(err) => {
-            eprintln!("cloud catalog failed: {err:#}");
+            log::warn!("cloud catalog failed: {err:#}");
             return Vec::new();
         }
     };
@@ -269,7 +269,7 @@ fn gog_owned(installed: &HashSet<String>) -> Vec<CatalogItem> {
     match crate::sqlite::query(&db, sql, 3) {
         Ok(rows) => gog_items(&rows, installed),
         Err(err) => {
-            eprintln!("GOG Galaxy database: {err:#}");
+            log::warn!("GOG Galaxy database: {err:#}");
             Vec::new()
         }
     }
@@ -426,7 +426,7 @@ async fn steam_owned(
     );
     let resp = client.get(url).send().await.map_err(|_| SteamStatus::Failed)?;
     if !resp.status().is_success() {
-        eprintln!("Steam GetOwnedGames: {}", resp.status());
+        log::warn!("Steam GetOwnedGames: {}", resp.status());
         return Err(SteamStatus::Failed);
     }
     let body = resp.bytes().await.map_err(|_| SteamStatus::Failed)?;

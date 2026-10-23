@@ -400,7 +400,7 @@ pub fn reattach(app: &AppHandle) {
                     match freeze::suspend(&family, window::game_window(&pids)) {
                         Ok(()) => Some(family),
                         Err(err) => {
-                            eprintln!("freezing {} again failed: {err:#}", game.name);
+                            log::warn!("freezing {} again failed: {err:#}", game.name);
                             live::update(|l| l.remove(&s.game_id));
                             if s.played() > 0 {
                                 record(app, &s.game_id, s.started_at, s.last_seen, s.played());
@@ -823,7 +823,7 @@ fn record(app: &AppHandle, game_id: &str, start: i64, end: i64, seconds: u64) {
             let _ = app.emit("library://game", &game);
         }
         Ok(None) => {}
-        Err(err) => eprintln!("saving session failed: {err:#}"),
+        Err(err) => log::warn!("saving session failed: {err:#}"),
     }
 }
 
@@ -1022,7 +1022,7 @@ pub fn thaw_all(app: &AppHandle) {
     for session in launcher.suspended() {
         if let Some(generation) = launcher.generation_of(&session.game_id) {
             if let Err(err) = thaw(app, generation) {
-                eprintln!("{err:#}");
+                log::warn!("{err:#}");
             }
         }
     }
@@ -1091,7 +1091,7 @@ pub fn preload_steam() {
     let running = sys.processes().values().any(|p| p.name().eq_ignore_ascii_case("steam.exe"));
     if !running {
         if let Err(err) = Command::new(exe).arg("-silent").spawn() {
-            eprintln!("starting Steam failed: {err}");
+            log::warn!("starting Steam failed: {err}");
         }
     }
 }

@@ -114,7 +114,7 @@ pub fn close_windows(pids: &[u32]) {
 #[cfg(not(windows))]
 fn close_windows_of(names: &[String]) {
     if !names.is_empty() {
-        eprintln!("closing {names:?} ignored outside Windows");
+        log::warn!("closing {names:?} ignored outside Windows");
     }
 }
 

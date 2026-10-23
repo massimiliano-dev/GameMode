@@ -36,6 +36,7 @@ import type {
   Session,
   SessionState,
   Settings,
+  StartupInfo,
   Store,
   SteamExtras,
   Storefront,
@@ -169,6 +170,11 @@ export const api = {
   storageRemeasure: () => call<void>("storage_remeasure"),
   /** Windows Update's state; `force` asks Microsoft's servers (slow). */
   systemUpdates: (force = false) => call<SystemUpdates>("system_updates", { force }),
+  startupInfo: () => call<StartupInfo>("startup_info"),
+  readLog: (lines = 200) => call<string>("read_log", { lines }),
+  /** Saves the log where the user picks; null when the dialog is dismissed. */
+  exportLog: () => call<string | null>("export_log"),
+  clearCrashes: () => call<void>("clear_crashes"),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

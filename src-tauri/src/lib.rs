@@ -12,6 +12,7 @@ mod catalog;
 mod cheats;
 mod db;
 mod devices;
+mod diag;
 mod display;
 mod freeze;
 mod gamepad;
@@ -101,7 +102,7 @@ fn scan(app: &AppHandle) -> LibraryUpdate {
             d.view()
         })
         .unwrap_or_else(|e| {
-            eprintln!("saving library failed: {e:#}");
+            log::error!("saving library failed: {e:#}");
             state.db.lock().view()
         });
     let update = LibraryUpdate { games, errors: result.errors };
@@ -187,8 +188,12 @@ async fn rescan_library(app: AppHandle) -> CmdResult<LibraryUpdate> {
 #[tauri::command]
 async fn launch_game(app: AppHandle, id: String) -> CmdResult<()> {
     let game = app.state::<AppState>().db.lock().game(&id).cloned().ok_or("Gioco non trovato")?;
+    log::info!("launching {} ({})", game.name, game.id);
     let handle = app.clone();
-    blocking(move || launcher::launch(&handle, &game)).await
+    blocking(move || {
+        launcher::launch(&handle, &game).inspect_err(|e| log::warn!("launching {} failed: {e:#}", game.name))
+    })
+    .await
 }
 
 /// Changes the active profile's state about one game and returns its new view.
@@ -523,6 +528,7 @@ fn type_key(key: String) -> CmdResult<()> {
 
 #[tauri::command]
 fn exit_to_desktop(app: AppHandle) {
+    log::info!("exit to desktop");
     // Nothing stays frozen behind GameMode's back.
     launcher::thaw_all(&app);
     // In console mode there is no desktop until Explorer runs.
@@ -547,6 +553,7 @@ fn toggle_fullscreen(app: AppHandle) {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
+    log::info!("quit");
     shutdown::teardown(&app, shutdown::Reason::Quit);
     app.exit(0);
 }
@@ -856,6 +863,7 @@ async fn install_update(app: AppHandle) -> CmdResult<()> {
     let Some(update) = app.updater().map_err(err)?.check().await.map_err(err)? else {
         return Err("Nessun aggiornamento disponibile".into());
     };
+    log::info!("installing update {}", update.version);
     // The console-mode watchdog must not open the desktop during the restart.
     shell::mark_updating();
     update.download_and_install(|_, _| {}, || {}).await.map_err(err)?;
@@ -956,13 +964,55 @@ fn storage_remeasure(app: AppHandle) {
     storage::remeasure(&app);
 }
 
+/// How this GameMode came up: a normal start, a restart by the watchdog
+/// after a crash, or safe mode after crashes in a row.
+#[tauri::command]
+fn startup_info() -> diag::StartupInfo {
+    diag::startup_info(shell::recovered_count(), shell::safe_mode())
+}
+
+/// The last `lines` lines of the log.
+#[tauri::command]
+fn read_log(lines: usize) -> String {
+    diag::read_log(lines.clamp(1, 2000))
+}
+
+/// Saves the log where the user picks; `None` when the dialog is dismissed.
+#[tauri::command]
+async fn export_log(app: AppHandle) -> CmdResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog().file().set_file_name("gamemode-log.txt").add_filter("Testo", &["txt"]).blocking_save_file()
+    })
+    .await
+    .map_err(err)?;
+    let Some(path) = picked else { return Ok(None) };
+    let path = path.into_path().map_err(err)?;
+    diag::export_to(&path).map_err(err)?;
+    Ok(Some(path.display().to_string()))
+}
+
+#[tauri::command]
+fn clear_crashes() {
+    diag::clear_crashes();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // The console-mode watchdog is this same executable with `--watchdog`.
     if let Some(pid) = shell::watchdog_pid() {
+        diag::init("watchdog");
         shell::run_watchdog(pid);
         return;
     }
+    diag::init("app");
+    diag::install_panic_hook();
+    diag::quiet_crash_dialogs();
+    log::info!(
+        "GameMode {} starting, args {:?}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::args().skip(1).collect::<Vec<_>>()
+    );
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // On the desktop for once, Explorer runs the `Run` entries itself,
@@ -996,12 +1046,20 @@ pub fn run() {
 
             let handle = app.handle().clone();
             let console = shell::status().active;
+            let safe = shell::safe_mode();
+            log::info!(
+                "console mode {}, recovered {}, safe mode {}, after update {}",
+                if console { "on" } else { "off" },
+                shell::recovered_count(),
+                safe,
+                shell::restarted_for_update()
+            );
             if console {
                 // GameMode is the shell: do Explorer's sign-in chores.
                 shell::spawn_watchdog(&live_file);
                 shell::keep_desktop_hidden(handle.clone());
-                // After an update the startup apps are already running.
-                if !shell::restarted_for_update() {
+                // After an update or a crash the startup apps are already running.
+                if !shell::restarted_for_update() && shell::recovered_count() == 0 {
                     std::thread::spawn(shell::run_startup_apps);
                 }
                 if let Some(w) = window::main_window(&handle) {
@@ -1047,13 +1105,15 @@ pub fn run() {
                     }
                 });
             }
-            if window::wants_fullscreen(&handle) && (!shell::status().desktop_once || shell::restarted_for_update()) {
+            // Safe mode stays a window over the desktop, with no TV mode.
+            if !safe && window::wants_fullscreen(&handle) && (!shell::status().desktop_once || shell::restarted_for_update()) {
                 window::apply_tv(&handle);
                 if let Some(w) = window::main_window(&handle) {
                     let _ = w.set_fullscreen(true);
                 }
             }
-            if app.state::<AppState>().db.lock().settings.preload_steam {
+            // Safe mode starts as little as possible besides GameMode itself.
+            if !safe && app.state::<AppState>().db.lock().settings.preload_steam {
                 std::thread::spawn(launcher::preload_steam);
             }
             overlay::create(&handle);
@@ -1190,6 +1250,10 @@ pub fn run() {
             storage_remeasure,
             power_options,
             system_updates,
+            startup_info,
+            read_log,
+            export_log,
+            clear_crashes,
         ])
         .on_window_event(|window, event| {
             // Alt+F4 on the launcher: the hidden overlay window would keep
@@ -1211,7 +1275,10 @@ pub fn run() {
             // through `shutdown` already.
             let code = match event {
                 tauri::RunEvent::ExitRequested { code, .. } => code,
-                tauri::RunEvent::Exit => None,
+                tauri::RunEvent::Exit => {
+                    log::info!("exit");
+                    None
+                }
                 _ => return,
             };
             let reason = if code == Some(tauri::RESTART_EXIT_CODE) { shutdown::Reason::Restart } else { shutdown::Reason::Quit };

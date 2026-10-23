@@ -79,7 +79,7 @@ pub fn create(app: &AppHandle) {
             .visible(false)
             .build();
         if let Err(err) = built {
-            eprintln!("overlay window: {err}");
+            log::warn!("overlay window: {err}");
         }
     }
     #[cfg(not(windows))]
