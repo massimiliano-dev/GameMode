@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { CaptureSettings } from "../components/CaptureSettings";
 import { ConsoleSettings } from "../components/ConsoleSettings";
 import { EmulatorSettings } from "../components/EmulatorSettings";
 import { SystemSettings } from "../components/SystemSettings";
@@ -224,6 +225,7 @@ export function Settings() {
               />
             </Section>
             <WandSettings />
+            <CaptureSettings />
             <Section title="Salvataggi">
               <Row
                 label="Cartella dei backup"

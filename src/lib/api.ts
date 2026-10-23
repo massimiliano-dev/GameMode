@@ -7,6 +7,7 @@ import type {
   AudioOutput,
   BackupInfo,
   BtDevice,
+  Capture,
   Catalog,
   CatalogItem,
   Collection,
@@ -18,6 +19,7 @@ import type {
   GameUpdate,
   LibraryUpdate,
   ManualGame,
+  OsdNotice,
   PowerAction,
   Radios,
   SaveInfo,
@@ -124,6 +126,11 @@ export const api = {
   removeCollection: (id: string) => call<void>("remove_collection", { id }),
   setInCollection: (collectionId: string, gameId: string, value: boolean) =>
     call<Collection[]>("set_in_collection", { collectionId, gameId, value }),
+  takeScreenshot: () => call<Capture>("take_screenshot"),
+  listCaptures: (gameId?: string) => call<Capture[]>("list_captures", { gameId: gameId ?? null }),
+  deleteCapture: (path: string) => call<void>("delete_capture", { path }),
+  openCapturesFolder: (gameId?: string) => call<void>("open_captures_folder", { gameId: gameId ?? null }),
+  osdNotice: () => call<OsdNotice | null>("osd_notice"),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

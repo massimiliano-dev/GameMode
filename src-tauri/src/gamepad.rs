@@ -159,6 +159,8 @@ mod xinput {
     const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
     /// Holding View this long during a hand-off returns to GameMode.
     const VIEW_HOLD: Duration = Duration::from_millis(500);
+    /// View+RB held during a game takes a screenshot.
+    const CAPTURE_HOLD: Duration = Duration::from_millis(400);
 
     const MAPPING: &[(u32, Action)] = &[
         (DPAD_UP, Action::Up),
@@ -234,6 +236,8 @@ mod xinput {
             let mut wand_since: Option<Instant> = None;
             let mut wand_fired = false;
             let mut wand_checked = Instant::now();
+            let mut capture_since: Option<Instant> = None;
+            let mut capture_fired = false;
 
             loop {
                 let now = Instant::now();
@@ -349,6 +353,23 @@ mod xinput {
                 } else {
                     wand_since = None;
                     wand_fired = false;
+                }
+
+                // View+RB held during a game: a screenshot (not with Start,
+                // which is the Back+Start combo above).
+                if target.is_none() && buttons & (BACK | RB | START) == BACK | RB {
+                    let since = *capture_since.get_or_insert(now);
+                    if !capture_fired && now - since >= CAPTURE_HOLD {
+                        capture_fired = true;
+                        let state = app.state::<crate::AppState>();
+                        let playing = state.launcher.current().is_some_and(|s| s.phase == crate::launcher::Phase::Running);
+                        if playing && state.db.lock().settings.capture_combo {
+                            crate::capture::take_async(app.clone());
+                        }
+                    }
+                } else {
+                    capture_since = None;
+                    capture_fired = false;
                 }
 
                 std::thread::sleep(POLL);

@@ -44,6 +44,8 @@ export interface Settings {
   wandCombo: boolean;
   /** Freeze the game while Wand has the screen. */
   wandPause: boolean;
+  /** View+RB held during a game takes a screenshot. */
+  captureCombo: boolean;
 }
 
 export interface ShellStatus {
@@ -296,3 +298,14 @@ export interface Catalog {
 export type UninstallOutcome = "started" | "removed";
 
 export type PowerAction = "shutdown" | "restart" | "sleep";
+
+export interface Capture {
+  gameId: string;
+  gameName: string;
+  path: string;
+  /** Unix seconds. */
+  takenAt: number;
+}
+
+/** What the in-game card shows after a screenshot. */
+export type OsdNotice = { kind: "saved"; capture: Capture } | { kind: "error"; message: string };

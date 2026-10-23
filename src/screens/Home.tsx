@@ -2,6 +2,7 @@ import { AnimatePresence } from "motion/react";
 import { useCallback, useMemo, useState } from "react";
 
 import { ActionSheet } from "../components/ActionSheet";
+import { CaptureRow } from "../components/CaptureGallery";
 import { Cover, GameCard } from "../components/GameCard";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
@@ -160,6 +161,7 @@ export function Home({ focusId }: { focusId?: string }) {
             </div>
           </section>
         ))}
+        <CaptureRow />
       </div>
       <AnimatePresence>
         {sheet && (
