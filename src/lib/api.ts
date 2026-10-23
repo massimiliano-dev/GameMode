@@ -18,6 +18,9 @@ import type {
   GameUpdate,
   LibraryUpdate,
   ManualGame,
+  MediaAction,
+  NowPlaying,
+  AppVolume,
   PowerAction,
   Radios,
   SaveInfo,
@@ -124,6 +127,12 @@ export const api = {
   removeCollection: (id: string) => call<void>("remove_collection", { id }),
   setInCollection: (collectionId: string, gameId: string, value: boolean) =>
     call<Collection[]>("set_in_collection", { collectionId, gameId, value }),
+  mediaNowPlaying: () => call<NowPlaying | null>("media_now_playing"),
+  mediaControl: (action: MediaAction) => call<void>("media_control", { action }),
+  openMusic: () => call<void>("open_music"),
+  appVolumes: () => call<AppVolume[]>("app_volumes"),
+  setAppVolume: (key: string, level: number) => call<void>("set_app_volume", { key, level }),
+  setAppMuted: (key: string, muted: boolean) => call<void>("set_app_muted", { key, muted }),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

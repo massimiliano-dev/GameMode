@@ -2232,3 +2232,107 @@ html.is-overlay .qm-volume[data-nav-current] {
   background: var(--surface-strong);
   box-shadow: inset 0 0 0 0.14rem var(--focus);
 }
+
+/* ---------- Now playing and per-app mixer ---------- */
+
+.qm-music {
+  display: grid;
+  grid-template-columns: 3.6rem 1fr;
+  gap: 0 0.9rem;
+  align-items: center;
+  padding: 0.8rem 1rem;
+  border: none;
+  border-radius: 0.8rem;
+  background: var(--surface);
+  text-align: left;
+  transition: background 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+
+.qm-music:focus,
+html.is-overlay .qm-music[data-nav-current] {
+  background: var(--surface-strong);
+  box-shadow: inset 0 0 0 0.14rem var(--focus);
+}
+
+.qm-music-cover {
+  display: grid;
+  place-items: center;
+  width: 3.6rem;
+  height: 3.6rem;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 1.6rem;
+  color: var(--text-dim);
+}
+
+.qm-music-cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.qm-music-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.qm-music-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qm-music-artist {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qm-music-state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+  margin-top: 0.1rem;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.qm-music.is-playing .qm-music-state {
+  color: var(--accent);
+}
+
+.qm-mixer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.qm-volume.is-app {
+  padding: 0.6rem 1.1rem;
+  gap: 0.4rem 1rem;
+}
+
+.qm-volume.is-app .qm-label {
+  font-size: 0.92rem;
+}
+
+.qm-volume.is-app .qm-volume-bar {
+  height: 0.4rem;
+}
+
+.qm-volume.is-app.is-idle .qm-label,
+.qm-volume.is-app.is-idle .qm-volume-value {
+  color: var(--text-dim);
+}
+
+.qm-volume.is-app.is-idle .qm-volume-fill {
+  opacity: 0.5;
+}

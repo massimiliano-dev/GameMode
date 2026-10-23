@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Toasts } from "../components/Chrome";
 import { Cover } from "../components/GameCard";
 import { Glyph, useClock } from "../components/common";
+import { MusicPanel } from "../components/NowPlaying";
 import { Priority, useAction } from "../input/dispatcher";
 import { focusInitial } from "../input/focus";
 import { setupInput } from "../input/sources";
@@ -28,6 +29,8 @@ export function OverlayApp() {
   const [suspending, setSuspending] = useState(false);
   const [openedAt, setOpenedAt] = useState(0);
   const [wand, setWand] = useState(false);
+  // The window stays mounted when hidden: the mixer polls only while it shows.
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     void useApp.getState().init();
@@ -43,7 +46,15 @@ export function OverlayApp() {
       requestAnimationFrame(() => focusInitial());
     };
     refresh();
-    return on("overlay://open", refresh);
+    const unlisten = on("overlay://open", () => {
+      setOpen(true);
+      refresh();
+    });
+    const unlistenClose = on("overlay://close", () => setOpen(false));
+    return () => {
+      unlisten();
+      unlistenClose();
+    };
   }, []);
 
   const resume = () => void api.overlayHide(true);
@@ -122,6 +133,8 @@ export function OverlayApp() {
             }}
           />
         )}
+
+        <MusicPanel active={open} showOpen />
 
         <div className="qm-list">
           <QmButton autofocus onClick={resume}>

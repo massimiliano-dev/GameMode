@@ -208,6 +208,12 @@ export function Settings() {
                 onClick={() => void saveSettings({ ...settings, steamGuide: !settings.steamGuide })}
                 control={<Toggle on={settings.steamGuide} />}
               />
+              <Row
+                label="Musica e mixer nel pannello"
+                hint="Brano in riproduzione (Spotify, browser…) con LB/RB per cambiarlo e volume separato per gioco, musica e chat"
+                onClick={() => void saveSettings({ ...settings, musicControls: !settings.musicControls })}
+                control={<Toggle on={settings.musicControls} />}
+              />
             </Section>
             <Section title="Negozi e finestre degli store">
               <Row

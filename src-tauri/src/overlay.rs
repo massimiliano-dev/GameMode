@@ -174,4 +174,6 @@ pub fn hide(app: &AppHandle) {
     if let Some(w) = window(app) {
         let _ = w.hide();
     }
+    // The mixer stops polling while the overlay is away.
+    let _ = app.emit_to(LABEL, "overlay://close", ());
 }
