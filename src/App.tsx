@@ -11,6 +11,7 @@ import { Priority, setKeyboardOpener, useAction } from "./input/dispatcher";
 import { play } from "./input/sfx";
 import { ensureFocus, focusElement } from "./input/focus";
 import { setupInput } from "./input/sources";
+import { signalAppReady } from "./lib/api";
 import { Downloads } from "./screens/Downloads";
 import { Connections } from "./screens/Connections";
 import { GameDetail } from "./screens/GameDetail";
@@ -33,11 +34,13 @@ export default function App() {
   const quickMenu = useApp((s) => s.quickMenu);
   const session = useApp((s) => s.session);
   const keyboardField = useApp((s) => s.keyboardField);
+  const settingsLoaded = useApp((s) => s.settings !== null);
   const [dismissedLaunch, setDismissedLaunch] = useState<string | null>(null);
   const focusBeforeMenu = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    void useApp.getState().init();
+    // A failed start still shows the window (the backend would after 15 s).
+    void useApp.getState().init().catch(() => signalAppReady());
     useIdle.getState().init();
     void setupInput();
     setKeyboardOpener((field) => useApp.getState().setKeyboardField(field));
@@ -48,6 +51,11 @@ export default function App() {
     window.addEventListener("focus", onWindowFocus);
     return () => window.removeEventListener("focus", onWindowFocus);
   }, []);
+
+  // The saved library and settings are on screen: time to show the window.
+  useEffect(() => {
+    if (settingsLoaded) signalAppReady();
+  }, [settingsLoaded]);
 
   useEffect(() => {
     if (quickMenu) focusBeforeMenu.current = document.activeElement as HTMLElement | null;

@@ -283,7 +283,8 @@ pub fn fullscreen_app_in_front(app: &AppHandle) -> bool {
         use windows::Win32::Foundation::RECT;
         use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
         use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect};
-        if is_foreground(app) || crate::overlay::is_open() {
+        // The startup splash is GameMode itself.
+        if is_foreground(app) || crate::overlay::is_open() || crate::splash::showing() {
             return false;
         }
         if foreground_process_name().is_none_or(|n| n == "explorer.exe") {
