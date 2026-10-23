@@ -41,6 +41,9 @@ pub struct Controller {
     pub wired: bool,
     /// 0 empty … 3 full; meaningless when wired.
     pub level: u8,
+    /// Button layout, for the glyphs the UI shows.
+    pub kind: crate::hidpad::Kind,
+    pub name: String,
 }
 
 static CONTROLLERS: std::sync::Mutex<Vec<Controller>> = std::sync::Mutex::new(Vec::new());
@@ -332,12 +335,15 @@ mod xinput {
             let mut last_motion = [None::<super::PadSnapshot>; 4];
             let mut capture_since: Option<Instant> = None;
             let mut capture_fired = false;
+            // DualSense, DualShock 4, Switch Pro: raw HID, merged below.
+            let mut hid = crate::hidpad::Backend::new();
 
             loop {
                 let now = Instant::now();
                 let mut buttons = 0u32;
                 // The physical D-pad alone, without the stick folded in.
                 let mut dpad = 0u32;
+                let mut slots = [None::<u32>; 4];
                 for slot in 0..4 {
                     if !connected[slot] && last_probe[slot].is_some_and(|t| now - t < PROBE_INTERVAL) {
                         continue;
@@ -346,7 +352,9 @@ mod xinput {
                     let mut state = XINPUT_STATE::default();
                     connected[slot] = unsafe { get_state(slot as u32, &mut state) } == 0;
                     if connected[slot] {
-                        buttons |= read_buttons(&state);
+                        let bits = read_buttons(&state);
+                        slots[slot] = Some(bits);
+                        buttons |= bits;
                         dpad |= state.Gamepad.wButtons.0 as u32 & (DPAD_UP | DPAD_DOWN);
                         let pad = &state.Gamepad;
                         let snap = super::PadSnapshot {
@@ -369,6 +377,9 @@ mod xinput {
                         last_motion[slot] = None;
                     }
                 }
+                // HID pads fold the stick into the D-pad bits, so they stay
+                // out of `dpad` (the View + D-pad volume combo).
+                buttons |= hid.poll(now, &slots);
                 // Windows doesn't count controllers as activity: GameMode does.
                 if buttons != 0 {
                     crate::idle::touch_input();
@@ -437,10 +448,10 @@ mod xinput {
                 }
                 let foreground = target.is_some();
 
-                if connected != was_connected || last_battery.is_none_or(|t| now - t >= BATTERY_INTERVAL) {
+                if connected != was_connected || hid.take_dirty() || last_battery.is_none_or(|t| now - t >= BATTERY_INTERVAL) {
                     was_connected = connected;
                     last_battery = Some(now);
-                    update_controllers(&app, &connected);
+                    update_controllers(&app, &connected, &hid);
                 }
 
                 // Back+Start held: fallback for when Game Bar swallows Guide.
@@ -557,16 +568,24 @@ mod xinput {
         dispatch(app, target, wand, typing, assisting, action, repeat, false);
     }
 
-    fn update_controllers(app: &AppHandle, connected: &[bool; 4]) {
-        let list: Vec<Controller> = (0..4u32)
+    fn update_controllers(app: &AppHandle, connected: &[bool; 4], hid: &crate::hidpad::Backend) {
+        let mut list: Vec<Controller> = (0..4u32)
             .filter(|&slot| connected[slot as usize])
             .map(|slot| {
                 let mut info = XINPUT_BATTERY_INFORMATION::default();
                 let ok = unsafe { XInputGetBatteryInformation(slot, BATTERY_DEVTYPE_GAMEPAD, &mut info) } == 0;
                 let wired = !ok || info.BatteryType == BATTERY_TYPE_WIRED || info.BatteryType == BATTERY_TYPE_DISCONNECTED;
-                Controller { slot, wired, level: info.BatteryLevel.0 }
+                Controller {
+                    slot,
+                    wired,
+                    level: info.BatteryLevel.0,
+                    kind: crate::hidpad::Kind::Xbox,
+                    name: format!("Controller {}", slot + 1),
+                }
             })
             .collect();
+        // HID pads take the slots after XInput's four.
+        list.extend(hid.controllers(4));
         let mut current = CONTROLLERS.lock().unwrap();
         if *current != list {
             *current = list.clone();

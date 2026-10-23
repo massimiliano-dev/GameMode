@@ -101,6 +101,8 @@ export interface Settings {
   captureCombo: boolean;
   /** Phone companion: the LAN remote server. */
   companionEnabled: boolean;
+  /** DualSense, DualShock 4 and Switch Pro read directly over HID. */
+  hidPads: boolean;
 }
 
 export interface ShellStatus {
@@ -246,11 +248,17 @@ export interface Collection {
   gameIds: string[];
 }
 
+export type PadKind = "xbox" | "playstation" | "nintendo";
+
 export interface Controller {
   slot: number;
   wired: boolean;
   /** 0 empty … 3 full. */
   level: number;
+  /** Button layout, for the glyphs. */
+  kind: PadKind;
+  /** "Controller 1", "DualSense", "Pro Controller"… */
+  name: string;
 }
 
 export interface ManualGame {

@@ -1,7 +1,7 @@
 // In-browser stand-in for the Rust backend, so the UI can be developed and
 // tested with `npm run dev` in any browser.
 
-import type { AppVolume, Capture, Cleanup, Collection, Game, GameMeta, ManualGame, NowPlaying, PowerSchedule, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
+import type { AppVolume, Capture, Cleanup, Collection, Game, GameMeta, ManualGame, NowPlaying, PadKind, PowerSchedule, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
 
 const CDN = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps";
 
@@ -113,7 +113,7 @@ games = [
   })),
 ];
 
-let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true, keyboardAuto: true, backupOnExit: true, igdbClientId: null, igdbClientSecret: null, captureCombo: true, companionEnabled: false };
+let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true, keyboardAuto: true, backupOnExit: true, igdbClientId: null, igdbClientSecret: null, captureCombo: true, companionEnabled: false, hidPads: true };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
 let suspended: SessionState[] = [];
@@ -315,6 +315,16 @@ function fakeSchedule(action: PowerSchedule["action"], mode: { kind: "in"; secs:
   return powerSchedule;
 }
 
+function mockPadKind(): PadKind {
+  try {
+    const kind = localStorage.getItem("gm-mock-pad");
+    if (kind === "playstation" || kind === "nintendo") return kind;
+  } catch {
+    // ignore
+  }
+  return "xbox";
+}
+
 export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {}): Promise<T> {
   const result = await (async (): Promise<unknown> => {
     switch (cmd) {
@@ -502,7 +512,8 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         );
         return collections;
       case "get_controllers":
-        return [{ slot: 0, wired: false, level: 2 }];
+        // `localStorage.setItem("gm-mock-pad", "playstation")` to preview other glyph sets.
+        return [{ slot: 0, wired: false, level: 2, kind: mockPadKind(), name: "Controller 1" }];
       case "get_system_status":
         fakeSystemChanges();
         return systemInfo;

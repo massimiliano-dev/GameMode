@@ -227,12 +227,22 @@ export function Settings() {
                 hint="Brano in riproduzione (Spotify, browser…) con LB/RB per cambiarlo e volume separato per gioco, musica e chat"
                 onClick={() => void saveSettings({ ...settings, musicControls: !settings.musicControls })}
                 control={<Toggle on={settings.musicControls} />}
-                />
-                <Row
+              />
+              <Row
                 label="Indicatore del volume"
                 hint="Tasti volume della tastiera e ⧉ + croce su/giù mostrano il volume sopra il gioco, al posto del pannello di Windows"
                 onClick={() => void saveSettings({ ...settings, osdVolume: !settings.osdVolume })}
                 control={<Toggle on={settings.osdVolume} />}
+              />
+              <Row
+                label="Pad PlayStation e Switch"
+                hint={
+                  settings.hidPads
+                    ? "DualSense, DualShock 4 e Pro Controller funzionano anche senza Steam Input, pure durante il gioco (il tasto PS/Home apre l'overlay). Con DS4Windows o Steam Input il pad viene letto una volta sola"
+                    : "Letti solo tramite Steam Input o DS4Windows, oppure quando GameMode è in primo piano"
+                }
+                onClick={() => void saveSettings({ ...settings, hidPads: !settings.hidPads })}
+                control={<Toggle on={settings.hidPads} />}
               />
             </Section>
             <Section title="Negozi e finestre degli store">

@@ -301,6 +301,32 @@ dd {
   font-size: 0.68rem;
 }
 
+/* PlayStation: grey keys with coloured symbols; Nintendo: plain dark keys. */
+.glyph-playstation.glyph-A,
+.glyph-playstation.glyph-B,
+.glyph-playstation.glyph-X,
+.glyph-playstation.glyph-Y,
+.glyph-nintendo.glyph-A,
+.glyph-nintendo.glyph-B,
+.glyph-nintendo.glyph-X,
+.glyph-nintendo.glyph-Y {
+  background: var(--surface-strong);
+  color: var(--text);
+  font-size: 0.8rem;
+}
+.glyph-playstation.glyph-A { color: #8fb3f0; }
+.glyph-playstation.glyph-B { color: #f07a7a; }
+.glyph-playstation.glyph-X { color: #e39ae0; }
+.glyph-playstation.glyph-Y { color: #6fd3a8; }
+.glyph-nintendo.glyph-A,
+.glyph-nintendo.glyph-B,
+.glyph-nintendo.glyph-X,
+.glyph-nintendo.glyph-Y {
+  background: #2b2b30;
+  color: #f4f4f4;
+  font-size: 0.72rem;
+}
+
 /* ---------- Store identity ---------- */
 
 .store-steam { --store: #66c0f4; }

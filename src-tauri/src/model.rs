@@ -331,6 +331,9 @@ pub struct Settings {
     pub capture_combo: bool,
     /// Phone companion: the LAN remote server (`companion.rs`).
     pub companion_enabled: bool,
+    /// Read DualSense, DualShock 4 and Switch Pro directly over HID; off
+    /// when Steam Input or DS4Windows already turn them into XInput pads.
+    pub hid_pads: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -378,6 +381,7 @@ impl Default for Settings {
             igdb_client_secret: None,
             capture_combo: true,
             companion_enabled: false,
+            hid_pads: true,
         }
     }
 }

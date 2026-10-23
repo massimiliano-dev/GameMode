@@ -17,6 +17,7 @@ mod display;
 mod freeze;
 mod gamepad;
 mod haptics;
+mod hidpad;
 mod keyboard;
 mod launcher;
 mod library;
@@ -351,6 +352,7 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> 
         metadata::refresh(&app, true);
     }
     companion::sync(&app);
+    hidpad::set_enabled(settings.hid_pads);
     Ok(settings)
 }
 
@@ -1208,6 +1210,7 @@ pub fn run() {
             updates::watch_packages();
             status::start(handle.clone());
             winupdate::watch(handle.clone());
+            hidpad::set_enabled(app.state::<AppState>().db.lock().settings.hid_pads);
             let native = gamepad::start(handle.clone());
             app.state::<AppState>().native_gamepad.store(native, Ordering::SeqCst);
             idle::start(handle.clone());

@@ -1,7 +1,7 @@
 // Input sources feeding the dispatcher.
 
-import { api, isTauri, onWindow } from "../lib/api";
-import type { Action } from "../lib/types";
+import { api, isTauri, on, onWindow } from "../lib/api";
+import type { Action, Controller } from "../lib/types";
 import { dispatch } from "./dispatcher";
 import { setNativeHaptics } from "./haptics";
 import { remoteText } from "./remote";
@@ -79,7 +79,32 @@ function controllerActive() {
   document.body.classList.add("no-cursor");
 }
 
-function browserGamepad() {
+/**
+ * True while the native backend reports any controller. A supported
+ * Sony/Nintendo pad is then read natively: straight over HID, or through
+ * the virtual Xbox pad Steam Input or DS4Windows make of it (the HID copy
+ * is hidden then, or the HID backend is off).
+ */
+let nativePads = false;
+
+/** Pads the Rust HID backend reads, as Chromium's "vendor product" ids (see `Model::from_ids`). */
+const HID_MODELS = new Set(["054c 0ce6", "054c 0df2", "054c 05c4", "054c 09cc", "057e 2009"]);
+
+/**
+ * Pads the native backend already reads, so the browser must skip them:
+ * XInput ones always, the supported Sony/Nintendo ones while it reports
+ * any controller. Others (Joy-Con, generic HID pads) stay with the browser.
+ * Chromium's ids look like "Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)".
+ */
+export function nativelyHandled(id: string, native: boolean, pads: boolean) {
+  if (!native) return false;
+  const lower = id.toLowerCase();
+  if (lower.includes("xinput") || lower.includes("vendor: 045e")) return true;
+  const ids = /vendor: ([0-9a-f]{4}) product: ([0-9a-f]{4})/.exec(lower);
+  return pads && !!ids && HID_MODELS.has(`${ids[1]} ${ids[2]}`);
+}
+
+function browserGamepad(native: boolean) {
   const held = new Map<Action, { since: number; last: number }>();
 
   const frame = (t: number) => {
@@ -90,7 +115,7 @@ function browserGamepad() {
     }
     const pressed = new Set<Action>();
     for (const pad of navigator.getGamepads()) {
-      if (!pad) continue;
+      if (!pad || nativelyHandled(pad.id, native, nativePads)) continue;
       for (const [i, action] of BUTTONS) if (pad.buttons[i]?.pressed) pressed.add(action);
       const [x = 0, y = 0] = pad.axes;
       if (x < -STICK) pressed.add("left");
@@ -131,7 +156,8 @@ let setup: Promise<boolean> | null = null;
 
 /**
  * Wires every source. Returns whether the native XInput backend is active;
- * when it is, the browser Gamepad API stays off so presses don't double up.
+ * when it is, the browser Gamepad API only covers pads the backend doesn't
+ * read (generic HID pads, while GameMode has focus) so presses don't double up.
  */
 export function setupInput(): Promise<boolean> {
   setup ??= start();
@@ -150,7 +176,10 @@ async function start(): Promise<boolean> {
       controllerActive();
       dispatch(e.action, e.repeat, "pad");
     });
+    const track = (list: Controller[]) => (nativePads = list.length > 0);
+    on<Controller[]>("gamepad://controllers", track);
+    void api.getControllers().then(track).catch(() => {});
   }
-  if (!native) browserGamepad();
+  browserGamepad(native);
   return native;
 }

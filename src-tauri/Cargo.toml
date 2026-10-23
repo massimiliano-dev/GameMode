@@ -59,3 +59,5 @@ winreg = "0.56.0"
 tauri = { version = "2", features = ["tray-icon"] }
 # Direct dependency so `#[implement]` (COM callbacks in audio_events.rs) resolves `::windows_core`.
 windows-core = "0.62.2"
+# Pure-Rust backend: no C toolchain, so `cargo check` for Windows works from macOS too.
+hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
