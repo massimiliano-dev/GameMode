@@ -6,6 +6,7 @@ import { SystemSettings } from "../components/SystemSettings";
 import { UpdateSettings } from "../components/UpdateSettings";
 import { WandSettings } from "../components/WandSettings";
 import { ProfileSettings } from "../components/ProfileSettings";
+import { StorageSettings } from "../components/StorageSettings";
 import { Row, Section } from "../components/SettingsRows";
 import { Glyph, Toggle, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
@@ -17,7 +18,7 @@ import { useApp } from "../store/app";
 
 const HAPTICS_LABEL = ["Off", "Leggera", "Normale"];
 
-type SettingsTab = "general" | "play" | "libraries" | "emulators" | "system";
+type SettingsTab = "general" | "play" | "libraries" | "emulators" | "system" | "storage";
 
 const TABS: { key: SettingsTab; label: string }[] = [
   { key: "general", label: "Generale" },
@@ -25,6 +26,7 @@ const TABS: { key: SettingsTab; label: string }[] = [
   { key: "libraries", label: "Librerie" },
   { key: "emulators", label: "Emulatori" },
   { key: "system", label: "Sistema" },
+  { key: "storage", label: "Archiviazione" },
 ];
 
 /** Coming back to Settings opens the tab used last. */
@@ -435,6 +437,8 @@ export function Settings() {
             <ConsoleSettings />
           </>
         )}
+
+        {tab === "storage" && <StorageSettings />}
       </div>
     </div>
   );

@@ -34,7 +34,11 @@
       "Properties": {
        "Packages": [
         {
-         "PackageFamilyName": "SurpriseAttackPtyLtd.1000xResist_8k24hnfn3vvj0"
+         "PackageFamilyName": "SurpriseAttackPtyLtd.1000xResist_8k24hnfn3vvj0",
+         "MaxDownloadSizeInBytes": 8001105920
+        },
+        {
+         "MaxDownloadSizeInBytes": 8615550976
         }
        ]
       }

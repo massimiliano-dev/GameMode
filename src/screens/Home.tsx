@@ -202,6 +202,9 @@ function placeholderGame(session: SessionState): Game {
     addedAt: 0,
     lastPlayed: null,
     playtimeSecs: 0,
+    sizeBytes: null,
+    sizeCheckedAt: null,
+    sizePartial: false,
   };
 }
 

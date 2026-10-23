@@ -8,6 +8,7 @@ import type {
   BackupInfo,
   BtDevice,
   Catalog,
+  Cleanup,
   CatalogItem,
   CheatKind,
   CheatScan,
@@ -39,6 +40,7 @@ import type {
   Storefront,
   SystemInfo,
   TypedKey,
+  StorageOverview,
   UpdateInfo,
   UninstallOutcome,
   Volume,
@@ -159,6 +161,9 @@ export const api = {
   keyboardHide: () => call<void>("keyboard_hide"),
   typeText: (text: string) => call<void>("type_text", { text }),
   typeKey: (key: TypedKey) => call<void>("type_key", { key }),
+  storageOverview: (measure = false) => call<StorageOverview>("storage_overview", { measure }),
+  storageCleanup: (apply: boolean) => call<Cleanup>("storage_cleanup", { apply }),
+  storageRemeasure: () => call<void>("storage_remeasure"),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

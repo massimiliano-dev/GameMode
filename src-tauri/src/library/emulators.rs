@@ -132,6 +132,7 @@ fn rom_game(retroarch: &Path, system: &System, rom: &Path) -> Game {
     };
     let mut game = Game::new(Store::Emulator, &id, display_name(&stem), launch);
     game.cover_url = Some(thumbnail_url(system, &stem));
+    game.size_bytes = std::fs::metadata(rom).map(|m| m.len()).ok();
     game
 }
 

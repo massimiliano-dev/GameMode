@@ -103,6 +103,16 @@ pub struct Game {
     pub last_played: Option<i64>,
     #[serde(default)]
     pub playtime_secs: u64,
+    /// Space the install takes, from the store's manifest or a folder walk.
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
+    /// Unix seconds of the last folder walk; `None` when `size_bytes` comes
+    /// from the store's manifest (refreshed by every scan) or is unknown.
+    #[serde(default)]
+    pub size_checked_at: Option<i64>,
+    /// The walk could not read everything (e.g. WindowsApps ACLs): an estimate.
+    #[serde(default)]
+    pub size_partial: bool,
 }
 
 impl Game {
@@ -122,6 +132,9 @@ impl Game {
             added_at: 0,
             last_played: None,
             playtime_secs: 0,
+            size_bytes: None,
+            size_checked_at: None,
+            size_partial: false,
         }
     }
 
@@ -140,6 +153,13 @@ impl Game {
         self.added_at = old.added_at;
         self.last_played = old.last_played;
         self.playtime_secs = old.playtime_secs;
+        // A size measured by walking the folder survives rescans; one the
+        // store manifest provides is fresh in `self` already.
+        if self.size_bytes.is_none() {
+            self.size_bytes = old.size_bytes;
+            self.size_checked_at = old.size_checked_at;
+            self.size_partial = old.size_partial;
+        }
     }
 }
 

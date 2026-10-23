@@ -8,17 +8,19 @@ import { STORE_LABEL, STORES } from "../lib/format";
 import type { Game, Store } from "../lib/types";
 import { useApp, visibleGames } from "../store/app";
 
-type Sort = "name" | "recent" | "playtime";
+type Sort = "name" | "recent" | "playtime" | "size";
 const SORTS: { key: Sort; label: string }[] = [
   { key: "name", label: "A–Z" },
   { key: "recent", label: "Giocati di recente" },
   { key: "playtime", label: "Più giocati" },
+  { key: "size", label: "Più pesanti" },
 ];
 
 const SORTERS: Record<Sort, (a: Game, b: Game) => number> = {
   name: (a, b) => a.name.localeCompare(b.name, "it"),
   recent: (a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0) || a.name.localeCompare(b.name, "it"),
   playtime: (a, b) => b.playtimeSecs - a.playtimeSecs || a.name.localeCompare(b.name, "it"),
+  size: (a, b) => (b.sizeBytes ?? -1) - (a.sizeBytes ?? -1) || a.name.localeCompare(b.name, "it"),
 };
 
 export function Library({ focusId }: { focusId?: string }) {

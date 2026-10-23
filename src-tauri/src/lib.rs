@@ -32,6 +32,7 @@ mod shell;
 mod sqlite;
 mod status;
 mod steam_web;
+mod storage;
 mod storefront;
 mod system;
 mod tray;
@@ -96,6 +97,7 @@ fn scan(app: &AppHandle) -> LibraryUpdate {
     let update = LibraryUpdate { games, errors: result.errors };
     let _ = app.emit("library://updated", &update);
     artwork::refresh(app, false);
+    storage::measure(app);
     update
 }
 
@@ -883,6 +885,31 @@ fn touch_input() {
     idle::touch_input();
 }
 
+/// Drives, their free space and what the library takes on each. With
+/// `measure`, sizes still unknown get measured in the background meanwhile.
+#[tauri::command]
+async fn storage_overview(app: AppHandle, measure: Option<bool>) -> CmdResult<storage::Overview> {
+    if measure == Some(true) {
+        storage::measure(&app);
+    }
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || storage::overview(&handle)).await.map_err(err)
+}
+
+/// What the cleanup would free; with `apply`, frees it.
+#[tauri::command]
+async fn storage_cleanup(app: AppHandle, apply: bool) -> CmdResult<storage::Cleanup> {
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || storage::cleanup(&handle, apply)).await.map_err(err)
+}
+
+/// Measures again every game folder walked before (not the sizes a store
+/// manifest declares).
+#[tauri::command]
+fn storage_remeasure(app: AppHandle) {
+    storage::remeasure(&app);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // The console-mode watchdog is this same executable with `--watchdog`.
@@ -1108,6 +1135,9 @@ pub fn run() {
             keyboard_hide,
             type_text,
             type_key,
+            storage_overview,
+            storage_cleanup,
+            storage_remeasure,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

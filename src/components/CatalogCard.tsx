@@ -1,5 +1,6 @@
 import { memo, useState } from "react";
 
+import { formatBytes } from "../lib/format";
 import type { CatalogItem } from "../lib/types";
 import { StoreBadge } from "./common";
 
@@ -44,6 +45,7 @@ export const CatalogCard = memo(function CatalogCard(props: {
         {item.source === "gamepass" && <span className="pass-pill">Game Pass</span>}
         {item.source === "cloud" && <span className="pass-pill">Cloud</span>}
         {item.discount ? <span className="discount-pill">−{item.discount}%</span> : null}
+        {item.sizeBytes ? <span className="size-pill">{formatBytes(item.sizeBytes)}</span> : null}
       </span>
       <span className="install-pill" aria-hidden>
         {ACTION_LABEL[item.source]}
