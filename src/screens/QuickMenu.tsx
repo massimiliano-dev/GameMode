@@ -5,6 +5,7 @@ import { ActionSheet } from "../components/ActionSheet";
 import { Cover } from "../components/GameCard";
 import { Avatar } from "../components/ProfileSettings";
 import { Glyph, useClock, useScreenFocus } from "../components/common";
+import { MusicPanel } from "../components/NowPlaying";
 import { Priority, useAction } from "../input/dispatcher";
 import { api } from "../lib/api";
 import { formatClock, formatDate, formatPlaytime } from "../lib/format";
@@ -157,6 +158,8 @@ export function QuickMenu() {
             }}
           />
         )}
+
+        <MusicPanel active showOpen onOpened={close} />
 
         <div className="qm-list">
           <QmButton

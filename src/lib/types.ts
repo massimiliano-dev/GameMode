@@ -46,6 +46,8 @@ export interface Settings {
   wandPause: boolean;
   /** Controller vibration for the interface: 0 off, 1 light, 2 normal. */
   haptics: number;
+  /** Now playing and the per-app mixer in the overlay and quick menu. */
+  musicControls: boolean;
 }
 
 export interface ShellStatus {
@@ -357,4 +359,32 @@ export interface SystemInfo {
   /** null on a desktop without a battery. */
   battery: BatteryInfo | null;
   bluetooth: BluetoothInfo;
+}
+
+/** What the system's media session (Spotify, a browser…) is playing. */
+export interface NowPlaying {
+  title: string;
+  artist: string;
+  album: string;
+  playing: boolean;
+  /** Readable name of the player ("Spotify", "Edge"). */
+  source: string;
+  /** Lowercase executable stem of the player, to find it in the mixer. */
+  sourceExe: string;
+  /** `data:` URL of the cover art, when the player publishes one. */
+  thumbnail: string | null;
+}
+
+export type MediaAction = "play" | "pause" | "toggle" | "next" | "prev";
+
+export type AppKind = "game" | "music" | "chat" | "browser" | "other";
+
+/** One row of the per-app mixer; `level` is relative to the master volume. */
+export interface AppVolume {
+  key: string;
+  label: string;
+  level: number;
+  muted: boolean;
+  kind: AppKind;
+  active: boolean;
 }

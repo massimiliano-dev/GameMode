@@ -5,6 +5,7 @@ import { CheatsPanel } from "../components/CheatsPanel";
 import { Toasts } from "../components/Chrome";
 import { Cover } from "../components/GameCard";
 import { Glyph, useClock } from "../components/common";
+import { MusicPanel } from "../components/NowPlaying";
 import { Priority, useAction } from "../input/dispatcher";
 import { focusInitial } from "../input/focus";
 import { setupInput } from "../input/sources";
@@ -34,6 +35,8 @@ export function OverlayApp() {
     setView(next);
     requestAnimationFrame(() => focusInitial());
   };
+  // The window stays mounted when hidden: the mixer polls only while it shows.
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     void useApp.getState().init();
@@ -42,6 +45,8 @@ export function OverlayApp() {
       void api.getVolume().then(setVolume).catch(() => setVolume(null));
       void api.getSession().then((s) => useApp.setState({ session: s }));
       void api.wandInstalled().then(setWand).catch(() => setWand(false));
+      // Settings are saved in the main window: re-read them at every opening.
+      void api.getSettings().then((settings) => useApp.setState({ settings })).catch(() => {});
       setArmed(false);
       setSuspendArmed(false);
       setSuspending(false);
@@ -50,7 +55,15 @@ export function OverlayApp() {
       requestAnimationFrame(() => focusInitial());
     };
     refresh();
-    return on("overlay://open", refresh);
+    const unlisten = on("overlay://open", () => {
+      setOpen(true);
+      refresh();
+    });
+    const unlistenClose = on("overlay://close", () => setOpen(false));
+    return () => {
+      unlisten();
+      unlistenClose();
+    };
   }, []);
 
   const resume = () => void api.overlayHide(true);
@@ -133,6 +146,8 @@ export function OverlayApp() {
               }}
             />
           )}
+
+          <MusicPanel active={open} showOpen />
 
           <div className="qm-list">
             <QmButton autofocus onClick={resume}>

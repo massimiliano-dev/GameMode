@@ -19,6 +19,8 @@ mod haptics;
 mod launcher;
 mod library;
 mod live;
+mod media;
+mod mixer;
 mod model;
 mod overlay;
 mod performance;
@@ -393,6 +395,44 @@ fn set_volume(level: f32) -> CmdResult<()> {
 #[tauri::command]
 fn set_muted(muted: bool) -> CmdResult<()> {
     system::set_muted(muted).map_err(err)
+}
+
+/// What the system's media session plays (Spotify, a browser…), if anything.
+#[tauri::command]
+fn media_now_playing() -> Option<media::NowPlaying> {
+    media::now_playing()
+}
+
+#[tauri::command]
+async fn media_control(action: media::MediaAction) -> CmdResult<()> {
+    blocking(move || media::control(action)).await
+}
+
+/// Opens Spotify; with a game running it goes right back behind the game.
+#[tauri::command]
+async fn open_music(app: AppHandle) -> CmdResult<()> {
+    let pids = app.state::<AppState>().launcher.running_pids();
+    let handle = app.clone();
+    blocking(move || media::open_music(&handle, pids)).await
+}
+
+/// Per-app volumes on the default output, game first.
+#[tauri::command]
+async fn app_volumes(state: State<'_, AppState>) -> CmdResult<Vec<mixer::AppVolume>> {
+    let pids = state.launcher.running_pids();
+    blocking(move || mixer::app_volumes(&pids)).await
+}
+
+#[tauri::command]
+async fn set_app_volume(state: State<'_, AppState>, key: String, level: f32) -> CmdResult<()> {
+    let pids = state.launcher.running_pids();
+    blocking(move || mixer::set_level(&key, level, &pids)).await
+}
+
+#[tauri::command]
+async fn set_app_muted(state: State<'_, AppState>, key: String, muted: bool) -> CmdResult<()> {
+    let pids = state.launcher.running_pids();
+    blocking(move || mixer::set_muted(&key, muted, &pids)).await
 }
 
 /// Closes the overlay; `resume` hands the screen back to the game.
@@ -846,6 +886,7 @@ pub fn run() {
                 std::thread::spawn(launcher::preload_steam);
             }
             overlay::create(&handle);
+            media::init(&handle);
             updates::watch_packages();
             status::start(handle.clone());
             let native = gamepad::start(handle.clone());
@@ -949,6 +990,12 @@ pub fn run() {
             set_in_collection,
             rumble,
             get_system_status,
+            media_now_playing,
+            media_control,
+            open_music,
+            app_volumes,
+            set_app_volume,
+            set_app_muted,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

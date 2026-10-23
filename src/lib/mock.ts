@@ -1,7 +1,7 @@
 // In-browser stand-in for the Rust backend, so the UI can be developed and
 // tested with `npm run dev` in any browser.
 
-import type { Collection, Game, ManualGame, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
+import type { AppVolume, Collection, Game, ManualGame, NowPlaying, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
 
 const CDN = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps";
 
@@ -48,7 +48,7 @@ let games: Game[] = SEED.map(([store, name, appid], i) => ({
   playtimeSecs: i % 3 === 0 ? (i + 1) * 5400 : 0,
 }));
 
-let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1 };
+let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
 let suspended: SessionState[] = [];
@@ -64,6 +64,20 @@ let backups: { id: string; created: number; automatic: boolean; bytes: number }[
   { id: "b2", created: now() - 2 * day, automatic: false, bytes: 2_400_000 },
 ];
 let romDirs: Record<string, string | null> = {};
+let nowPlaying: NowPlaying | null = {
+  title: "Blinding Lights",
+  artist: "The Weeknd",
+  album: "After Hours",
+  playing: true,
+  source: "Spotify",
+  sourceExe: "spotify",
+  thumbnail: null,
+};
+let appVolumes: AppVolume[] = [
+  { key: "game", label: "Gioco", level: 1, muted: false, kind: "game", active: true },
+  { key: "spotify.exe", label: "Musica · Spotify", level: 0.4, muted: false, kind: "music", active: true },
+  { key: "discord.exe", label: "Discord", level: 0.8, muted: false, kind: "chat", active: false },
+];
 
 function mockEmulators() {
   const systems: [string, string, string][] = [
@@ -538,6 +552,30 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "open_store":
         console.info("[mock] open_store", args);
         return ["steam", "xbox", "epic"].includes(args.store) ? "client" : "browser";
+      case "media_now_playing":
+        return nowPlaying;
+      case "media_control": {
+        if (!nowPlaying) throw "Nessuna musica in riproduzione";
+        const tracks = ["Blinding Lights", "Save Your Tears", "Starboy"];
+        const i = tracks.indexOf(nowPlaying.title);
+        const playing = args.action === "play" ? true : args.action === "pause" ? false : args.action === "toggle" ? !nowPlaying.playing : nowPlaying.playing;
+        const title = args.action === "next" ? tracks[(i + 1) % tracks.length] : args.action === "prev" ? tracks[(i + tracks.length - 1) % tracks.length] : nowPlaying.title;
+        nowPlaying = { ...nowPlaying, playing, title };
+        emit("media://now-playing", nowPlaying);
+        return;
+      }
+      case "open_music":
+        nowPlaying ??= { title: "Blinding Lights", artist: "The Weeknd", album: "After Hours", playing: true, source: "Spotify", sourceExe: "spotify", thumbnail: null };
+        emit("media://now-playing", nowPlaying);
+        return;
+      case "app_volumes":
+        return session ? appVolumes : appVolumes.filter((v) => v.kind !== "game");
+      case "set_app_volume":
+        appVolumes = appVolumes.map((v) => (v.key === args.key ? { ...v, level: args.level } : v));
+        return;
+      case "set_app_muted":
+        appVolumes = appVolumes.map((v) => (v.key === args.key ? { ...v, muted: args.muted } : v));
+        return;
       default:
         // power, exit_to_desktop, toggle_fullscreen, quit_app, refresh_artwork
         console.info(`[mock] ${cmd}`, args);

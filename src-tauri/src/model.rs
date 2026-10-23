@@ -235,6 +235,8 @@ pub struct Settings {
     pub wand_pause: bool,
     /// Controller vibration for the interface: 0 off, 1 light, 2 normal.
     pub haptics: u8,
+    /// Now playing and the per-app mixer in the overlay and quick menu.
+    pub music_controls: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -269,6 +271,7 @@ impl Default for Settings {
             wand_combo: false,
             wand_pause: true,
             haptics: 1,
+            music_controls: true,
         }
     }
 }
