@@ -95,7 +95,7 @@ function Batteries() {
         <span
           key={c.slot}
           className={`battery ${c.wired ? "is-wired" : ""} ${!c.wired && c.level <= 1 ? "is-low" : ""}`}
-          title={c.wired ? `Controller ${c.slot + 1}: cablato` : `Controller ${c.slot + 1}: batteria`}
+          title={c.wired ? `${c.name}: cablato` : `${c.name}: batteria`}
         >
           <svg className="battery-pad" viewBox="0 0 24 16" aria-hidden>
             <path

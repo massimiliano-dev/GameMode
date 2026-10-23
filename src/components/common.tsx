@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useState } from "react";
 
 import { focusInitial } from "../input/focus";
 import { STORE_LABEL } from "../lib/format";
-import type { Store } from "../lib/types";
+import type { PadKind, Store } from "../lib/types";
 import { type Hint, useApp } from "../store/app";
 
 export function StoreBadge({ store, compact }: { store: Store; compact?: boolean }) {
@@ -14,7 +14,7 @@ export function StoreBadge({ store, compact }: { store: Store; compact?: boolean
   );
 }
 
-const GLYPH_TEXT: Record<Hint["button"], string> = {
+const XBOX_GLYPHS: Record<Hint["button"], string> = {
   A: "A",
   B: "B",
   X: "X",
@@ -27,8 +27,21 @@ const GLYPH_TEXT: Record<Hint["button"], string> = {
   view: "⧉",
 };
 
+/** Hint labels per pad family; positions are the same, labels aren't. */
+const GLYPH_TEXT: Record<PadKind, Record<Hint["button"], string>> = {
+  xbox: XBOX_GLYPHS,
+  playstation: { A: "✕", B: "○", X: "□", Y: "△", LB: "L1", RB: "R1", LT: "L2", RT: "R2", menu: "☰", view: "⧉" },
+  nintendo: { A: "B", B: "A", X: "Y", Y: "X", LB: "L", RB: "R", LT: "ZL", RT: "ZR", menu: "+", view: "−" },
+};
+
+/** The layout of the first connected pad decides the glyphs everywhere. */
+export function usePadKind(): PadKind {
+  return useApp((s) => s.controllers[0]?.kind ?? "xbox");
+}
+
 export function Glyph({ button }: { button: Hint["button"] }) {
-  return <span className={`glyph glyph-${button}`}>{GLYPH_TEXT[button]}</span>;
+  const kind = usePadKind();
+  return <span className={`glyph glyph-${button} glyph-${kind}`}>{GLYPH_TEXT[kind][button]}</span>;
 }
 
 /** Sets the controller hints shown in the bottom bar while mounted. */

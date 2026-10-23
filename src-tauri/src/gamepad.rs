@@ -41,6 +41,9 @@ pub struct Controller {
     pub wired: bool,
     /// 0 empty … 3 full; meaningless when wired.
     pub level: u8,
+    /// Button layout, for the glyphs the UI shows.
+    pub kind: crate::hidpad::Kind,
+    pub name: String,
 }
 
 static CONTROLLERS: std::sync::Mutex<Vec<Controller>> = std::sync::Mutex::new(Vec::new());
@@ -234,6 +237,8 @@ mod xinput {
             let mut wand_since: Option<Instant> = None;
             let mut wand_fired = false;
             let mut wand_checked = Instant::now();
+            // DualSense, DualShock 4, Switch Pro: raw HID, merged below.
+            let mut hid = crate::hidpad::Backend::new();
 
             loop {
                 let now = Instant::now();
@@ -249,6 +254,8 @@ mod xinput {
                         buttons |= read_buttons(&state);
                     }
                 }
+                let xinput_appeared = (0..4).any(|s| connected[s] && !was_connected[s]);
+                buttons |= hid.poll(now, xinput_appeared);
 
                 // Input goes only to the GameMode window that has focus.
                 let target = if overlay::is_open() {
@@ -306,10 +313,10 @@ mod xinput {
                 }
                 let foreground = target.is_some();
 
-                if connected != was_connected || last_battery.is_none_or(|t| now - t >= BATTERY_INTERVAL) {
+                if connected != was_connected || hid.take_dirty() || last_battery.is_none_or(|t| now - t >= BATTERY_INTERVAL) {
                     was_connected = connected;
                     last_battery = Some(now);
-                    update_controllers(&app, &connected);
+                    update_controllers(&app, &connected, &hid);
                 }
 
                 // Back+Start held: fallback for when Game Bar swallows Guide.
@@ -356,16 +363,24 @@ mod xinput {
         });
     }
 
-    fn update_controllers(app: &AppHandle, connected: &[bool; 4]) {
-        let list: Vec<Controller> = (0..4u32)
+    fn update_controllers(app: &AppHandle, connected: &[bool; 4], hid: &crate::hidpad::Backend) {
+        let mut list: Vec<Controller> = (0..4u32)
             .filter(|&slot| connected[slot as usize])
             .map(|slot| {
                 let mut info = XINPUT_BATTERY_INFORMATION::default();
                 let ok = unsafe { XInputGetBatteryInformation(slot, BATTERY_DEVTYPE_GAMEPAD, &mut info) } == 0;
                 let wired = !ok || info.BatteryType == BATTERY_TYPE_WIRED || info.BatteryType == BATTERY_TYPE_DISCONNECTED;
-                Controller { slot, wired, level: info.BatteryLevel.0 }
+                Controller {
+                    slot,
+                    wired,
+                    level: info.BatteryLevel.0,
+                    kind: crate::hidpad::Kind::Xbox,
+                    name: format!("Controller {}", slot + 1),
+                }
             })
             .collect();
+        // HID pads take the slots after XInput's four.
+        list.extend(hid.controllers(4));
         let mut current = CONTROLLERS.lock().unwrap();
         if *current != list {
             *current = list.clone();

@@ -102,7 +102,7 @@ export function OverlayApp() {
           <div className="overlay-pads">
             {controllers.map((c) => (
               <span key={c.slot} className="qm-sub">
-                Controller {c.slot + 1}: {c.wired ? "cablato" : ["scarico", "batteria bassa", "batteria media", "batteria piena"][c.level]}
+                {c.name}: {c.wired ? "cablato" : ["scarico", "batteria bassa", "batteria media", "batteria piena"][c.level]}
               </span>
             ))}
           </div>

@@ -208,6 +208,16 @@ export function Settings() {
                 onClick={() => void saveSettings({ ...settings, steamGuide: !settings.steamGuide })}
                 control={<Toggle on={settings.steamGuide} />}
               />
+              <Row
+                label="Pad PlayStation e Switch"
+                hint={
+                  settings.hidPads
+                    ? "DualSense, DualShock 4 e Pro Controller funzionano anche senza Steam Input, pure durante il gioco (il tasto PS/Home apre l'overlay). Spegni se usi DS4Windows o Steam Input e i tasti risultano doppi"
+                    : "Letti solo tramite Steam Input o DS4Windows, oppure quando GameMode è in primo piano"
+                }
+                onClick={() => void saveSettings({ ...settings, hidPads: !settings.hidPads })}
+                control={<Toggle on={settings.hidPads} />}
+              />
             </Section>
             <Section title="Negozi e finestre degli store">
               <Row

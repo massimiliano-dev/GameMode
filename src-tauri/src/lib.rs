@@ -14,6 +14,7 @@ mod devices;
 mod display;
 mod freeze;
 mod gamepad;
+mod hidpad;
 mod launcher;
 mod library;
 mod live;
@@ -272,6 +273,7 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> 
     if key_changed {
         artwork::refresh(&app, true);
     }
+    hidpad::set_enabled(settings.hid_pads);
     Ok(settings)
 }
 
@@ -790,6 +792,7 @@ pub fn run() {
             }
             overlay::create(&handle);
             updates::watch_packages();
+            hidpad::set_enabled(app.state::<AppState>().db.lock().settings.hid_pads);
             let native = gamepad::start(handle.clone());
             app.state::<AppState>().native_gamepad.store(native, Ordering::SeqCst);
 

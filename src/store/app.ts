@@ -555,7 +555,7 @@ function onControllers(list: Controller[], set: (partial: Partial<AppState>) => 
   for (const c of list) {
     const prev = before.find((p) => p.slot === c.slot);
     if (!c.wired && c.level <= 1 && (!prev || prev.wired || prev.level > 1)) {
-      get().toast(`Batteria del controller ${c.slot + 1} quasi scarica`, "error");
+      get().toast(`Batteria quasi scarica: ${c.name}`, "error");
     }
   }
   set({ controllers: list });
