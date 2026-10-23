@@ -97,15 +97,47 @@ pub fn force_foreground_raw(raw: isize) {
 /// Executable name (lowercase, e.g. "steam.exe") of the foreground window's process.
 #[cfg(windows)]
 pub fn foreground_process_name() -> Option<String> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut pid));
+    }
+    process_name(pid)
+}
+
+/// Visible, real-sized top-level windows of the processes named in `names`
+/// (lowercase exe names).
+pub fn windows_of(names: &[&str]) -> Vec<isize> {
+    #[cfg(windows)]
+    {
+        let mut cache = std::collections::HashMap::new();
+        win::visible_windows()
+            .into_iter()
+            .filter(|(_, pid)| {
+                cache
+                    .entry(*pid)
+                    .or_insert_with(|| process_name(*pid))
+                    .as_deref()
+                    .is_some_and(|n| names.contains(&n))
+            })
+            .map(|(hwnd, _)| hwnd)
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = names;
+        Vec::new()
+    }
+}
+
+#[cfg(windows)]
+fn process_name(pid: u32) -> Option<String> {
     use windows::core::PWSTR;
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
     unsafe {
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut pid));
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buf = [0u16; 1024];
         let mut len = buf.len() as u32;
@@ -190,6 +222,7 @@ pub fn focus_process(pids: &[u32]) -> bool {
 mod win {
     use windows::core::BOOL;
     use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
     use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_MENU};
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -255,6 +288,34 @@ mod win {
             }
         }
         BOOL(1)
+    }
+
+    /// Visible, uncloaked top-level windows of a usable size, with their pid.
+    pub fn visible_windows() -> Vec<(isize, u32)> {
+        unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let found = unsafe { &mut *(lparam.0 as *mut Vec<(isize, u32)>) };
+            unsafe {
+                if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+                    return BOOL(1);
+                }
+                let mut cloaked = 0u32;
+                let _ = DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut _, 4);
+                let mut rect = RECT::default();
+                let _ = GetWindowRect(hwnd, &mut rect);
+                if cloaked != 0 || rect.right - rect.left < 240 || rect.bottom - rect.top < 120 {
+                    return BOOL(1);
+                }
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                found.push((hwnd.0 as isize, pid));
+            }
+            BOOL(1)
+        }
+        let mut found: Vec<(isize, u32)> = Vec::new();
+        unsafe {
+            let _ = EnumWindows(Some(collect), LPARAM(&mut found as *mut Vec<(isize, u32)> as isize));
+        }
+        found
     }
 
     pub fn find_window(pids: &[u32]) -> Option<HWND> {

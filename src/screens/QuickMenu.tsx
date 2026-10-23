@@ -114,7 +114,7 @@ export function QuickMenu() {
               <Cover game={game} />
             </div>
             <div className="qm-game-info">
-              <span className="qm-label">{session.phase === "launching" ? "Avvio in corso" : "In gioco"}</span>
+              <span className="qm-label">{session.update ? "Aggiornamento in corso" : session.phase === "launching" ? "Avvio in corso" : "In gioco"}</span>
               <span className="qm-game-name">{game.name}</span>
               <span className="qm-sub">{formatPlaytime(elapsed)}</span>
             </div>

@@ -60,7 +60,7 @@ export function TopBar() {
         {session && playing && (
           <span className="session-pill">
             <span className="pulse" />
-            {session.phase === "launching" ? "Avvio" : "In gioco"}: {playing.name}
+            {session.update ? "Aggiornamento" : session.phase === "launching" ? "Avvio" : "In gioco"}: {playing.name}
           </span>
         )}
         <span className="clock">{formatClock(now)}</span>

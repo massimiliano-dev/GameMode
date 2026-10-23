@@ -8,6 +8,7 @@ import type {
   Collection,
   Controller,
   Game,
+  GameUpdate,
   LibraryUpdate,
   Profile,
   ScanError,
@@ -64,8 +65,11 @@ interface AppState {
   /** A newer signed release, found at startup or from Settings. */
   update: UpdateInfo | null;
   collections: Collection[];
+  /** Game updates the stores report, by game id. */
+  gameUpdates: Record<string, GameUpdate>;
 
   init: () => Promise<void>;
+  refreshGameUpdates: () => Promise<void>;
   rescan: () => Promise<void>;
   setTab: (tab: Tab) => void;
   open: (screen: Screen) => void;
@@ -80,6 +84,8 @@ interface AppState {
   toggleHidden: (game: Game) => Promise<void>;
   launch: (id: string) => Promise<void>;
   openStore: (store: Store, gameId?: string) => Promise<void>;
+  /** Steam's downloads, or the game's page in the Xbox app. */
+  showGameUpdate: (game: Game) => Promise<void>;
   installFromCatalog: (id: string, name: string) => Promise<void>;
   uninstall: (game: Game) => Promise<void>;
   returnedToApp: () => void;
@@ -95,6 +101,8 @@ interface AppState {
 let toastId = 0;
 /** Time to read the controller hint before a store window takes over. */
 const HANDOFF_DELAY = 2200;
+/** How often to ask the stores about game updates. */
+const GAME_UPDATES_EVERY = 20_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let initialized = false;
 
@@ -118,6 +126,7 @@ export const useApp = create<AppState>((set, get) => ({
   activeProfile: "",
   update: null,
   collections: [],
+  gameUpdates: {},
 
   init: async () => {
     if (initialized) return;
@@ -158,7 +167,14 @@ export const useApp = create<AppState>((set, get) => ({
         .catch(() => {});
     }, 20_000);
     set({ games, settings, session, loaded: games.length > 0 });
+    void get().refreshGameUpdates();
+    setInterval(() => void get().refreshGameUpdates(), GAME_UPDATES_EVERY);
     if (games.length === 0) setTimeout(() => set({ loaded: true }), 8000);
+  },
+
+  refreshGameUpdates: async () => {
+    const list = await api.getGameUpdates().catch(() => null);
+    if (list) set({ gameUpdates: Object.fromEntries(list.map((u) => [u.gameId, u])) });
   },
 
   rescan: async () => {
@@ -246,6 +262,18 @@ export const useApp = create<AppState>((set, get) => ({
       await sleep(HANDOFF_DELAY);
       await api.openStore(store, gameId);
       set({ rescanOnReturn: true });
+    } catch (e) {
+      get().toast(String(e), "error");
+    }
+  },
+
+  showGameUpdate: async (game) => {
+    if (game.store !== "steam") return get().openStore(game.store, game.id);
+    try {
+      const what = "Apro i download di Steam.";
+      get().toast(get().settings?.steamBigPicture ? nativeHint(what) : assistHint(get().settings, what));
+      await sleep(HANDOFF_DELAY);
+      await api.openLink("steam://open/downloads");
     } catch (e) {
       get().toast(String(e), "error");
     }

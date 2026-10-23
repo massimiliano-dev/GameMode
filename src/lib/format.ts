@@ -1,4 +1,4 @@
-import type { Store } from "./types";
+import type { GameUpdate, Store, UpdateState } from "./types";
 
 export const STORE_LABEL: Record<Store, string> = {
   steam: "Steam",
@@ -24,6 +24,28 @@ export const SHOP_LABEL: Partial<Record<Store, string>> = {
 
 /** Stores the user can toggle in settings, in display order. */
 export const STORES: Store[] = ["steam", "xbox", "epic", "gog", "ea", "ubisoft", "emulator", "manual"];
+
+export function formatBytes(bytes: number): string {
+  const gb = bytes / 1024 ** 3;
+  if (gb >= 1) return `${gb.toFixed(1).replace(".", ",")} GB`;
+  return `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`;
+}
+
+export const UPDATE_LABEL: Record<UpdateState, string> = {
+  available: "Aggiornamento disponibile",
+  downloading: "Download dell'aggiornamento",
+  installing: "Installazione dell'aggiornamento",
+  paused: "Aggiornamento in pausa",
+};
+
+/** "45% · 1,2 GB di 4,5 GB", or null when the store gives no numbers. */
+export function updateProgress(u: GameUpdate): string | null {
+  const parts = [
+    u.progress != null && u.state !== "available" ? `${Math.round(u.progress * 100)}%` : null,
+    u.total > 0 ? `${formatBytes(u.done)} di ${formatBytes(u.total)}` : null,
+  ];
+  return parts.filter(Boolean).join(" · ") || null;
+}
 
 export function formatPlaytime(secs: number): string {
   if (secs < 60) return secs > 0 ? "meno di un minuto" : "mai giocato";

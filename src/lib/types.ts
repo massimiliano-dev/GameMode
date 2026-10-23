@@ -198,6 +198,20 @@ export interface SessionState {
   phase: Phase;
   startedAt: number;
   seconds: number;
+  /** The game is being updated before it can start. */
+  update?: GameUpdate | null;
+}
+
+export type UpdateState = "available" | "downloading" | "installing" | "paused";
+
+export interface GameUpdate {
+  gameId: string;
+  state: UpdateState;
+  /** Bytes done and in total; 0 when the store doesn't say. */
+  done: number;
+  total: number;
+  /** 0…1, when known. */
+  progress: number | null;
 }
 
 export interface Volume {

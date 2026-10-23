@@ -172,6 +172,8 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         return true;
       case "resume_game":
         return false;
+      case "get_game_updates":
+        return games[1] ? [{ gameId: games[1].id, state: "downloading", done: 1.2 * 1024 ** 3, total: 4.5 * 1024 ** 3, progress: 0.27 }] : [];
       case "get_volume":
         return volume;
       case "set_volume":

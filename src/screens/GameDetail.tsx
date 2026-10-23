@@ -10,7 +10,7 @@ import { SteamExtras } from "../components/SteamExtras";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
 import { api, artUrl } from "../lib/api";
-import { formatLastPlayed, formatPlaytime, SHOP_LABEL } from "../lib/format";
+import { formatLastPlayed, formatPlaytime, SHOP_LABEL, UPDATE_LABEL, updateProgress } from "../lib/format";
 import type { Game } from "../lib/types";
 import { useApp } from "../store/app";
 
@@ -27,6 +27,8 @@ export function GameDetail({ gameId }: { gameId: string }) {
   const uninstall = useApp((s) => s.uninstall);
   const setBackdrop = useApp((s) => s.setBackdrop);
   const back = useApp((s) => s.back);
+  const update = useApp((s) => s.gameUpdates[gameId] ?? (s.session?.gameId === gameId ? s.session.update : null));
+  const showGameUpdate = useApp((s) => s.showGameUpdate);
   const [dialog, setDialog] = useState<Dialog>(null);
 
   useEffect(() => setBackdrop(gameId), [gameId, setBackdrop]);
@@ -93,7 +95,16 @@ export function GameDetail({ gameId }: { gameId: string }) {
                 </span>
               ))}
             </div>
-    
+            {update && (
+              <p className="detail-update">
+                <strong>{UPDATE_LABEL[update.state]}</strong>
+                {updateProgress(update) && <span> · {updateProgress(update)}</span>}
+                {update.state === "available" && game.store === "steam" && (
+                  <span className="detail-update-hint"> Steam lo scarica quando avvii il gioco.</span>
+                )}
+              </p>
+            )}
+
             <div className="button-row detail-actions" data-nav-group="actions">
               {mine ? (
                 <>
@@ -107,6 +118,11 @@ export function GameDetail({ gameId }: { gameId: string }) {
               ) : (
                 <button type="button" className="btn btn-primary btn-play" data-nav data-nav-autofocus onClick={() => void launch(game.id)}>
                   <span className="play-icon" aria-hidden>▶</span> Gioca
+                </button>
+              )}
+              {update && (game.store === "steam" || game.store === "xbox") && (
+                <button type="button" className="btn" data-nav onClick={() => void showGameUpdate(game)}>
+                  {game.store === "steam" ? "Download di Steam" : "Apri nell'app Xbox"}
                 </button>
               )}
               <button type="button" className="btn" data-nav onClick={() => void toggleFavorite(game)}>

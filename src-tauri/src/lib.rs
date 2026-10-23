@@ -27,6 +27,7 @@ mod steam_web;
 mod storefront;
 mod system;
 mod uninstall;
+mod updates;
 mod window;
 
 use db::Db;
@@ -87,6 +88,12 @@ fn scan(app: &AppHandle) -> LibraryUpdate {
 #[tauri::command]
 fn get_library(state: State<AppState>) -> Vec<Game> {
     state.db.lock().view()
+}
+
+#[tauri::command]
+async fn get_game_updates(app: AppHandle) -> Vec<updates::GameUpdate> {
+    let games = app.state::<AppState>().db.lock().view();
+    tauri::async_runtime::spawn_blocking(move || updates::all(&games)).await.unwrap_or_default()
 }
 
 #[tauri::command]
@@ -725,6 +732,7 @@ pub fn run() {
                 std::thread::spawn(launcher::preload_steam);
             }
             overlay::create(&handle);
+            updates::watch_packages();
             let native = gamepad::start(handle.clone());
             app.state::<AppState>().native_gamepad.store(native, Ordering::SeqCst);
 
@@ -751,6 +759,7 @@ pub fn run() {
             remove_manual_game,
             get_session,
             resume_game,
+            get_game_updates,
             close_game,
             power,
             get_volume,

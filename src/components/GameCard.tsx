@@ -2,6 +2,7 @@ import { memo, useState } from "react";
 
 import { artUrl } from "../lib/api";
 import type { Game } from "../lib/types";
+import { useApp } from "../store/app";
 import { StoreBadge } from "./common";
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 }
 
 export const GameCard = memo(function GameCard({ game, navId, onFocus, onSelect, playing, autofocus }: Props) {
+  const update = useApp((s) => s.gameUpdates[game.id]);
   return (
     <button
       type="button"
@@ -30,6 +32,15 @@ export const GameCard = memo(function GameCard({ game, navId, onFocus, onSelect,
         <StoreBadge store={game.store} compact />
         {game.favorite && <span className="fav-star" aria-label="Preferito">★</span>}
         {playing && <span className="playing-pill">In gioco</span>}
+        {!playing && update && (
+          <span className={`update-pill ${update.state === "available" ? "" : "is-active"}`}>
+            {update.state === "available"
+              ? "Aggiornamento"
+              : update.progress != null
+                ? `↓ ${Math.round(update.progress * 100)}%`
+                : "In aggiornamento"}
+          </span>
+        )}
       </span>
     </button>
   );
