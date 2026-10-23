@@ -337,13 +337,25 @@ fn close_game(app: AppHandle) -> bool {
 }
 
 #[tauri::command]
-fn power(app: AppHandle, action: system::PowerAction) -> CmdResult<()> {
-    // Frozen games can't answer the shutdown: let them go first. The rest
-    // happens when Windows asks GameMode to close (see `shutdown`).
-    if action.ends_session() {
-        launcher::thaw_all(&app);
-    }
-    system::power(action).map_err(err)
+async fn power(app: AppHandle, action: system::PowerAction) -> CmdResult<()> {
+    // Games are closed and saved here, off the main thread and before
+    // Windows asks: inside WM_QUERYENDSESSION a slow teardown counts as hung
+    // and EWX_FORCEIFHUNG would kill GameMode halfway. Windows' later ask
+    // finds the teardown done and gets its answer at once.
+    let ends_session = cfg!(windows) && action.ends_session();
+    tauri::async_runtime::spawn_blocking(move || {
+        if ends_session {
+            shutdown::teardown(&app, shutdown::Reason::Session);
+        }
+        let result = system::power(action);
+        if result.is_err() && ends_session {
+            shutdown::cancelled();
+        }
+        result
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
 }
 
 /// Which power actions this PC supports (sleep and hibernation can be off).

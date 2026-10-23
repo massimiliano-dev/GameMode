@@ -18,6 +18,7 @@ export function QuickMenu() {
   const session = useApp((s) => s.session);
   const game = useApp((s) => s.games.find((g) => g.id === s.session?.gameId));
   const paused = useApp((s) => s.suspended.length);
+  const backupOnExit = useApp((s) => s.settings?.backupOnExit ?? true);
   const rescan = useApp((s) => s.rescan);
   const profiles = useApp((s) => s.profiles);
   const activeProfile = useApp((s) => s.activeProfile);
@@ -71,9 +72,12 @@ export function QuickMenu() {
   };
 
   const elapsed = session ? Math.max(0, Math.floor(Date.now() / 1000) - session.startedAt) : 0;
-  const pausedNote = paused ? `${paused === 1 ? "Il gioco in pausa viene chiuso" : `I ${paused} giochi in pausa vengono chiusi`} · premi di nuovo` : undefined;
-  // Ending the session closes the games gently (they get to save first).
-  const gameNote = pausedNote ?? (session ? "Il gioco viene chiuso e i salvataggi copiati · premi di nuovo" : undefined);
+  // Ending the session closes every open game gently (they get to save
+  // first), the paused ones included, then backs the saves up if asked.
+  const open = paused + (session ? 1 : 0);
+  const gameNote = open
+    ? `${open === 1 ? "Il gioco viene chiuso" : `I ${open} giochi vengono chiusi`}${backupOnExit ? " e i salvataggi copiati" : ""} · premi di nuovo`
+    : undefined;
   const pausedQuitNote = paused ? `${paused === 1 ? "Il gioco in pausa riprende sul desktop" : "I giochi in pausa riprendono sul desktop"} · premi di nuovo` : undefined;
 
   return (

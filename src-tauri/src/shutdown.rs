@@ -7,7 +7,9 @@
 //! close by themselves and save, the saves are backed up (when the setting
 //! asks for it), performance mode and the display mode come back, and the
 //! console-mode watchdog is told not to open the desktop. Windows shows the
-//! block reason text if this takes more than a few seconds.
+//! block reason text if this takes more than a few seconds. A shutdown from
+//! GameMode's own quick menu runs the teardown before asking Windows (see
+//! the `power` command), so the handler then answers at once.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
@@ -47,6 +49,17 @@ pub fn install(app: &AppHandle) {
     #[cfg(windows)]
     if let Some(hwnd) = crate::window::main_window(app).and_then(|w| w.hwnd().ok()) {
         imp::install(hwnd.0 as isize);
+    }
+    // The backup on exit never downloads the saves index: get it (or a
+    // fresh one) ready now, in the background.
+    #[cfg(windows)]
+    if app.state::<AppState>().db.lock().settings.backup_on_exit {
+        let data_dir = app.state::<AppState>().data_dir.clone();
+        std::thread::spawn(move || {
+            if let Err(err) = crate::saves::index(&data_dir) {
+                eprintln!("saves index preload: {err:#}");
+            }
+        });
     }
 }
 
@@ -94,11 +107,17 @@ fn backup_on_exit(app: &AppHandle, game_ids: &[String]) {
         let root = data.settings.backup_dir.clone().unwrap_or_else(|| state.data_dir.join("backups"));
         (data.settings.backup_on_exit, games, root)
     };
-    if !enabled {
+    if !enabled || games.is_empty() {
         return;
     }
+    // Never download the manifest here: the network is going away and
+    // Windows is waiting. An old index is fine, none means no backup.
+    let Some(index) = crate::saves::cached_index(&state.data_dir) else {
+        eprintln!("backup on exit: no saves index at hand");
+        return;
+    };
     for game in &games {
-        if let Err(err) = crate::saves::backup(&state.data_dir, &root, game, true) {
+        if let Err(err) = crate::saves::backup_with(&index, &root, game, true) {
             eprintln!("backup on exit of {}: {err:#}", game.name);
         }
     }
@@ -137,7 +156,7 @@ mod imp {
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Shutdown::{ShutdownBlockReasonCreate, ShutdownBlockReasonDestroy};
     use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
-    use windows::Win32::UI::WindowsAndMessaging::{WM_ENDSESSION, WM_QUERYENDSESSION};
+    use windows::Win32::UI::WindowsAndMessaging::{ENDSESSION_CLOSEAPP, WM_ENDSESSION, WM_QUERYENDSESSION};
 
     const SUBCLASS_ID: usize = 0x4753;
 
@@ -154,13 +173,21 @@ mod imp {
     unsafe extern "system" fn subclass(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM, _id: usize, _data: usize) -> LRESULT {
         match msg {
             WM_QUERYENDSESSION => {
+                // Restart Manager (an installer replacing files in use)
+                // closes just GameMode with ENDSESSION_CLOSEAPP: Windows goes
+                // on, so the games stay and the desktop comes back, as on a quit.
+                let reason = if (lparam.0 as u32) & ENDSESSION_CLOSEAPP != 0 {
+                    super::Reason::Quit
+                } else {
+                    super::Reason::Session
+                };
                 // Windows waits for this answer; past a few seconds it shows
                 // this text instead of "not responding".
                 unsafe {
                     let _ = ShutdownBlockReasonCreate(hwnd, w!("Chiusura dei giochi e salvataggio…"));
                 }
                 if let Some(app) = super::APP.get() {
-                    super::teardown(app, super::Reason::Session);
+                    super::teardown(app, reason);
                 }
                 unsafe {
                     let _ = ShutdownBlockReasonDestroy(hwnd);
