@@ -28,6 +28,7 @@ mod sqlite;
 mod steam_web;
 mod storefront;
 mod system;
+mod tray;
 mod uninstall;
 mod updates;
 mod wand;
@@ -728,7 +729,14 @@ pub fn run() {
         return;
     }
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| window::bring_to_front(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // On the desktop for once, Explorer runs the `Run` entries itself,
+            // GameMode's included: that copy must not pull us out of the tray.
+            if shell::status().desktop_once && args.iter().any(|a| a == autostart::ARG) {
+                return;
+            }
+            window::bring_to_front(app)
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -764,6 +772,13 @@ pub fn run() {
                 if let Some(w) = window::main_window(&handle) {
                     let _ = w.set_fullscreen(true);
                 }
+            } else if shell::status().desktop_once {
+                // Signed in on the Windows desktop for once: GameMode waits
+                // in the tray until asked for.
+                tray::create(&handle);
+                if let Some(w) = window::main_window(&handle) {
+                    let _ = w.hide();
+                }
             }
             autostart::repair(&handle);
             if autostart::launched_at_login() {
@@ -779,7 +794,7 @@ pub fn run() {
                     }
                 });
             }
-            if window::wants_fullscreen(&handle) {
+            if window::wants_fullscreen(&handle) && !shell::status().desktop_once {
                 window::apply_tv(&handle);
                 if let Some(w) = window::main_window(&handle) {
                     let _ = w.set_fullscreen(true);

@@ -22,6 +22,11 @@ pub struct ShellStatus {
     pub active: bool,
     /// This process is the new version started by an update.
     pub after_update: bool,
+    /// Console mode is on, but this session was signed in on the Windows
+    /// desktop for once ("Riavvia in modalità desktop" or B+View held at
+    /// start): GameMode waits in the tray, and the next restart is back in
+    /// console mode.
+    pub desktop_once: bool,
 }
 
 /// Splits a `Run` value into program and arguments (same rules as uninstallers).
@@ -91,7 +96,8 @@ mod imp {
         Ok(())
     }
 
-    fn spawn_explorer() {
+    /// Starts explorer.exe: with no shell running, it becomes the desktop.
+    pub fn spawn_explorer() {
         let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
         let _ = std::process::Command::new(Path::new(&windir).join("explorer.exe")).spawn();
     }
@@ -324,6 +330,8 @@ mod imp {
 
     pub fn start_explorer() {}
 
+    pub fn spawn_explorer() {}
+
     pub fn ensure_explorer() {}
 
     pub fn hide_desktop() {}
@@ -385,6 +393,7 @@ pub fn console_in_front() {
 struct Start {
     as_shell: bool,
     after_update: bool,
+    desktop_once: bool,
 }
 
 static START: std::sync::OnceLock<Start> = std::sync::OnceLock::new();
@@ -392,13 +401,29 @@ static START: std::sync::OnceLock<Start> = std::sync::OnceLock::new();
 fn start() -> &'static Start {
     START.get_or_init(|| {
         let update = take_update_flag();
-        Start { as_shell: !imp::explorer_running() || update == Some(true), after_update: update.is_some() }
+        let explorer = imp::explorer_running();
+        // A stale flag is consumed even when it no longer matters.
+        let flag = take_boot_flag();
+        // Signed in as the shell, but the user asked for the desktop this
+        // once: Explorer gets the session, GameMode steps aside.
+        let desktop_once = !explorer && update.is_none() && (flag || crate::gamepad::desktop_combo_held());
+        if desktop_once {
+            DESKTOP_WANTED.store(true, std::sync::atomic::Ordering::SeqCst);
+            imp::spawn_explorer();
+        }
+        Start { as_shell: (!explorer || update == Some(true)) && !desktop_once, after_update: update.is_some(), desktop_once }
     })
 }
 
 pub fn status() -> ShellStatus {
     let enabled = imp::enabled();
-    ShellStatus { enabled, active: enabled && start().as_shell, after_update: start().after_update }
+    let start = start();
+    ShellStatus {
+        enabled,
+        active: enabled && start.as_shell,
+        after_update: start.after_update,
+        desktop_once: start.desktop_once,
+    }
 }
 
 /// Console mode with nothing underneath GameMode: no desktop to step aside to.
@@ -447,6 +472,34 @@ fn clear_update_flag() {
     let _ = std::fs::remove_file(update_flag());
 }
 
+fn boot_flag() -> std::path::PathBuf {
+    std::env::temp_dir().join("gamemode-desktop-once")
+}
+
+/// A boot flag older than this is a restart that never happened.
+const BOOT_FLAG_MAX_AGE: i64 = 24 * 3600;
+
+/// Asks for the next sign-in to land on the Windows desktop instead of
+/// GameMode, once, without touching the shell registration. Written right
+/// before "Riavvia in modalità desktop" restarts the PC.
+pub fn request_desktop_boot() -> Result<()> {
+    std::fs::write(boot_flag(), crate::model::now().to_string())?;
+    Ok(())
+}
+
+/// Whether the flag's text (written by `request_desktop_boot`) still counts.
+fn boot_flag_valid(text: &str, now: i64) -> bool {
+    text.trim().parse::<i64>().is_ok_and(|at| now - at < BOOT_FLAG_MAX_AGE)
+}
+
+/// Consumes the "desktop once" flag: true when a recent one was there.
+fn take_boot_flag() -> bool {
+    let path = boot_flag();
+    let valid = std::fs::read_to_string(&path).is_ok_and(|t| boot_flag_valid(&t, crate::model::now()));
+    let _ = std::fs::remove_file(path);
+    valid
+}
+
 /// Links handled by packaged apps, which don't start without Explorer.
 pub fn needs_explorer(uri: &str) -> bool {
     ["msxbox:", "ms-windows-store:", "ms-settings:", "ms-xbl-", "xbox:"].iter().any(|p| uri.starts_with(p))
@@ -488,5 +541,14 @@ mod tests {
         assert!(!approved_disabled(&[2, 0, 0, 0]));
         assert!(approved_disabled(&[3, 0, 0, 0]));
         assert!(!approved_disabled(&[]));
+    }
+
+    #[test]
+    fn boot_flag_expires_and_rejects_garbage() {
+        assert!(boot_flag_valid("1000\n", 1000 + 60));
+        assert!(boot_flag_valid("1000", 1000 + BOOT_FLAG_MAX_AGE - 1));
+        assert!(!boot_flag_valid("1000", 1000 + BOOT_FLAG_MAX_AGE));
+        assert!(!boot_flag_valid("", 1000));
+        assert!(!boot_flag_valid("soon", 1000));
     }
 }
