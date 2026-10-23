@@ -118,7 +118,7 @@ fn registered_uninstaller(app: &AppHandle, game: &Game) -> Result<Outcome> {
         bail!("Nessun programma di disinstallazione trovato: disinstallalo dal client dello store");
     };
     let (exe, args) = split_command(&command);
-    std::process::Command::new(exe).raw_arg(args).spawn()?;
+    crate::webview2::scrub(std::process::Command::new(exe).raw_arg(args)).spawn()?;
     crate::window::minimize(app);
     Ok(Outcome::Started)
 }

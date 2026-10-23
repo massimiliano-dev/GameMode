@@ -475,7 +475,7 @@ fn spawn(app: &AppHandle, spec: &LaunchSpec) -> Result<Option<u32>> {
         LaunchSpec::Uri { uri } => {
             // `-silent` keeps Steam's main window from popping over everything.
             if let Some(steam_exe) = uri.starts_with("steam://").then(steam_exe).flatten() {
-                Command::new(steam_exe).args(["-silent", uri.as_str()]).spawn()?;
+                crate::webview2::scrub(Command::new(steam_exe).args(["-silent", uri.as_str()])).spawn()?;
                 return Ok(None);
             }
             app.opener().open_url(uri, None::<&str>)?;
@@ -487,7 +487,7 @@ fn spawn(app: &AppHandle, spec: &LaunchSpec) -> Result<Option<u32>> {
             if crate::shell::status().active {
                 crate::shell::ensure_explorer();
             }
-            if Command::new("explorer.exe").arg(format!(r"shell:AppsFolder\{aumid}")).spawn().is_err() {
+            if crate::webview2::scrub(Command::new("explorer.exe").arg(format!(r"shell:AppsFolder\{aumid}"))).spawn().is_err() {
                 activate_packaged(aumid)?;
             }
             Ok(None)
@@ -498,7 +498,7 @@ fn spawn(app: &AppHandle, spec: &LaunchSpec) -> Result<Option<u32>> {
             if let Some(dir) = cwd.as_deref().or_else(|| path.parent()) {
                 cmd.current_dir(dir);
             }
-            let mut child = cmd.spawn()?;
+            let mut child = crate::webview2::scrub(&mut cmd).spawn()?;
             let pid = child.id();
             // Reap the child so it doesn't linger as a zombie on Unix.
             std::thread::spawn(move || {
@@ -1090,7 +1090,7 @@ pub fn preload_steam() {
     sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
     let running = sys.processes().values().any(|p| p.name().eq_ignore_ascii_case("steam.exe"));
     if !running {
-        if let Err(err) = Command::new(exe).arg("-silent").spawn() {
+        if let Err(err) = crate::webview2::scrub(Command::new(exe).arg("-silent")).spawn() {
             log::warn!("starting Steam failed: {err}");
         }
     }
