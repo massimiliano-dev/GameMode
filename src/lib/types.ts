@@ -67,6 +67,8 @@ export interface Settings {
   idleWaitDownloads: boolean;
   /** The system keyboard opens by itself on text fields in store windows. */
   keyboardAuto: boolean;
+  /** When Windows shuts down with a game open, back up its saves once it has closed. */
+  backupOnExit: boolean;
 }
 
 export interface ShellStatus {
@@ -334,7 +336,7 @@ export interface Catalog {
 
 export type UninstallOutcome = "started" | "removed";
 
-export type PowerAction = "shutdown" | "restart" | "sleep" | "restartToDesktop";
+export type PowerAction = "shutdown" | "restart" | "sleep" | "restartToDesktop" | "hibernate" | "lock" | "logoff";
 
 /** Trucchi: what a memory value is stored as. */
 export type CheatKind = "int" | "float" | "double";
@@ -473,4 +475,10 @@ export interface Cleanup {
   backupItems: number;
   backupBytes: number;
   applied: boolean;
+}
+
+/** Which power actions this PC supports. */
+export interface PowerOptions {
+  sleep: boolean;
+  hibernate: boolean;
 }

@@ -13,6 +13,9 @@ const VERB: Record<PowerAction, string> = {
   restart: "Riavvio",
   sleep: "Sospensione",
   restartToDesktop: "Riavvio in modalità desktop",
+  hibernate: "Ibernazione",
+  lock: "Blocco",
+  logoff: "Disconnessione",
 };
 
 /** The last minute before a scheduled power action, with a way out. */

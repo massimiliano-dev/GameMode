@@ -12,7 +12,7 @@ const label = (m: DisplayMode) => `${m.width} × ${m.height} · ${m.refresh} Hz`
 
 const IDLE_MINUTES = [0, 5, 10, 15, 30, 60, 120];
 const minutes = (m: number) => (m === 0 ? "Mai" : m < 60 ? `${m} minuti` : m === 60 ? "1 ora" : `${m / 60} ore`);
-const IDLE_ACTION: Record<PowerAction, string> = { sleep: "Sospendi il PC", shutdown: "Spegni il PC", restart: "Riavvia il PC", restartToDesktop: "Riavvia in modalità desktop" };
+const IDLE_ACTION: Record<PowerAction, string> = { sleep: "Sospendi il PC", shutdown: "Spegni il PC", restart: "Riavvia il PC", restartToDesktop: "Riavvia in modalità desktop", hibernate: "Iberna il PC", lock: "Blocca il PC", logoff: "Disconnetti" };
 type IdleKey = "idleScreensaverMin" | "idleDisplayOffMin" | "idleSleepMin";
 
 /** TV mode (display + audio output) and performance mode. */

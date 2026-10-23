@@ -9,18 +9,19 @@ import { MusicPanel } from "../components/NowPlaying";
 import { Priority, useAction } from "../input/dispatcher";
 import { api, on } from "../lib/api";
 import { formatClock, formatDate, formatPlaytime } from "../lib/format";
-import type { AudioOutput, PowerAction, PowerMode, Volume, VolumeEvent } from "../lib/types";
+import type { AudioOutput, PowerAction, PowerMode, PowerOptions, Volume, VolumeEvent } from "../lib/types";
 import { useApp } from "../store/app";
 import { useIdle } from "../store/idle";
 
 const VOLUME_STEP = 0.05;
-const POWER_VERB: Record<PowerAction, string> = { shutdown: "Spegnimento", restart: "Riavvio", sleep: "Sospensione", restartToDesktop: "Riavvio in modalità desktop" };
+const POWER_VERB: Record<PowerAction, string> = { shutdown: "Spegnimento", restart: "Riavvio", sleep: "Sospensione", restartToDesktop: "Riavvio in modalità desktop", hibernate: "Ibernazione", lock: "Blocco", logoff: "Disconnessione" };
 
 export function QuickMenu() {
   const close = () => useApp.getState().setQuickMenu(false);
   const session = useApp((s) => s.session);
   const game = useApp((s) => s.games.find((g) => g.id === s.session?.gameId));
   const paused = useApp((s) => s.suspended.length);
+  const backupOnExit = useApp((s) => s.settings?.backupOnExit ?? true);
   const rescan = useApp((s) => s.rescan);
   const profiles = useApp((s) => s.profiles);
   const activeProfile = useApp((s) => s.activeProfile);
@@ -36,10 +37,12 @@ export function QuickMenu() {
   const schedule = useIdle((s) => s.schedule);
   const cancelPower = useIdle((s) => s.cancelPower);
   const [powerSheet, setPowerSheet] = useState(false);
+  const [powerOptions, setPowerOptions] = useState<PowerOptions>({ sleep: true, hibernate: false });
   // The screen below keeps the hint bar; the panel shows its own.
   useEffect(() => {
     void api.getVolume().then(setVolume).catch(() => setVolume(null));
     void api.getConsoleMode().then((s) => { setConsoleMode(s.active); setDesktopOnce(s.desktopOnce); }).catch(() => {});
+    void api.powerOptions().then(setPowerOptions).catch(() => {});
     // Volume keys and the other window keep the bar current.
     return on<VolumeEvent>("audio://volume", ({ level, muted }) => setVolume({ level, muted }));
   }, []);
@@ -85,9 +88,15 @@ export function QuickMenu() {
   };
 
   const elapsed = session ? Math.max(0, Math.floor(Date.now() / 1000) - session.startedAt) : 0;
-  const pausedNote = paused ? `${paused === 1 ? "Il gioco in pausa viene chiuso" : `I ${paused} giochi in pausa vengono chiusi`} · premi di nuovo` : undefined;
-  // A scheduled shutdown closes paused games too, without a second press.
-  const scheduledNote = paused ? (paused === 1 ? "Il gioco in pausa verrà chiuso" : `I ${paused} giochi in pausa verranno chiusi`) : undefined;
+  // Ending the session closes every open game gently (they get to save
+  // first), the paused ones included, then backs the saves up if asked.
+  const open = paused + (session ? 1 : 0);
+  const saved = backupOnExit ? " e i salvataggi copiati" : "";
+  const gameNote = open
+    ? `${open === 1 ? "Il gioco viene chiuso" : `I ${open} giochi vengono chiusi`}${saved} · premi di nuovo`
+    : undefined;
+  // A scheduled shutdown closes the games too, without a second press.
+  const scheduledNote = open ? `${open === 1 ? "Il gioco verrà chiuso" : `I ${open} giochi verranno chiusi`}${saved}` : undefined;
   const pausedQuitNote = paused ? `${paused === 1 ? "Il gioco in pausa riprende sul desktop" : "I giochi in pausa riprendono sul desktop"} · premi di nuovo` : undefined;
 
   return (
@@ -227,7 +236,8 @@ export function QuickMenu() {
         )}
 
         <div className="qm-list qm-power">
-          <QmButton armed={armed === "sleep"} onClick={power("sleep")}>Sospendi</QmButton>
+          {powerOptions.sleep && <QmButton armed={armed === "sleep"} onClick={power("sleep")}>Sospendi</QmButton>}
+          {powerOptions.hibernate && <QmButton armed={armed === "hibernate"} onClick={power("hibernate")}>Iberna</QmButton>}
           <QmButton
             onClick={() => {
               close();
@@ -238,15 +248,18 @@ export function QuickMenu() {
             <span className="qm-sub">Schermo spento, i download continuano</span>
           </QmButton>
           <QmButton onClick={() => setPowerSheet(true)}>Spegni fra…</QmButton>
-          <QmButton armed={armed === "restart"} confirmText={pausedNote} onClick={power("restart")}>
+          {/* Unlocking needs a keyboard: not offered when GameMode is the shell. */}
+          {!consoleMode && <QmButton armed={armed === "lock"} onClick={power("lock")}>Blocca</QmButton>}
+          <QmButton armed={armed === "logoff"} confirmText={gameNote} onClick={power("logoff")}>Disconnetti</QmButton>
+          <QmButton armed={armed === "restart"} confirmText={gameNote} onClick={power("restart")}>
             {desktopOnce ? "Riavvia in modalità console" : "Riavvia"}
           </QmButton>
           {consoleMode && (
-            <QmButton armed={armed === "restartToDesktop"} confirmText={pausedNote} onClick={power("restartToDesktop")}>
+            <QmButton armed={armed === "restartToDesktop"} confirmText={gameNote} onClick={power("restartToDesktop")}>
               Riavvia in modalità desktop
             </QmButton>
           )}
-          <QmButton danger armed={armed === "shutdown"} confirmText={pausedNote} onClick={power("shutdown")}>Spegni</QmButton>
+          <QmButton danger armed={armed === "shutdown"} confirmText={gameNote} onClick={power("shutdown")}>Spegni</QmButton>
           <QmButton armed={armed === "quit"} confirmText={pausedQuitNote} onClick={() => confirmTwice("quit", () => void useApp.getState().quit())}>
             {consoleMode ? "Chiudi GameMode e apri il desktop" : "Chiudi GameMode"}
           </QmButton>

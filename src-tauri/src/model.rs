@@ -272,6 +272,9 @@ pub struct Settings {
     /// The on-screen keyboard opens by itself when a text field takes the
     /// focus in a store window during a hand-off.
     pub keyboard_auto: bool,
+    /// When Windows shuts down with a game open, back up its saves once it
+    /// has closed.
+    pub backup_on_exit: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -314,6 +317,7 @@ impl Default for Settings {
             idle_action: crate::system::PowerAction::Sleep,
             idle_wait_downloads: true,
             keyboard_auto: true,
+            backup_on_exit: true,
         }
     }
 }

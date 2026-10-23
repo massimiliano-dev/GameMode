@@ -28,6 +28,7 @@ mod performance;
 mod procinfo;
 mod saves;
 mod shell;
+mod shutdown;
 #[cfg(windows)]
 mod sqlite;
 mod status;
@@ -61,6 +62,10 @@ pub struct AppState {
     pub steam: steam_web::SteamCache,
     scanning: AtomicBool,
 }
+
+/// The main window's X goes to the tray (desktop-once session) instead of
+/// quitting GameMode.
+static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
 
 type CmdResult<T> = Result<T, String>;
 
@@ -382,12 +387,33 @@ fn close_game(app: AppHandle) -> bool {
 }
 
 #[tauri::command]
-fn power(app: AppHandle, action: system::PowerAction) -> CmdResult<()> {
-    // Frozen games can't answer the shutdown: let them go first.
-    if !matches!(action, system::PowerAction::Sleep) {
-        launcher::thaw_all(&app);
+async fn power(app: AppHandle, action: system::PowerAction) -> CmdResult<()> {
+    tauri::async_runtime::spawn_blocking(move || power_now(&app, action)).await.map_err(err)?.map_err(err)
+}
+
+/// Runs a power action, the session-ending ones after the teardown. Blocks
+/// for seconds: call it off the main thread (the `power` command, the tray,
+/// the inactivity thread).
+pub(crate) fn power_now(app: &AppHandle, action: system::PowerAction) -> anyhow::Result<()> {
+    // Games are closed and saved here, off the main thread and before
+    // Windows asks: inside WM_QUERYENDSESSION a slow teardown counts as hung
+    // and EWX_FORCEIFHUNG would kill GameMode halfway. Windows' later ask
+    // finds the teardown done and gets its answer at once.
+    let ends_session = cfg!(windows) && action.ends_session();
+    if ends_session {
+        shutdown::teardown(app, shutdown::Reason::Session);
     }
-    system::power(action).map_err(err)
+    let result = system::power(action);
+    if result.is_err() && ends_session {
+        shutdown::cancelled();
+    }
+    result
+}
+
+/// Which power actions this PC supports (sleep and hibernation can be off).
+#[tauri::command]
+fn power_options() -> system::PowerOptions {
+    system::power_options()
 }
 
 #[tauri::command]
@@ -513,11 +539,7 @@ fn toggle_fullscreen(app: AppHandle) {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
-    // Never leave a game frozen behind.
-    wand::forget();
-    launcher::thaw_all(&app);
-    display::reset_mode();
-    shell::start_explorer();
+    shutdown::teardown(&app, shutdown::Reason::Quit);
     app.exit(0);
 }
 
@@ -976,6 +998,7 @@ pub fn run() {
                     // GameMode" with nothing to show. The process stays
                     // alive, so the TV mode must go now, not at exit.
                     let hidden = w.clone();
+                    CLOSE_TO_TRAY.store(true, Ordering::SeqCst);
                     w.on_window_event(move |e| {
                         if let tauri::WindowEvent::CloseRequested { api, .. } = e {
                             api.prevent_close();
@@ -1015,6 +1038,7 @@ pub fn run() {
             audio_events::start(handle.clone());
             keyboard::create(&handle);
             keyboard::watch(handle.clone());
+            shutdown::install(&handle);
             updates::watch_packages();
             status::start(handle.clone());
             let native = gamepad::start(handle.clone());
@@ -1138,14 +1162,32 @@ pub fn run() {
             storage_overview,
             storage_cleanup,
             storage_remeasure,
+            power_options,
         ])
+        .on_window_event(|window, event| {
+            // Alt+F4 on the launcher: the hidden overlay window would keep
+            // the process alive with no window, so this quits for real.
+            // With the tray (desktop once) the X hides the window instead.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" && !CLOSE_TO_TRAY.load(Ordering::SeqCst) {
+                    api.prevent_close();
+                    shutdown::teardown(window.app_handle(), shutdown::Reason::Quit);
+                    window.app_handle().exit(0);
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
-            // Whatever ends GameMode (its own quit, a closed window, the
-            // session ending): nothing stays frozen behind it.
-            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
-                launcher::thaw_all(app);
-            }
+            // Whatever ends GameMode (its own quit, a closed window, an
+            // update restart): put things back. Windows' own shutdown went
+            // through `shutdown` already.
+            let code = match event {
+                tauri::RunEvent::ExitRequested { code, .. } => code,
+                tauri::RunEvent::Exit => None,
+                _ => return,
+            };
+            let reason = if code == Some(tauri::RESTART_EXIT_CODE) { shutdown::Reason::Restart } else { shutdown::Reason::Quit };
+            shutdown::teardown(app, reason);
         });
 }

@@ -278,6 +278,12 @@ export function Settings() {
                   }
                 }}
               />
+              <Row
+                label="Backup allo spegnimento"
+                hint="Se spegni, riavvii o ti disconnetti con un gioco aperto, il gioco viene chiuso con calma e i suoi salvataggi copiati"
+                onClick={() => void saveSettings({ ...settings, backupOnExit: !settings.backupOnExit })}
+                control={<Toggle on={settings.backupOnExit} />}
+              />
               <p className="setting-hint settings-note">
                 I percorsi dei salvataggi vengono dal Ludusavi Manifest, basato su PCGamingWiki.
               </p>

@@ -31,9 +31,13 @@ mod imp {
             .on_menu_event(|app, event| match event.id().as_ref() {
                 OPEN => crate::window::bring_to_front(app),
                 CONSOLE => {
-                    if let Err(err) = crate::power(app.clone(), crate::system::PowerAction::Restart) {
-                        eprintln!("restart to console: {err}");
-                    }
+                    // The teardown takes seconds: not on the main thread.
+                    let app = app.clone();
+                    std::thread::spawn(move || {
+                        if let Err(err) = crate::power_now(&app, crate::system::PowerAction::Restart) {
+                            eprintln!("restart to console: {err:#}");
+                        }
+                    });
                 }
                 QUIT => crate::quit_app(app.clone()),
                 _ => {}

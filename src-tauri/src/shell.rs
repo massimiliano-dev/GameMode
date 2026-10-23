@@ -181,6 +181,10 @@ mod imp {
                 let _ = CloseHandle(handle);
             }
         }
+        // Windows is shutting down or signing out: no desktop to bring back.
+        if crate::shutdown::session_ending() {
+            return;
+        }
         // An update restarts GameMode: give the new version time to come up
         // instead of opening the desktop under the installer.
         if super::update_pending() {

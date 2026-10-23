@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::model::Settings;
 use crate::system::PowerAction;
-use crate::{launcher, overlay, system, updates, window, AppState};
+use crate::{launcher, overlay, updates, window, AppState};
 
 const TICK: Duration = Duration::from_secs(1);
 /// How often the stores are asked whether something is downloading.
@@ -281,11 +281,8 @@ fn set_stage(app: &AppHandle, stage: Stage) {
 }
 
 fn execute(app: &AppHandle, action: PowerAction) {
-    // Frozen games can't answer a shutdown: let them go first.
-    if !matches!(action, PowerAction::Sleep) {
-        launcher::thaw_all(app);
-    }
-    if let Err(e) = system::power(action) {
+    // Same path as the quick menu: a shutdown closes and saves the games first.
+    if let Err(e) = crate::power_now(app, action) {
         eprintln!("scheduled power action failed: {e:#}");
     }
 }
