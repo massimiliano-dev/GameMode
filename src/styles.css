@@ -561,6 +561,12 @@ dd {
   color: var(--bg);
 }
 
+button.chip {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 .sort-label {
   margin-left: auto;
   display: inline-flex;
