@@ -280,7 +280,7 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> 
     if key_changed {
         artwork::refresh(&app, true);
     }
-    if igdb_changed {
+    if igdb_changed && metadata::igdb_credentials(&settings).is_some() {
         metadata::refresh(&app, true);
     }
     Ok(settings)
@@ -723,6 +723,11 @@ fn refresh_metadata(app: AppHandle) {
 }
 
 #[tauri::command]
+fn metadata_running() -> bool {
+    metadata::is_running()
+}
+
+#[tauri::command]
 async fn list_storefronts() -> CmdResult<Vec<storefront::Storefront>> {
     blocking(|| Ok(storefront::list())).await
 }
@@ -901,6 +906,7 @@ pub fn run() {
             remove_collection,
             set_in_collection,
             refresh_metadata,
+            metadata_running,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

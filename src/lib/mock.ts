@@ -519,6 +519,8 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "open_store":
         console.info("[mock] open_store", args);
         return ["steam", "xbox", "epic"].includes(args.store) ? "client" : "browser";
+      case "metadata_running":
+        return false;
       default:
         // power, exit_to_desktop, toggle_fullscreen, quit_app, refresh_artwork, refresh_metadata
         console.info(`[mock] ${cmd}`, args);

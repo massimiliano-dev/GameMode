@@ -40,54 +40,91 @@ const IGDB_PC: u32 = 6;
 pub const PIPELINE_VERSION: u32 = 1;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
+/// A refresh asked for while a pass was running: it runs right after.
+static PENDING: AtomicBool = AtomicBool::new(false);
+static PENDING_FORCE: AtomicBool = AtomicBool::new(false);
+
+/// Whether a pass is looking up games right now (the UI shows "searching").
+pub fn is_running() -> bool {
+    RUNNING.load(Ordering::SeqCst)
+}
 
 /// Looks up every game without a card, in the background. `force` also
 /// completes partial cards through IGDB (after its keys were entered).
+/// A request made while a pass runs is queued, never dropped: the pass that
+/// is running may predate the keys the user just entered.
 pub fn refresh(app: &AppHandle, force: bool) {
+    if force {
+        PENDING_FORCE.store(true, Ordering::SeqCst);
+    }
+    PENDING.store(true, Ordering::SeqCst);
     if RUNNING.swap(true, Ordering::SeqCst) {
-        return;
+        return; // the running pass sees PENDING when it ends
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let state = app.state::<AppState>();
-        let (games, igdb) = {
-            let data = state.db.lock();
-            let igdb = igdb_credentials(&data.settings);
-            let due = |g: &&Game| is_due(g, force, igdb.is_some());
-            let games: Vec<Game> = data.games.iter().filter(due).cloned().collect();
-            (games, igdb)
-        };
-        if games.is_empty() {
+        let _ = app.emit("metadata://running", true);
+        loop {
+            PENDING.store(false, Ordering::SeqCst);
+            let force = PENDING_FORCE.swap(false, Ordering::SeqCst);
+            run_pass(&app, force).await;
             RUNNING.store(false, Ordering::SeqCst);
-            return;
+            // Stored before reading PENDING, so a request racing with the end
+            // of this pass either sees RUNNING false and starts its own task,
+            // or set PENDING in time for this loop to go round again.
+            if !PENDING.load(Ordering::SeqCst) || RUNNING.swap(true, Ordering::SeqCst) {
+                break;
+            }
         }
-        let fetcher = Arc::new(Fetcher {
-            client: reqwest::Client::builder().timeout(Duration::from_secs(20)).build().unwrap_or_default(),
-            dir: state.data_dir.join("artwork"),
-            igdb: igdb.map(|(id, secret)| Igdb { client_id: id, client_secret: secret, token: Mutex::new(None) }),
-            steam_gate: Mutex::new(()),
-            steam_blocked: AtomicBool::new(false),
-            igdb_gate: Mutex::new(()),
-        });
-        let limit = Arc::new(Semaphore::new(CONCURRENCY));
-        let mut tasks = Vec::new();
-        for game in games {
-            let (fetcher, limit, app) = (fetcher.clone(), limit.clone(), app.clone());
-            tasks.push(tauri::async_runtime::spawn(async move {
-                let _permit = limit.acquire().await;
-                match fetcher.fetch(&game).await {
-                    Ok(meta) => save(&app, &game.id, meta),
-                    // Network trouble (no Wi-Fi yet after sign-in, rate limits):
-                    // leave the game unmarked so the next scan tries again.
-                    Err(err) => eprintln!("metadata for {} failed: {err:#}", game.id),
-                }
-            }));
-        }
-        for task in tasks {
-            let _ = task.await;
-        }
-        RUNNING.store(false, Ordering::SeqCst);
+        let _ = app.emit("metadata://running", false);
     });
+}
+
+async fn run_pass(app: &AppHandle, force: bool) {
+    let state = app.state::<AppState>();
+    let (games, igdb) = {
+        let data = state.db.lock();
+        let igdb = igdb_credentials(&data.settings);
+        let due = |g: &&Game| is_due(g, force, igdb.is_some());
+        let games: Vec<Game> = data.games.iter().filter(due).cloned().collect();
+        (games, igdb)
+    };
+    if games.is_empty() {
+        return;
+    }
+    let fetcher = Arc::new(Fetcher {
+        client: reqwest::Client::builder().timeout(Duration::from_secs(20)).build().unwrap_or_default(),
+        dir: state.data_dir.join("artwork"),
+        igdb: igdb.map(|(id, secret)| Igdb {
+            client_id: id,
+            client_secret: secret,
+            token: Mutex::new(None),
+            rejected: AtomicBool::new(false),
+        }),
+        steam_gate: Mutex::new(()),
+        steam_blocked: AtomicBool::new(false),
+        igdb_gate: Mutex::new(()),
+    });
+    let limit = Arc::new(Semaphore::new(CONCURRENCY));
+    let mut tasks = Vec::new();
+    for game in games {
+        let (fetcher, limit, app) = (fetcher.clone(), limit.clone(), app.clone());
+        tasks.push(tauri::async_runtime::spawn(async move {
+            let _permit = limit.acquire().await;
+            match fetcher.fetch(&game).await {
+                Ok(meta) => save(&app, &game.id, meta),
+                // Network trouble (no Wi-Fi yet after sign-in, rate limits):
+                // leave the game unmarked so the next scan tries again.
+                Err(err) => eprintln!("metadata for {} failed: {err:#}", game.id),
+            }
+        }));
+    }
+    for task in tasks {
+        let _ = task.await;
+    }
+    if fetcher.igdb.as_ref().is_some_and(|i| i.rejected.load(Ordering::SeqCst)) {
+        let _ = app.emit("metadata://igdb-rejected", ());
+    }
 }
 
 /// Whether the pipeline should look at `game` now.
@@ -104,7 +141,7 @@ fn is_incomplete(meta: &GameMeta) -> bool {
     meta.time_to_beat.is_none() || meta.critic_score.is_none() || meta.summary.is_none() || meta.genres.is_empty()
 }
 
-fn igdb_credentials(settings: &Settings) -> Option<(String, String)> {
+pub(crate) fn igdb_credentials(settings: &Settings) -> Option<(String, String)> {
     let id = settings.igdb_client_id.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
     let secret = settings.igdb_client_secret.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
     Some((id.to_string(), secret.to_string()))
@@ -137,6 +174,8 @@ struct Igdb {
     client_id: String,
     client_secret: String,
     token: Mutex<Option<String>>,
+    /// Twitch refused the keys: no point asking again in this pass.
+    rejected: AtomicBool,
 }
 
 struct Fetcher {
@@ -167,23 +206,33 @@ impl Fetcher {
         }
         if let Some(igdb) = &self.igdb {
             if found.as_ref().is_none_or(|f| !f.meta.igdb_checked && is_incomplete(&f.meta)) {
-                match self.from_igdb(igdb, game).await {
-                    Ok(Some(extra)) => match &mut found {
-                        Some(f) => merge(f, extra),
-                        None => found = Some(extra),
-                    },
-                    Ok(None) => {}
-                    Err(err) if found.is_some() => eprintln!("IGDB for {} failed: {err:#}", game.id),
+                // Only an actual answer from IGDB marks the card as checked:
+                // after an error (wrong keys, no network) it is asked again.
+                let answered = match self.from_igdb(igdb, game).await {
+                    Ok(Some(extra)) => {
+                        match &mut found {
+                            Some(f) => merge(f, extra),
+                            None => found = Some(extra),
+                        }
+                        true
+                    }
+                    Ok(None) => true,
+                    Err(err) if found.is_some() => {
+                        eprintln!("IGDB for {} failed: {err:#}", game.id);
+                        false
+                    }
                     Err(err) => return Err(err),
-                }
-                if let Some(f) = &mut found {
+                };
+                if let (true, Some(f)) = (answered, &mut found) {
                     f.meta.igdb_checked = true;
                 }
             }
         }
         let Some(mut found) = found else { return Ok(None) };
         if found.meta.screenshots.is_empty() && !found.shots.is_empty() {
-            found.meta.screenshots = self.download_shots(&game.id, &found.shots).await;
+            // A dropped download fails the whole card, so it is retried
+            // rather than saved for good without pictures.
+            found.meta.screenshots = self.download_shots(&game.id, &found.shots).await?;
         }
         Ok(Some(found.meta))
     }
@@ -195,6 +244,10 @@ impl Fetcher {
         let url = format!("https://store.steampowered.com/api/appdetails?appids={appid}&cc=it&l=italian");
         let body = {
             let _gate = self.steam_gate.lock().await;
+            // Tasks queued on the gate when the block was set give up too.
+            if self.steam_blocked.load(Ordering::SeqCst) {
+                bail!("Steam store API is rate limiting us");
+            }
             let body = self.steam_get(&url).await;
             tokio::time::sleep(STEAM_PACE).await;
             body
@@ -209,6 +262,9 @@ impl Fetcher {
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status == reqwest::StatusCode::FORBIDDEN {
                 if attempt == 0 {
                     tokio::time::sleep(STEAM_BACKOFF).await;
+                    if self.steam_blocked.load(Ordering::SeqCst) {
+                        bail!("Steam store API is rate limiting us");
+                    }
                     continue;
                 }
                 self.steam_blocked.store(true, Ordering::SeqCst);
@@ -298,6 +354,9 @@ impl Fetcher {
     /// App access token from Twitch (client credentials), cached for this run.
     async fn igdb_token(&self, igdb: &Igdb, renew: bool) -> Result<String> {
         let mut cached = igdb.token.lock().await;
+        if igdb.rejected.load(Ordering::SeqCst) {
+            bail!("Twitch rejected the IGDB keys");
+        }
         if let (false, Some(token)) = (renew, cached.as_ref()) {
             return Ok(token.clone());
         }
@@ -307,8 +366,12 @@ impl Fetcher {
             urlencode(&igdb.client_secret)
         );
         let resp = self.client.post(url).send().await?;
-        if !resp.status().is_success() {
-            bail!("Twitch token {} (controlla Client ID e Client Secret)", resp.status());
+        let status = resp.status();
+        if status.is_client_error() && status != reqwest::StatusCode::TOO_MANY_REQUESTS {
+            igdb.rejected.store(true, Ordering::SeqCst);
+        }
+        if !status.is_success() {
+            bail!("Twitch token {status} (controlla Client ID e Client Secret)");
         }
         #[derive(Deserialize)]
         struct Token {
@@ -320,23 +383,30 @@ impl Fetcher {
     }
 
     /// Caches up to `MAX_SCREENSHOTS` images next to the game's artwork.
-    async fn download_shots(&self, game_id: &str, urls: &[String]) -> Vec<String> {
+    /// Pictures the server doesn't have are skipped; network trouble is an
+    /// `Err`, so the card is fetched again later.
+    async fn download_shots(&self, game_id: &str, urls: &[String]) -> Result<Vec<String>> {
         let dir = self.dir.join(safe_name(game_id));
-        let _ = tokio::fs::create_dir_all(&dir).await;
+        tokio::fs::create_dir_all(&dir).await?;
         let mut paths = Vec::new();
         for (i, url) in urls.iter().take(MAX_SCREENSHOTS).enumerate() {
-            match self.download(url, &dir, i).await {
-                Ok(path) => paths.push(path.to_string_lossy().into_owned()),
-                Err(err) => eprintln!("screenshot {url} failed: {err:#}"),
+            match self.download(url, &dir, i).await? {
+                Some(path) => paths.push(path.to_string_lossy().into_owned()),
+                None => eprintln!("screenshot {url} skipped"),
             }
         }
-        paths
+        Ok(paths)
     }
 
-    async fn download(&self, url: &str, dir: &Path, index: usize) -> Result<PathBuf> {
+    /// `Ok(None)` when the picture is gone for good (404, not an image).
+    async fn download(&self, url: &str, dir: &Path, index: usize) -> Result<Option<PathBuf>> {
         let resp = self.client.get(url).send().await?;
-        if !resp.status().is_success() {
-            bail!("{url}: {}", resp.status());
+        let status = resp.status();
+        if !status.is_success() {
+            if is_transient(status) {
+                bail!("{url}: {status}");
+            }
+            return Ok(None);
         }
         let content_type = resp
             .headers()
@@ -348,13 +418,18 @@ impl Fetcher {
             "image/png" => "png",
             "image/webp" => "webp",
             "image/jpeg" | "image/jpg" => "jpg",
-            _ => bail!("{url}: not an image ({content_type})"),
+            _ => return Ok(None),
         };
         let bytes = resp.bytes().await?;
         let path = dir.join(format!("shot_{index}.{ext}"));
         tokio::fs::write(&path, &bytes).await?;
-        Ok(path)
+        Ok(Some(path))
     }
+}
+
+/// Statuses worth another try later: throttling and server trouble.
+fn is_transient(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status == reqwest::StatusCode::REQUEST_TIMEOUT || status.is_server_error()
 }
 
 fn native_id(game: &Game) -> &str {
@@ -858,5 +933,15 @@ mod tests {
         assert_eq!(unix_to_iso(0), "1970-01-01");
         assert_eq!(unix_to_iso(1645747200), "2022-02-25");
         assert_eq!(fold("Baldur's Gate 3"), "baldursgate3");
+    }
+
+    #[test]
+    fn transient_statuses() {
+        use reqwest::StatusCode;
+        assert!(is_transient(StatusCode::TOO_MANY_REQUESTS));
+        assert!(is_transient(StatusCode::SERVICE_UNAVAILABLE));
+        assert!(is_transient(StatusCode::REQUEST_TIMEOUT));
+        assert!(!is_transient(StatusCode::NOT_FOUND));
+        assert!(!is_transient(StatusCode::FORBIDDEN));
     }
 }

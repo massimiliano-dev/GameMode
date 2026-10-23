@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAction } from "../input/dispatcher";
 import { artUrl } from "../lib/api";
 import { completionPct, formatHours, formatPlaytime, releaseYear } from "../lib/format";
+import { useMetadataRunning } from "../lib/metaStatus";
 import type { Game, TimeToBeat } from "../lib/types";
 
 /** Summaries longer than this start folded. */
@@ -14,22 +15,29 @@ const TTB_ROWS: { key: keyof TimeToBeat; label: string }[] = [
   { key: "complete", label: "Completista" },
 ];
 
-/** The store card below a game's actions: blurb, genres, score, screenshots, time to beat. */
-export function GameInfo({ game }: { game: Game }) {
+/**
+ * The store card below a game's actions: blurb, genres, score, screenshots,
+ * time to beat. `onShots` hears how many screenshots can be browsed.
+ */
+export function GameInfo({ game, onShots }: { game: Game; onShots?: (count: number) => void }) {
+  const searching = useMetadataRunning();
   const meta = game.meta;
   if (!meta) {
-    return game.metaCheckedAt ? null : <p className="setting-hint detail-loading">Cerco la scheda del gioco…</p>;
+    return !game.metaCheckedAt && searching ? <p className="setting-hint detail-loading">Cerco la scheda del gioco…</p> : null;
   }
 
   const year = releaseYear(meta.releaseDate);
   const chips = [...meta.genres, ...(meta.developer ? [meta.developer] : []), ...(year ? [year] : [])];
   const ttb = meta.timeToBeat;
   const hasInfo = meta.summary || chips.length > 0 || meta.criticScore != null;
+  // Sections with nothing to press still take focus, or the pad could never
+  // scroll down to them; a folded blurb is focusable on its own.
+  const infoNav = !meta.summary || meta.summary.length <= FOLD_AT;
 
   return (
     <>
       {hasInfo && (
-        <section className="detail-section info">
+        <section className={`detail-section info ${infoNav ? "nav-panel" : ""}`} {...(infoNav ? panelNav : {})}>
           <div className="info-head">
             {meta.criticScore != null && (
               <span className={`score score-${scoreTone(meta.criticScore)}`} role="img" aria-label={`${scoreLabel(meta.scoreSource)} ${meta.criticScore}`}>
@@ -51,10 +59,10 @@ export function GameInfo({ game }: { game: Game }) {
         </section>
       )}
 
-      {meta.screenshots.length > 0 && <Screenshots game={game} />}
+      {meta.screenshots.length > 0 && <Screenshots game={game} onCount={onShots} />}
 
       {ttb && TTB_ROWS.some((r) => ttb[r.key]) && (
-        <section className="detail-section">
+        <section className="detail-section nav-panel" {...panelNav}>
           <h2 className="row-title detail-section-title">Tempo per finirlo</h2>
           <dl className="stats ttb">
             {TTB_ROWS.filter((r) => ttb[r.key]).map((r) => (
@@ -71,6 +79,8 @@ export function GameInfo({ game }: { game: Game }) {
   );
 }
 
+const panelNav = { "data-nav": true, tabIndex: -1 } as const;
+
 function scoreLabel(source: "metacritic" | "igdb" | null) {
   return source === "metacritic" ? "Metacritic" : "Voto critica";
 }
@@ -85,7 +95,7 @@ function Summary({ text }: { text: string }) {
   if (text.length <= FOLD_AT) return <p className="info-summary">{text}</p>;
   return (
     <button type="button" className={`info-summary info-fold ${open ? "is-open" : ""}`} data-nav onClick={() => setOpen((o) => !o)}>
-      {text}
+      <span className="info-text">{text}</span>
       <span className="info-more">{open ? "Mostra meno" : "Leggi tutto"}</span>
     </button>
   );
@@ -95,7 +105,7 @@ function Summary({ text }: { text: string }) {
  * One big screenshot with dots. The viewer is a single control: left and
  * right (or LT/RT anywhere on the screen) change the picture.
  */
-function Screenshots({ game }: { game: Game }) {
+function Screenshots({ game, onCount }: { game: Game; onCount?: (count: number) => void }) {
   const shots = game.meta?.screenshots ?? [];
   const [index, setIndex] = useState(0);
   const [failed, setFailed] = useState<Set<string>>(() => new Set());
@@ -108,6 +118,12 @@ function Screenshots({ game }: { game: Game }) {
     setIndex(0);
     setFailed(new Set());
   }, [game.id]);
+
+  // Only pictures that load count, so the LT/RT hint never promises nothing.
+  useEffect(() => {
+    onCount?.(count);
+    return () => onCount?.(0);
+  }, [count, onCount]);
 
   useEffect(() => {
     const el = ref.current;

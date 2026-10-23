@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import { focusElement } from "../input/focus";
 import { api } from "../lib/api";
+import { useMetadataRunning } from "../lib/metaStatus";
 import { useApp } from "../store/app";
 import { Row, Section } from "./SettingsRows";
 
@@ -11,15 +13,36 @@ export function MetadataSettings() {
   const toast = useApp((s) => s.toast);
   const [clientId, setClientId] = useState(settings?.igdbClientId ?? "");
   const [secret, setSecret] = useState(settings?.igdbClientSecret ?? "");
+  const secretRef = useRef<HTMLInputElement>(null);
+  const searching = useMetadataRunning();
 
   if (!settings) return null;
 
   const save = async () => {
     const id = clientId.trim() || null;
     const key = secret.trim() || null;
+    // Half a pair is useless to Twitch: wait for the other field.
+    if (!!id !== !!key) {
+      toast(id ? "Inserisci anche il Client Secret" : "Inserisci anche il Client ID");
+      return;
+    }
+    const had = !!(settings.igdbClientId && settings.igdbClientSecret);
+    if (id === (settings.igdbClientId ?? null) && key === (settings.igdbClientSecret ?? null)) {
+      if (id) toast("Chiavi IGDB già salvate");
+      return;
+    }
     await saveSettings({ ...settings, igdbClientId: id, igdbClientSecret: key });
-    toast(id && key ? "Chiavi IGDB salvate, completo le schede dei giochi" : "Chiavi IGDB rimosse");
+    if (id && key) toast("Chiavi IGDB salvate, completo le schede dei giochi");
+    else if (had) toast("Chiavi IGDB rimosse");
   };
+
+  // Enter on the ID (also "Fatto" on the on-screen keyboard) moves on to the
+  // secret. The keyboard hands focus back to the field in the next frame, so
+  // the move waits for that.
+  const nextField = () =>
+    requestAnimationFrame(() => {
+      if (secretRef.current) focusElement(secretRef.current);
+    });
 
   return (
     <Section title="Scheda gioco">
@@ -40,9 +63,14 @@ export function MetadataSettings() {
             placeholder="Client ID"
             spellCheck={false}
             onChange={(e) => setClientId(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void save()}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              if (secret.trim() || !clientId.trim()) void save();
+              else nextField();
+            }}
           />
           <input
+            ref={secretRef}
             className="text-input mono"
             data-nav
             value={secret}
@@ -61,7 +89,7 @@ export function MetadataSettings() {
         hint="Riprova per i giochi senza descrizione e completa quelle parziali"
         onClick={() => {
           void api.refreshMetadata();
-          toast("Ricerca delle schede avviata");
+          toast(searching ? "Ricerca già in corso: riprovo appena finisce" : "Ricerca delle schede avviata");
         }}
       />
     </Section>

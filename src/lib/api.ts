@@ -125,6 +125,7 @@ export const api = {
   setInCollection: (collectionId: string, gameId: string, value: boolean) =>
     call<Collection[]>("set_in_collection", { collectionId, gameId, value }),
   refreshMetadata: () => call<void>("refresh_metadata"),
+  metadataRunning: () => call<boolean>("metadata_running"),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

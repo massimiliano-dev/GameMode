@@ -34,6 +34,13 @@ function topGenres(games: Game[]): string[] {
     .map(([genre]) => genre);
 }
 
+/** The top genres, plus the selected one if new cards pushed it out of the top. */
+function genreFilters(games: Game[], filter: string): string[] {
+  const genres = topGenres(games);
+  const selected = filter.startsWith("g:") ? filter.slice(2) : null;
+  return selected && !genres.includes(selected) ? [...genres, selected] : genres;
+}
+
 export function Library({ focusId }: { focusId?: string }) {
   const all = useApp((s) => s.games);
   const open = useApp((s) => s.open);
@@ -53,9 +60,9 @@ export function Library({ focusId }: { focusId?: string }) {
       { key: "all", label: "Tutti" },
       ...STORES.filter((s) => games.some((g) => g.store === s)).map((s) => ({ key: s as string, label: STORE_LABEL[s] })),
       ...collections.filter((c) => c.gameIds.length).map((c) => ({ key: `c:${c.id}`, label: c.name })),
-      ...topGenres(games).map((genre) => ({ key: `g:${genre}`, label: genre })),
+      ...genreFilters(games, filter).map((genre) => ({ key: `g:${genre}`, label: genre })),
     ],
-    [games, collections],
+    [games, collections, filter],
   );
   const shown = useMemo(() => {
     const collection = filter.startsWith("c:") ? collections.find((c) => `c:${c.id}` === filter) : null;

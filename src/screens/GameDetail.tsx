@@ -37,7 +37,7 @@ export function GameDetail({ gameId }: { gameId: string }) {
 
   useEffect(() => setBackdrop(gameId), [gameId, setBackdrop]);
   useScreenFocus(undefined, !!game);
-  const shots = game?.meta?.screenshots.length ?? 0;
+  const [shots, setShots] = useState(0);
   useHints(
     [
       { button: "A", label: "Seleziona" },
@@ -175,7 +175,7 @@ export function GameDetail({ gameId }: { gameId: string }) {
             <Cover game={game} />
           </div>
         </div>
-        <GameInfo game={game} />
+        <GameInfo game={game} onShots={setShots} />
         {game.steamAppid && game.store === "steam" && <SteamExtras appid={game.steamAppid} />}
       </div>
       <AnimatePresence>
