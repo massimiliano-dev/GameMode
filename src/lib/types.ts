@@ -103,6 +103,8 @@ export interface Settings {
   companionEnabled: boolean;
   /** DualSense, DualShock 4 and Switch Pro read directly over HID. */
   hidPads: boolean;
+  /** GOG games start from their folder instead of through Galaxy. */
+  gogDirect: boolean;
 }
 
 export interface ShellStatus {
@@ -268,6 +270,8 @@ export interface ManualGame {
   args: string[];
 }
 
+export type LaunchStage = "steamStarting" | "steamLogin";
+
 export type Phase = "launching" | "running" | "suspended" | "exited" | "failed";
 
 export interface SessionState {
@@ -283,6 +287,8 @@ export interface SessionState {
   suspendedAt?: number | null;
   /** An anti-cheat was found: suspending may get the player kicked. */
   antiCheat?: boolean;
+  /** What the launch waits on before the game starts: Steam starting, or a Steam login. */
+  stage?: LaunchStage | null;
 }
 
 export type UpdateState = "available" | "downloading" | "installing" | "paused";

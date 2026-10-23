@@ -53,6 +53,7 @@ mod winupdate;
 mod capture;
 mod capture_osd;
 mod companion;
+mod steam_direct;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
