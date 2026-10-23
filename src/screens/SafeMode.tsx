@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { focusInitial } from "../input/focus";
+import { ensureFocus, focusInitial } from "../input/focus";
 import { setupInput } from "../input/sources";
 import { api } from "../lib/api";
 import { formatClock, formatDate } from "../lib/format";
@@ -18,6 +18,7 @@ export function SafeMode({ info, onContinue }: { info: StartupInfo; onContinue: 
   const [log, setLog] = useState<string | null>(null);
   const [consoleMode, setConsoleMode] = useState<boolean | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const logRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
     void setupInput();
@@ -28,6 +29,10 @@ export function SafeMode({ info, onContinue }: { info: StartupInfo; onContinue: 
       .catch(() => setConsoleMode(null));
     requestAnimationFrame(() => focusInitial());
   }, []);
+  // The newest lines matter most: start at the bottom (the controller can't scroll it).
+  useLayoutEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [log]);
 
   const crash = info.lastCrash;
   const when = crash ? new Date(crash.at * 1000) : null;
@@ -36,6 +41,8 @@ export function SafeMode({ info, onContinue }: { info: StartupInfo; onContinue: 
     try {
       await api.setConsoleMode(false);
       setConsoleMode(false);
+      // The button just pressed goes away: give the focus back.
+      requestAnimationFrame(ensureFocus);
       setNote("Modalità console disattivata: al prossimo accesso Windows parte con il desktop");
     } catch (e) {
       setNote(String(e));
@@ -96,7 +103,9 @@ export function SafeMode({ info, onContinue }: { info: StartupInfo; onContinue: 
       {note && <p className="setting-hint">{note}</p>}
       <section>
         <h2 className="row-title">Ultime righe del log</h2>
-        <pre className="diag-log">{log || "Il log è vuoto"}</pre>
+        <pre ref={logRef} className="diag-log">
+          {log || "Il log è vuoto"}
+        </pre>
         <p className="setting-hint mono">{info.logPath}</p>
       </section>
     </div>

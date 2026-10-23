@@ -9,13 +9,21 @@ export function Section({ title, children }: { title: string; children: ReactNod
   );
 }
 
-export function Row(props: { label: string; hint?: string; control?: ReactNode; autofocus?: boolean; onClick: () => void }) {
+export function Row(props: {
+  label: string;
+  hint?: string;
+  control?: ReactNode;
+  autofocus?: boolean;
+  onClick: () => void;
+  navId?: string;
+}) {
   return (
     <button
       type="button"
       className="setting-row"
       data-nav
       data-nav-autofocus={props.autofocus || undefined}
+      data-nav-id={props.navId}
       onClick={props.onClick}
     >
       <span className="setting-text">

@@ -254,9 +254,11 @@ mod imp {
             Recovery::SafeMode => {
                 // Explorer first: with a desktop underneath, the new GameMode
                 // starts as a plain window and console mode stays off for
-                // this session (`start()` sees Explorer running).
-                if !explorer_running() {
-                    spawn_explorer();
+                // this session (`start()` sees Explorer running). An Explorer
+                // already running in the background gets its desktop back.
+                let spawned = !explorer_running();
+                start_explorer();
+                if spawned {
                     for _ in 0..30 {
                         std::thread::sleep(std::time::Duration::from_millis(500));
                         if explorer_running() {
@@ -490,7 +492,10 @@ static START: std::sync::OnceLock<Start> = std::sync::OnceLock::new();
 fn start() -> &'static Start {
     START.get_or_init(|| {
         let update = take_update_flag();
-        Start { as_shell: !imp::explorer_running() || update == Some(true), after_update: update.is_some() }
+        // Only the watchdog passes `--recovered`, and it only runs in console
+        // mode: Explorer may have been running hidden in the background.
+        let as_shell = !imp::explorer_running() || update == Some(true) || recovered_count() > 0;
+        Start { as_shell, after_update: update.is_some() }
     })
 }
 

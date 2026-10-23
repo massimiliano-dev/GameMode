@@ -815,8 +815,8 @@ pub fn run() {
                 // GameMode is the shell: do Explorer's sign-in chores.
                 shell::spawn_watchdog(&live_file);
                 shell::keep_desktop_hidden(handle.clone());
-                // After an update the startup apps are already running.
-                if !shell::restarted_for_update() {
+                // After an update or a crash the startup apps are already running.
+                if !shell::restarted_for_update() && shell::recovered_count() == 0 {
                     std::thread::spawn(shell::run_startup_apps);
                 }
                 if let Some(w) = window::main_window(&handle) {

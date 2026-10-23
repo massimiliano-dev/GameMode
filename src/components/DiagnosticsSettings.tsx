@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { focusInitial } from "../input/focus";
 import { api } from "../lib/api";
 import { formatClock, formatDate } from "../lib/format";
 import type { StartupInfo } from "../lib/types";
@@ -14,9 +15,14 @@ export function DiagnosticsSettings() {
   const [info, setInfo] = useState<StartupInfo | null>(null);
   const [log, setLog] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const logRef = useRef<HTMLPreElement>(null);
 
-  const refresh = () => void api.startupInfo().then(setInfo).catch(() => {});
-  useEffect(refresh, []);
+  const refresh = () => api.startupInfo().then(setInfo).catch(() => {});
+  useEffect(() => void refresh(), []);
+  // The newest lines matter most: start at the bottom (the controller can't scroll it).
+  useLayoutEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [log]);
 
   const startHint = !info
     ? ""
@@ -54,7 +60,9 @@ export function DiagnosticsSettings() {
   const forget = async () => {
     await api.clearCrashes().catch(() => {});
     toast("Errori registrati dimenticati");
-    refresh();
+    // This row goes away with the crashes: keep the focus nearby.
+    await refresh();
+    requestAnimationFrame(() => focusInitial("diag-export"));
   };
 
   return (
@@ -77,11 +85,16 @@ export function DiagnosticsSettings() {
         hint={info?.logPath ?? "Le ultime righe di quello che GameMode e il watchdog hanno annotato"}
         onClick={() => void toggleLog()}
       />
-      {log !== null && <pre className="diag-log">{log || "Il log è vuoto"}</pre>}
+      {log !== null && (
+        <pre ref={logRef} className="diag-log">
+          {log || "Il log è vuoto"}
+        </pre>
+      )}
       <Row
         label={exporting ? "Esportazione…" : "Esporta il log"}
         hint="Salva una copia da allegare a una segnalazione"
         onClick={() => void exportLog()}
+        navId="diag-export"
       />
       {!!info?.crashCount && (
         <Row label="Dimentica gli errori registrati" hint="Azzera il contatore del watchdog" onClick={() => void forget()} />

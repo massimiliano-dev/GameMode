@@ -37,6 +37,10 @@ pub const BACKOFF_SECS: [u64; 3] = [2, 5, 10];
 pub const HUNG_EXIT_CODE: u32 = 0xE000_0001;
 /// Crashes kept in `crash.json`.
 const KEPT_CRASHES: usize = 20;
+/// Exit code of a panic (`panic = "abort"` fast-fails with a stack-buffer status).
+const PANIC_EXIT_CODE: u32 = 0xC000_0409;
+/// Longest gap between a panic and the crash the watchdog records for it.
+const PANIC_TO_CRASH_SECS: i64 = 60;
 
 pub fn data_dir() -> PathBuf {
     dirs::data_dir().unwrap_or_else(std::env::temp_dir).join(IDENTIFIER)
@@ -152,11 +156,15 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 /// Windows shows "GameMode has stopped working" on a crash and keeps the
 /// process around until someone clicks: in console mode nobody can, and
 /// the watchdog would wait forever. Ask for a silent crash instead.
+///
+/// `WerSetFlags` and not `SetErrorMode`: the error mode is inherited by
+/// every process GameMode starts (games, Explorer, startup apps), which
+/// would then crash silently too; the WER flags stay with this process.
 #[cfg(windows)]
 pub fn quiet_crash_dialogs() {
-    use windows::Win32::System::Diagnostics::Debug::{SetErrorMode, SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX};
-    unsafe {
-        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    use windows::Win32::System::ErrorReporting::{WerSetFlags, WER_FAULT_REPORTING, WER_FAULT_REPORTING_NO_UI};
+    if let Err(err) = unsafe { WerSetFlags(WER_FAULT_REPORTING(WER_FAULT_REPORTING_NO_UI)) } {
+        log::warn!("WerSetFlags: {err}");
     }
 }
 
@@ -202,6 +210,12 @@ impl Crash {
     /// What the exit code means, for people.
     pub fn description(&self) -> String {
         describe_exit(self.exit_code, self.hung)
+    }
+
+    /// A panic written at `panic_at` (Unix seconds) caused this crash: a
+    /// panic aborts with a fast-fail, and the watchdog sees it right after.
+    pub fn caused_by_panic_at(&self, panic_at: i64) -> bool {
+        !self.hung && self.exit_code == PANIC_EXIT_CODE && (0..=PANIC_TO_CRASH_SECS).contains(&(self.at - panic_at))
     }
 }
 
@@ -264,7 +278,7 @@ pub fn describe_exit(code: u32, hung: bool) -> String {
         return "GameMode non rispondeva più ed è stato chiuso".into();
     }
     match code {
-        0xC000_0409 => "Errore interno (panic)".into(),
+        PANIC_EXIT_CODE => "Errore interno (panic)".into(),
         0xC000_0005 => "Accesso alla memoria non valido".into(),
         0xC000_013A => "Chiuso dal sistema".into(),
         0xC000_0135 | 0xC000_007B => "Libreria di sistema mancante o danneggiata".into(),
@@ -330,7 +344,20 @@ pub struct StartupInfo {
 pub fn startup_info(recovered: u32, safe_mode: bool) -> StartupInfo {
     let log = crashes();
     let last_crash = log.last().cloned();
-    let last_panic = fs::read_to_string(last_panic_path()).ok().map(|t| t.lines().take(3).collect::<Vec<_>>().join("\n"));
+    // Only the panic behind the last crash: an older one would read as its cause.
+    let path = last_panic_path();
+    let panic_at = fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64);
+    let last_panic = last_crash
+        .as_ref()
+        .zip(panic_at)
+        .is_some_and(|(crash, at)| crash.caused_by_panic_at(at))
+        .then(|| fs::read_to_string(&path).ok())
+        .flatten()
+        .map(|t| t.lines().take(3).collect::<Vec<_>>().join("\n"));
     StartupInfo {
         recovered,
         safe_mode,
@@ -377,6 +404,18 @@ mod tests {
         assert_eq!(format_time(0), "1970-01-01 00:00:00");
         assert_eq!(format_time(1_700_000_000), "2023-11-14 22:13:20");
         assert_eq!(format_time(951_782_400), "2000-02-29 00:00:00");
+    }
+
+    #[test]
+    fn matches_a_panic_to_its_crash() {
+        let panic = Crash { at: 1000, exit_code: PANIC_EXIT_CODE, hung: false };
+        assert!(panic.caused_by_panic_at(1000));
+        assert!(panic.caused_by_panic_at(1000 - PANIC_TO_CRASH_SECS));
+        // An older panic, or one written after the crash, is another story.
+        assert!(!panic.caused_by_panic_at(1000 - PANIC_TO_CRASH_SECS - 1));
+        assert!(!panic.caused_by_panic_at(1001));
+        assert!(!Crash { exit_code: 0xC000_0005, ..panic.clone() }.caused_by_panic_at(1000));
+        assert!(!Crash { hung: true, ..panic }.caused_by_panic_at(1000));
     }
 
     #[test]

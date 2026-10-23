@@ -60,6 +60,8 @@ let radios = { wifi: true, bluetooth: true };
 let wifiConnected = "Casa";
 let btPaired = ["pad"];
 let consoleMode = false;
+// `clear_crashes` was called: `startup_info` stops reporting the simulated crash.
+let crashesCleared = false;
 let backups: { id: string; created: number; automatic: boolean; bytes: number }[] = [
   { id: "b2", created: now() - 2 * day, automatic: false, bytes: 2_400_000 },
 ];
@@ -463,13 +465,14 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "startup_info": {
         // `?safe` or `?recovered` in the browser's URL simulate the watchdog.
         const q = new URLSearchParams(window.location.search);
+        const crashed = !crashesCleared && (q.has("safe") || q.has("recovered"));
         return {
           recovered: q.has("recovered") ? 1 : 0,
           safeMode: q.has("safe"),
-          lastCrash: q.has("safe") || q.has("recovered") ? { at: now() - 40, exitCode: 0xc0000409, hung: false } : null,
-          lastCrashDescription: q.has("safe") || q.has("recovered") ? "Errore interno (panic)" : null,
-          lastPanic: q.has("safe") ? "panic at src/launcher.rs:120: called `Option::unwrap()` on a `None` value" : null,
-          crashCount: q.has("safe") ? 4 : q.has("recovered") ? 1 : 0,
+          lastCrash: crashed ? { at: now() - 40, exitCode: 0xc0000409, hung: false } : null,
+          lastCrashDescription: crashed ? "Errore interno (panic)" : null,
+          lastPanic: crashed && q.has("safe") ? "panic at src/launcher.rs:120: called `Option::unwrap()` on a `None` value" : null,
+          crashCount: !crashed ? 0 : q.has("safe") ? 4 : 1,
           logPath: "C:\\Users\\demo\\AppData\\Local\\it.maxpolce.gamemode\\logs\\gamemode.log",
         };
       }
@@ -487,6 +490,7 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         await wait(500);
         return "/Users/demo/Desktop/gamemode-log.txt";
       case "clear_crashes":
+        crashesCleared = true;
         return;
       case "check_update":
         await wait(700);
