@@ -116,6 +116,44 @@ pub struct Game {
     /// The walk could not read everything (e.g. WindowsApps ACLs): an estimate.
     #[serde(default)]
     pub size_partial: bool,
+    /// Store page facts (description, genres, score, time to beat).
+    #[serde(default)]
+    pub meta: Option<GameMeta>,
+    /// Unix seconds of the last metadata lookup that found nothing.
+    #[serde(default)]
+    pub meta_checked_at: Option<i64>,
+}
+
+/// How long a game takes, in seconds, as reported by IGDB.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TimeToBeat {
+    /// Main story only.
+    pub main: Option<u64>,
+    /// Main story plus side content.
+    pub extra: Option<u64>,
+    /// Everything.
+    pub complete: Option<u64>,
+}
+
+/// What the store pages know about a game, cached in the library.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GameMeta {
+    pub summary: Option<String>,
+    pub genres: Vec<String>,
+    pub developer: Option<String>,
+    /// Release date as the source prints it ("25 feb 2022", "2021-11-09").
+    pub release_date: Option<String>,
+    /// 0-100.
+    pub critic_score: Option<u8>,
+    /// "metacritic" or "igdb"; tells the UI what to call the score.
+    pub score_source: Option<String>,
+    /// Local files under the artwork folder.
+    pub screenshots: Vec<String>,
+    pub time_to_beat: Option<TimeToBeat>,
+    /// IGDB was asked about this game, so the gaps that remain are real.
+    pub igdb_checked: bool,
 }
 
 impl Game {
@@ -138,6 +176,8 @@ impl Game {
             size_bytes: None,
             size_checked_at: None,
             size_partial: false,
+            meta: None,
+            meta_checked_at: None,
         }
     }
 
@@ -166,6 +206,8 @@ impl Game {
             self.size_checked_at = old.size_checked_at;
             self.size_partial = old.size_partial;
         }
+        self.meta = old.meta.clone();
+        self.meta_checked_at = old.meta_checked_at;
     }
 }
 
@@ -281,6 +323,10 @@ pub struct Settings {
     /// When Windows shuts down with a game open, back up its saves once it
     /// has closed.
     pub backup_on_exit: bool,
+    /// Twitch app credentials for IGDB (descriptions of non-store games,
+    /// critic score, time to beat).
+    pub igdb_client_id: Option<String>,
+    pub igdb_client_secret: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -324,6 +370,8 @@ impl Default for Settings {
             idle_wait_downloads: true,
             keyboard_auto: true,
             backup_on_exit: true,
+            igdb_client_id: None,
+            igdb_client_secret: None,
         }
     }
 }

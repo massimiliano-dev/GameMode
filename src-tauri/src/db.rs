@@ -26,6 +26,8 @@ pub struct Data {
     pub profiles: Vec<Profile>,
     pub active_profile: String,
     pub profile_state: HashMap<String, ProfileState>,
+    /// `metadata::PIPELINE_VERSION` the stored metadata lookups were made with.
+    pub meta_version: u32,
 }
 
 pub struct Db {
@@ -109,6 +111,18 @@ impl Data {
             game.artwork_checked_at = None;
         }
         self.artwork_version = version;
+        true
+    }
+
+    /// Same as `upgrade_artwork`, for the store metadata pipeline.
+    pub fn upgrade_meta(&mut self, version: u32) -> bool {
+        if self.meta_version >= version {
+            return false;
+        }
+        for game in self.games.iter_mut().filter(|g| g.meta.is_none()) {
+            game.meta_checked_at = None;
+        }
+        self.meta_version = version;
         true
     }
 

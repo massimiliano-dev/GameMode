@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ConsoleSettings } from "../components/ConsoleSettings";
 import { DiagnosticsSettings } from "../components/DiagnosticsSettings";
 import { EmulatorSettings } from "../components/EmulatorSettings";
+import { MetadataSettings } from "../components/MetadataSettings";
 import { SystemSettings } from "../components/SystemSettings";
 import { UpdateSettings } from "../components/UpdateSettings";
 import { WandSettings } from "../components/WandSettings";
@@ -416,6 +417,8 @@ export function Settings() {
                 }}
               />
             </Section>
+
+            <MetadataSettings />
 
             {hidden.length > 0 && (
               <Section title="Giochi nascosti">

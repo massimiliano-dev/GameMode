@@ -97,3 +97,21 @@ export function formatClock(d: Date): string {
 export function formatDate(d: Date): string {
   return d.toLocaleDateString("it", { weekday: "long", day: "numeric", month: "long" });
 }
+
+/** Hours for a "time to beat": "45 min", "12,5 h", "30 h". */
+export function formatHours(secs: number): string {
+  if (secs < 3600) return `${Math.max(1, Math.round(secs / 60))} min`;
+  const hours = Math.round(secs / 1800) / 2;
+  return `${hours.toString().replace(".", ",")} h`;
+}
+
+/** How far `played` seconds get through a `target` of that many seconds, 0-100. */
+export function completionPct(played: number, target: number | null | undefined): number | null {
+  if (!target || target <= 0) return null;
+  return Math.min(100, Math.round((played / target) * 100));
+}
+
+/** Year in a release date as the stores print it ("25 feb 2022", "2021-11-09"). */
+export function releaseYear(date: string | null | undefined): string | null {
+  return date?.match(/\b(19|20)\d{2}\b/)?.[0] ?? null;
+}

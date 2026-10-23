@@ -1,7 +1,7 @@
 // In-browser stand-in for the Rust backend, so the UI can be developed and
 // tested with `npm run dev` in any browser.
 
-import type { AppVolume, Cleanup, Collection, Game, ManualGame, NowPlaying, PowerSchedule, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
+import type { AppVolume, Cleanup, Collection, Game, GameMeta, ManualGame, NowPlaying, PowerSchedule, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
 
 const CDN = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps";
 
@@ -49,7 +49,37 @@ let games: Game[] = SEED.map(([store, name, appid], i) => ({
   sizeBytes: i === 9 ? null : (((i * 7919) % 90) + 4) * 1024 ** 3 + i * 123_456_789,
   sizeCheckedAt: store === "steam" || store === "epic" ? null : now() - i * day,
   sizePartial: store === "xbox" && i === 7,
+  meta: mockMeta(i, appid),
+  metaCheckedAt: now(),
 }));
+
+/** A few cards, in various states of completeness. */
+function mockMeta(i: number, appid: number): GameMeta | null {
+  if (i % 4 === 3) return null;
+  const shots = appid ? [`${CDN}/${appid}/header.jpg`, `${CDN}/${appid}/capsule_616x353.jpg`, `${CDN}/${appid}/library_hero.jpg`] : [];
+  const genres = [
+    ["Azione", "GdR"],
+    ["Avventura", "GdR", "Strategia"],
+    ["Azione", "Roguelike"],
+    ["Platform", "Metroidvania"],
+    ["Simulazione", "Indie"],
+    ["Azione", "Avventura", "Open world"],
+  ][i % 6];
+  return {
+    summary:
+      i % 2 === 0
+        ? "Alzati, Senzaluce, e lascia che la grazia ti guidi verso l'Anello Ancestrale. Un vasto mondo pieno di pericoli e meraviglie, dove ogni scelta conta e ogni nemico racconta una storia. Esplora le Terre Interdette, affronta boss leggendari e scopri i segreti di un regno in rovina."
+        : "Un'avventura breve ma intensa, da scoprire con calma.",
+    genres,
+    developer: ["FromSoftware", "Larian Studios", "Supergiant Games", "Team Cherry", "ConcernedApe", "Rockstar Games"][i % 6],
+    releaseDate: i % 2 === 0 ? `${12 + (i % 9)} mar ${2016 + (i % 8)}` : `${2016 + (i % 8)}-0${1 + (i % 9)}-1${i % 9}`,
+    criticScore: i % 3 === 2 ? null : 70 + ((i * 7) % 30),
+    scoreSource: i % 3 === 2 ? null : i % 2 === 0 ? "metacritic" : "igdb",
+    screenshots: shots,
+    timeToBeat: i % 3 === 1 ? null : { main: (10 + i * 4) * 3600, extra: (25 + i * 8) * 3600, complete: i % 2 ? null : (60 + i * 10) * 3600 },
+    igdbChecked: i % 2 === 1,
+  };
+}
 
 /** Installed applications, for the Apps screen. */
 const APPS: [string, number | null][] = [
@@ -83,7 +113,7 @@ games = [
   })),
 ];
 
-let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true, keyboardAuto: true, backupOnExit: true };
+let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true, keyboardAuto: true, backupOnExit: true, igdbClientId: null, igdbClientSecret: null };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
 let suspended: SessionState[] = [];
@@ -753,8 +783,10 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
           setTimeout(() => emit("power://state", { kind: "resumed", slept: 3 }), 3000);
         }
         return;
+      case "metadata_running":
+        return false;
       default:
-        // exit_to_desktop, toggle_fullscreen, quit_app, refresh_artwork
+        // exit_to_desktop, toggle_fullscreen, quit_app, refresh_artwork, refresh_metadata
         console.info(`[mock] ${cmd}`, args);
         return;
     }

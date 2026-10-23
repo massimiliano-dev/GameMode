@@ -25,6 +25,31 @@ export interface Game {
   sizeCheckedAt: number | null;
   /** Part of the folder couldn't be read: the size is a lower bound. */
   sizePartial: boolean;
+  /** Store page facts; null until the lookup ran, or when nobody knows the game. */
+  meta?: GameMeta | null;
+  metaCheckedAt?: number | null;
+}
+
+/** Seconds, as IGDB reports them. */
+export interface TimeToBeat {
+  main: number | null;
+  extra: number | null;
+  complete: number | null;
+}
+
+export interface GameMeta {
+  summary: string | null;
+  genres: string[];
+  developer: string | null;
+  /** As the source prints it: "25 feb 2022" or "2021-11-09". */
+  releaseDate: string | null;
+  /** 0-100. */
+  criticScore: number | null;
+  scoreSource: "metacritic" | "igdb" | null;
+  /** Local files, to pass through `artUrl`. */
+  screenshots: string[];
+  timeToBeat: TimeToBeat | null;
+  igdbChecked: boolean;
 }
 
 export interface Settings {
@@ -69,6 +94,9 @@ export interface Settings {
   keyboardAuto: boolean;
   /** When Windows shuts down with a game open, back up its saves once it has closed. */
   backupOnExit: boolean;
+  /** Twitch app credentials for IGDB (game cards). */
+  igdbClientId: string | null;
+  igdbClientSecret: string | null;
 }
 
 export interface ShellStatus {

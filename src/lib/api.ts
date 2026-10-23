@@ -175,6 +175,8 @@ export const api = {
   /** Saves the log where the user picks; null when the dialog is dismissed. */
   exportLog: () => call<string | null>("export_log"),
   clearCrashes: () => call<void>("clear_crashes"),
+  refreshMetadata: () => call<void>("refresh_metadata"),
+  metadataRunning: () => call<boolean>("metadata_running"),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */
