@@ -233,7 +233,7 @@ mod imp {
             Ok(())
         })();
         if let Err(err) = result {
-            eprintln!("muting game audio failed: {err}");
+            log::warn!("muting game audio failed: {err}");
         }
     }
 }

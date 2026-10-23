@@ -105,7 +105,7 @@ fn close_windows_of(names: &[String]) {
 #[cfg(not(windows))]
 fn close_windows_of(names: &[String]) {
     if !names.is_empty() {
-        eprintln!("closing {names:?} ignored outside Windows");
+        log::warn!("closing {names:?} ignored outside Windows");
     }
 }
 

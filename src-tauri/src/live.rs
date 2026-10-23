@@ -98,7 +98,7 @@ fn write_to(path: &Path, state: &LiveState) {
         })
     };
     if let Err(err) = result {
-        eprintln!("saving live session failed: {err}");
+        log::warn!("saving live session failed: {err}");
     }
 }
 
@@ -128,7 +128,7 @@ pub fn thaw_frozen_in(path: &Path) {
     for session in state.sessions.iter_mut().filter(|s| s.suspended) {
         let pids: Vec<u32> = session.pids.iter().map(|(pid, _)| *pid).collect();
         if let Err(err) = crate::freeze::resume(&crate::freeze::family(&pids)) {
-            eprintln!("thawing {} failed: {err:#}", session.game_id);
+            log::warn!("thawing {} failed: {err:#}", session.game_id);
         }
         session.suspended = false;
         changed = true;

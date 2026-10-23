@@ -26,6 +26,7 @@ import type {
   Session,
   SessionState,
   Settings,
+  StartupInfo,
   Store,
   SteamExtras,
   Storefront,
@@ -124,6 +125,11 @@ export const api = {
   removeCollection: (id: string) => call<void>("remove_collection", { id }),
   setInCollection: (collectionId: string, gameId: string, value: boolean) =>
     call<Collection[]>("set_in_collection", { collectionId, gameId, value }),
+  startupInfo: () => call<StartupInfo>("startup_info"),
+  readLog: (lines = 200) => call<string>("read_log", { lines }),
+  /** Saves the log where the user picks; null when the dialog is dismissed. */
+  exportLog: () => call<string | null>("export_log"),
+  clearCrashes: () => call<void>("clear_crashes"),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

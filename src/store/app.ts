@@ -14,6 +14,7 @@ import type {
   ScanError,
   SessionState,
   Settings,
+  StartupInfo,
   Store,
   UpdateInfo,
 } from "../lib/types";
@@ -71,6 +72,8 @@ interface AppState {
   collections: Collection[];
   /** Game updates the stores report, by game id. */
   gameUpdates: Record<string, GameUpdate>;
+  /** How this GameMode came up (restarted after a crash, safe mode…). */
+  startup: StartupInfo | null;
 
   init: () => Promise<void>;
   refreshGameUpdates: () => Promise<void>;
@@ -141,6 +144,7 @@ export const useApp = create<AppState>((set, get) => ({
   update: null,
   collections: [],
   gameUpdates: {},
+  startup: null,
 
   init: async () => {
     if (initialized) return;
@@ -197,6 +201,15 @@ export const useApp = create<AppState>((set, get) => ({
     void get().refreshGameUpdates();
     setInterval(() => void get().refreshGameUpdates(), GAME_UPDATES_EVERY);
     if (games.length === 0) setTimeout(() => set({ loaded: true }), 8000);
+    if (!isOverlayWindow) {
+      void api
+        .startupInfo()
+        .then((startup) => {
+          set({ startup });
+          if (startup.recovered > 0) get().toast("GameMode è stato riavviato dopo un errore", "error");
+        })
+        .catch(() => {});
+    }
   },
 
   refreshGameUpdates: async () => {

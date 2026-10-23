@@ -40,7 +40,7 @@ pub fn power(action: PowerAction) -> Result<()> {
 
 #[cfg(not(windows))]
 pub fn power(action: PowerAction) -> Result<()> {
-    eprintln!("power action {action:?} ignored outside Windows");
+    log::warn!("power action {action:?} ignored outside Windows");
     Ok(())
 }
 

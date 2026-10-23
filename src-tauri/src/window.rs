@@ -17,7 +17,8 @@ pub fn wants_fullscreen(app: &AppHandle) -> bool {
 /// Applies the TV display mode and audio output, when configured.
 pub fn apply_tv(app: &AppHandle) {
     let settings = app.state::<AppState>().db.lock().settings.clone();
-    if wants_fullscreen(app) {
+    // Safe mode: a display mode the TV can't show may be what went wrong.
+    if wants_fullscreen(app) && !crate::shell::safe_mode() {
         crate::display::apply_tv(settings.tv_mode, settings.tv_audio.as_deref());
     }
 }

@@ -11,6 +11,7 @@ mod autostart;
 mod catalog;
 mod db;
 mod devices;
+mod diag;
 mod display;
 mod freeze;
 mod gamepad;
@@ -79,7 +80,7 @@ fn scan(app: &AppHandle) -> LibraryUpdate {
             d.view()
         })
         .unwrap_or_else(|e| {
-            eprintln!("saving library failed: {e:#}");
+            log::error!("saving library failed: {e:#}");
             state.db.lock().view()
         });
     let update = LibraryUpdate { games, errors: result.errors };
@@ -129,7 +130,11 @@ async fn rescan_library(app: AppHandle) -> CmdResult<LibraryUpdate> {
 #[tauri::command]
 fn launch_game(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<()> {
     let game = state.db.lock().game(&id).cloned().ok_or("Gioco non trovato")?;
-    launcher::launch(&app, &game).map_err(|e| format!("{e:#}"))
+    log::info!("launching {} ({})", game.name, game.id);
+    launcher::launch(&app, &game).map_err(|e| {
+        log::warn!("launching {} failed: {e:#}", game.name);
+        format!("{e:#}")
+    })
 }
 
 /// Changes the active profile's state about one game and returns its new view.
@@ -379,6 +384,7 @@ fn overlay_to_launcher(app: AppHandle) {
 
 #[tauri::command]
 fn exit_to_desktop(app: AppHandle) {
+    log::info!("exit to desktop");
     // Nothing stays frozen behind GameMode's back.
     launcher::thaw_all(&app);
     // In console mode there is no desktop until Explorer runs.
@@ -403,6 +409,7 @@ fn toggle_fullscreen(app: AppHandle) {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
+    log::info!("quit");
     // Never leave a game frozen behind.
     wand::forget();
     launcher::thaw_all(&app);
@@ -694,6 +701,7 @@ async fn install_update(app: AppHandle) -> CmdResult<()> {
     let Some(update) = app.updater().map_err(err)?.check().await.map_err(err)? else {
         return Err("Nessun aggiornamento disponibile".into());
     };
+    log::info!("installing update {}", update.version);
     // The console-mode watchdog must not open the desktop during the restart.
     shell::mark_updating();
     update.download_and_install(|_, _| {}, || {}).await.map_err(err)?;
@@ -720,13 +728,55 @@ async fn open_store(app: AppHandle, store: model::Store, game_id: Option<String>
     blocking(move || storefront::open(&handle, store, game.as_ref())).await
 }
 
+/// How this GameMode came up: a normal start, a restart by the watchdog
+/// after a crash, or safe mode after crashes in a row.
+#[tauri::command]
+fn startup_info() -> diag::StartupInfo {
+    diag::startup_info(shell::recovered_count(), shell::safe_mode())
+}
+
+/// The last `lines` lines of the log.
+#[tauri::command]
+fn read_log(lines: usize) -> String {
+    diag::read_log(lines.clamp(1, 2000))
+}
+
+/// Saves the log where the user picks; `None` when the dialog is dismissed.
+#[tauri::command]
+async fn export_log(app: AppHandle) -> CmdResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog().file().set_file_name("gamemode-log.txt").add_filter("Testo", &["txt"]).blocking_save_file()
+    })
+    .await
+    .map_err(err)?;
+    let Some(path) = picked else { return Ok(None) };
+    let path = path.into_path().map_err(err)?;
+    diag::export_to(&path).map_err(err)?;
+    Ok(Some(path.display().to_string()))
+}
+
+#[tauri::command]
+fn clear_crashes() {
+    diag::clear_crashes();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // The console-mode watchdog is this same executable with `--watchdog`.
     if let Some(pid) = shell::watchdog_pid() {
+        diag::init("watchdog");
         shell::run_watchdog(pid);
         return;
     }
+    diag::init("app");
+    diag::install_panic_hook();
+    diag::quiet_crash_dialogs();
+    log::info!(
+        "GameMode {} starting, args {:?}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::args().skip(1).collect::<Vec<_>>()
+    );
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| window::bring_to_front(app)))
         .plugin(tauri_plugin_opener::init())
@@ -753,6 +803,14 @@ pub fn run() {
 
             let handle = app.handle().clone();
             let console = shell::status().active;
+            let safe = shell::safe_mode();
+            log::info!(
+                "console mode {}, recovered {}, safe mode {}, after update {}",
+                if console { "on" } else { "off" },
+                shell::recovered_count(),
+                safe,
+                shell::restarted_for_update()
+            );
             if console {
                 // GameMode is the shell: do Explorer's sign-in chores.
                 shell::spawn_watchdog(&live_file);
@@ -779,13 +837,15 @@ pub fn run() {
                     }
                 });
             }
-            if window::wants_fullscreen(&handle) {
+            // Safe mode stays a window over the desktop, with no TV mode.
+            if !safe && window::wants_fullscreen(&handle) {
                 window::apply_tv(&handle);
                 if let Some(w) = window::main_window(&handle) {
                     let _ = w.set_fullscreen(true);
                 }
             }
-            if app.state::<AppState>().db.lock().settings.preload_steam {
+            // Safe mode starts as little as possible besides GameMode itself.
+            if !safe && app.state::<AppState>().db.lock().settings.preload_steam {
                 std::thread::spawn(launcher::preload_steam);
             }
             overlay::create(&handle);
@@ -883,6 +943,10 @@ pub fn run() {
             add_collection,
             remove_collection,
             set_in_collection,
+            startup_info,
+            read_log,
+            export_log,
+            clear_crashes,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
@@ -891,6 +955,9 @@ pub fn run() {
             // session ending): nothing stays frozen behind it.
             if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
                 launcher::thaw_all(app);
+            }
+            if matches!(event, tauri::RunEvent::Exit) {
+                log::info!("exit");
             }
         });
 }

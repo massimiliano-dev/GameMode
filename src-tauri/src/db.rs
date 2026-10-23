@@ -40,7 +40,7 @@ impl Db {
         let data = match fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|err| {
                 // Keep the broken file around instead of silently losing playtime.
-                eprintln!("library.json is corrupt ({err}), starting fresh");
+                log::error!("library.json is corrupt ({err}), starting fresh");
                 let _ = fs::rename(&path, dir.join("library.corrupt.json"));
                 Data::default()
             }),

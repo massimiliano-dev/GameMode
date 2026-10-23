@@ -91,7 +91,7 @@ fn xbox(app: &AppHandle, family: &str) -> Result<Outcome> {
             Err(err) => {
                 // Some Game Pass installs are owned by Gaming Services and can
                 // only be removed from the Xbox app / Windows settings.
-                eprintln!("RemovePackageAsync failed: {err}");
+                log::warn!("RemovePackageAsync failed: {err}");
                 storefront::open_uri(app, "ms-settings:appsfeatures")?;
                 return Ok(Outcome::Started);
             }

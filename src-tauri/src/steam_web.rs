@@ -295,7 +295,7 @@ pub async fn deals(app: &AppHandle, force: bool) -> Deals {
             Ok(items) if items.is_empty() => Deals { items, status: DealsStatus::Empty },
             Ok(items) => Deals { items, status: DealsStatus::Ok },
             Err(err) => {
-                eprintln!("wishlist deals failed: {err:#}");
+                log::warn!("wishlist deals failed: {err:#}");
                 Deals { items: Vec::new(), status: DealsStatus::Failed }
             }
         },
