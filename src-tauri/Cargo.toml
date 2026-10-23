@@ -29,7 +29,7 @@ anyhow = "1.0.104"
 sysinfo = "0.39.6"
 roxmltree = "0.21.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "native-tls", "http2", "charset", "system-proxy"] }
-tokio = { version = "1.54.0", features = ["sync", "time", "macros"] }
+tokio = { version = "1.54.0", features = ["sync", "time", "macros", "net", "rt"] }
 base64 = "0.23.1"
 serde_yaml = "0.9.34"
 glob = "0.3.4"
@@ -39,6 +39,9 @@ tauri-plugin-process = "2"
 png = "0.18"
 log = "0.4"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "ws"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+getrandom = "0.3"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

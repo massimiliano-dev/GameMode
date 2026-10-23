@@ -99,6 +99,8 @@ export interface Settings {
   igdbClientSecret: string | null;
   /** View+RB held during a game takes a screenshot. */
   captureCombo: boolean;
+  /** Phone companion: the LAN remote server. */
+  companionEnabled: boolean;
 }
 
 export interface ShellStatus {
@@ -573,3 +575,23 @@ export interface Capture {
 
 /** What the in-game card shows after a screenshot. */
 export type CaptureNotice = { kind: "saved"; capture: Capture } | { kind: "error"; message: string };
+
+export interface CompanionStatus {
+  enabled: boolean;
+  running: boolean;
+  /** `http://<lan ip>:<port>`, to type by hand. */
+  address: string | null;
+  /** The same with the token: what the QR code encodes. */
+  url: string | null;
+  qrSvg: string | null;
+  pin: string | null;
+  firewall: "ok" | "missing" | "unknown";
+  error: string | null;
+}
+
+/** Text sent from the phone's keyboard (`remote://text`). */
+export interface RemoteText {
+  text: string;
+  enter: boolean;
+  backspace: boolean;
+}

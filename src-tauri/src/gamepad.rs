@@ -4,10 +4,10 @@
 // Parsers and helpers below are only reached from Windows-only code paths.
 #![cfg_attr(not(windows), allow(dead_code))]
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Action {
     Up,
@@ -112,6 +112,18 @@ pub fn desktop_combo_held() -> bool {
     #[cfg(not(windows))]
     {
         false
+    }
+}
+
+/// Routes one press that didn't come from a controller (the phone
+/// companion) exactly where a controller press would go.
+pub fn route(app: &AppHandle, action: Action, repeat: bool) {
+    #[cfg(windows)]
+    xinput::route(app, action, repeat);
+    #[cfg(not(windows))]
+    {
+        use tauri::Emitter;
+        let _ = app.emit_to("main", "gamepad://nav", NavEvent { action, repeat });
     }
 }
 
@@ -409,22 +421,7 @@ mod xinput {
                         crate::osd::nudge(&app, if bit == DPAD_UP { crate::osd::PAD_STEP } else { -crate::osd::PAD_STEP });
                         continue;
                     }
-                    // Guide closes the keyboard and keeps its meaning
-                    // underneath: leaving Wand, or summoning GameMode.
-                    if typing && action != Action::Guide {
-                        let _ = app.emit_to(keyboard::LABEL, "gamepad://nav", NavEvent { action, repeat });
-                    } else if wand {
-                        if typing {
-                            keyboard::hide(&app);
-                        }
-                        wand_key(&app, action);
-                    } else if action == Action::Guide {
-                        summon(&app, target, true);
-                    } else if let Some(label) = target {
-                        let _ = app.emit_to(label, "gamepad://nav", NavEvent { action, repeat });
-                    } else if assisting && assist::types_keys() {
-                        assist_key(&app, action);
-                    }
+                    dispatch(&app, target, wand, typing, assisting, action, repeat, true);
                 }
 
                 // Holding View: the way back from any hand-off, also from apps
@@ -517,6 +514,47 @@ mod xinput {
                 std::thread::sleep(POLL);
             }
         });
+    }
+
+    /// Where a press goes: the system keyboard, Wand's overlay, a GameMode
+    /// window, or a store window during a hand-off. `from_guide`: a real
+    /// Guide press, which Steam games may keep for Steam's overlay.
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch(app: &AppHandle, target: Option<&str>, wand: bool, typing: bool, assisting: bool, action: Action, repeat: bool, from_guide: bool) {
+        // Guide closes the keyboard and keeps its meaning
+        // underneath: leaving Wand, or summoning GameMode.
+        if typing && action != Action::Guide {
+            let _ = app.emit_to(keyboard::LABEL, "gamepad://nav", NavEvent { action, repeat });
+        } else if wand {
+            if typing {
+                keyboard::hide(app);
+            }
+            wand_key(app, action);
+        } else if action == Action::Guide {
+            summon(app, target, from_guide);
+        } else if let Some(label) = target {
+            let _ = app.emit_to(label, "gamepad://nav", NavEvent { action, repeat });
+        } else if assisting && assist::types_keys() {
+            assist_key(app, action);
+        }
+    }
+
+    /// A press from the phone companion, routed like a controller's.
+    pub fn route(app: &AppHandle, action: Action, repeat: bool) {
+        let target = if overlay::is_open() {
+            Some(overlay::LABEL)
+        } else if window::is_foreground(app) {
+            Some("main")
+        } else {
+            None
+        };
+        let wand = target.is_none() && crate::wand::is_open();
+        let assisting = target.is_none() && assist::is_active();
+        if keyboard::is_open() && target.is_some() {
+            keyboard::hide(app);
+        }
+        let typing = target.is_none() && keyboard::is_open();
+        dispatch(app, target, wand, typing, assisting, action, repeat, false);
     }
 
     fn update_controllers(app: &AppHandle, connected: &[bool; 4]) {

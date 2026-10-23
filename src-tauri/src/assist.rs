@@ -129,38 +129,42 @@ pub fn press(key: Key) {
 }
 
 /// Types `text` into whatever window has focus, as Unicode characters
-/// (VK_PACKET): text fields and chat boxes take them like keystrokes, which
-/// is what the on-screen keyboard needs. Games polling key states don't see
-/// letters this way, and some anti-cheats drop injected input: both are
-/// out of reach without a keyboard driver.
+/// (VK_PACKET), so the keyboard layout doesn't matter: text fields and chat
+/// boxes take them like keystrokes (also UWP and WebView2 windows), which is
+/// what the on-screen keyboard and the phone companion need. Line breaks
+/// become Enter. Games polling key states don't see letters this way, some
+/// anti-cheats drop injected input, and elevated windows drop it too (UIPI).
 #[cfg(windows)]
 pub fn type_text(text: &str) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY,
     };
 
-    let inputs: Vec<INPUT> = text
-        .encode_utf16()
-        .flat_map(|unit| {
-            [false, true].map(|up| INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: VIRTUAL_KEY(0),
-                        wScan: unit,
-                        dwFlags: if up { KEYEVENTF_UNICODE | KEYEVENTF_KEYUP } else { KEYEVENTF_UNICODE },
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
+    fn unicode(unit: u16, up: bool) -> INPUT {
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: VIRTUAL_KEY(0),
+                    wScan: unit,
+                    dwFlags: if up { KEYEVENTF_UNICODE | KEYEVENTF_KEYUP } else { KEYEVENTF_UNICODE },
+                    time: 0,
+                    dwExtraInfo: 0,
                 },
-            })
-        })
-        .collect();
-    if inputs.is_empty() {
-        return;
+            },
+        }
     }
-    unsafe {
-        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            press(Key::Enter);
+        }
+        let inputs: Vec<INPUT> = line.encode_utf16().flat_map(|unit| [unicode(unit, false), unicode(unit, true)]).collect();
+        if !inputs.is_empty() {
+            unsafe {
+                SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+            }
+        }
     }
 }
 

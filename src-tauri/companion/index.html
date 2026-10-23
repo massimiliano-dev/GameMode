@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#07090d">
+<title>GameMode</title>
+<style>
+  :root {
+    --bg: #07090d; --surface: rgba(255,255,255,0.06); --surface-strong: rgba(255,255,255,0.14);
+    --line: rgba(255,255,255,0.1); --text: #f3f5f8; --dim: #a5aebb; --faint: #6d7684;
+    --accent: #5ef2c8; --accent-ink: #032018; --danger: #ff6b72; --radius: 14px;
+    --safe-top: env(safe-area-inset-top, 0px); --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 16px/1.4 -apple-system, "Segoe UI", Roboto, system-ui, sans-serif; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+  button { font: inherit; color: inherit; border: 0; background: var(--surface); border-radius: var(--radius);
+    padding: 0.8rem 1rem; cursor: pointer; }
+  button:active { background: var(--surface-strong); }
+  button.primary { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+  button.danger { color: var(--danger); }
+  input, textarea { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 0.8rem 1rem; width: 100%; user-select: text; -webkit-user-select: text; }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  header { padding: calc(0.6rem + var(--safe-top)) 1rem 0.6rem; display: flex; align-items: center; gap: 0.6rem;
+    border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: 0.02em; flex: 1; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); }
+  .dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  main { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; }
+  .view { display: none; padding: 1rem; }
+  .view.active { display: block; }
+  nav.tabs { display: flex; border-top: 1px solid var(--line); padding-bottom: var(--safe-bottom); background: #0b0e14; }
+  nav.tabs button { flex: 1; background: none; border-radius: 0; padding: 0.7rem 0 0.6rem; font-size: 0.72rem; color: var(--faint); }
+  nav.tabs button .ico { display: block; font-size: 1.25rem; line-height: 1.2; }
+  nav.tabs button.active { color: var(--accent); }
+  .banner { position: fixed; left: 1rem; right: 1rem; top: calc(3.6rem + var(--safe-top)); background: #141a25;
+    border: 1px solid var(--line); border-radius: var(--radius); padding: 0.75rem 1rem; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    transform: translateY(-20px); opacity: 0; transition: 0.2s; pointer-events: none; z-index: 10; }
+  .banner.show { transform: none; opacity: 1; }
+  .banner.error { border-color: var(--danger); }
+  .now { display: flex; align-items: center; gap: 0.7rem; background: var(--surface); border-radius: var(--radius);
+    padding: 0.7rem 0.9rem; margin-bottom: 1rem; }
+  .now .label { font-size: 0.72rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.08em; }
+  .now .name { font-weight: 600; }
+  .now.hidden { display: none; }
+  /* Remote */
+  .pad { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; gap: 6px;
+    width: min(62vw, 240px); aspect-ratio: 1; margin: 0.5rem auto; }
+  .pad button { font-size: 1.5rem; padding: 0; border-radius: 12px; }
+  .pad .c { background: none; }
+  .abxy { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; gap: 6px;
+    width: min(62vw, 240px); aspect-ratio: 1; margin: 0.5rem auto; }
+  .abxy button { border-radius: 50%; font-weight: 800; font-size: 1.3rem; padding: 0; }
+  .abxy .a { background: #2fcf7a; color: #052313; } .abxy .b { background: #ff6b72; color: #2a0608; }
+  .abxy .x { background: #4aa3ff; color: #04162b; } .abxy .y { background: #f5b942; color: #2b1c02; }
+  .shoulders, .sys { display: flex; gap: 8px; margin: 0.6rem 0; }
+  .shoulders button, .sys button { flex: 1; }
+  .guide { background: var(--accent); color: var(--accent-ink); font-weight: 800; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: center; }
+  @media (max-width: 420px) { .row2 { grid-template-columns: 1fr; } }
+  /* Keyboard */
+  textarea { min-height: 7rem; resize: none; }
+  .kb-actions { display: flex; gap: 8px; margin-top: 0.6rem; }
+  .kb-actions button { flex: 1; }
+  .hint { color: var(--faint); font-size: 0.85rem; margin: 0.6rem 0 0; }
+  /* Games */
+  .sub { display: flex; gap: 6px; margin-bottom: 0.8rem; }
+  .sub button { flex: 1; padding: 0.55rem; font-size: 0.9rem; }
+  .sub button.active { background: var(--surface-strong); color: var(--accent); }
+  .search { margin-bottom: 0.8rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+  .card { background: var(--surface); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .card .cover { aspect-ratio: 2/3; background: #141a25 center/cover no-repeat; display: flex; align-items: flex-end;
+    padding: 0.5rem; font-size: 0.8rem; color: var(--dim); }
+  .card .cover.empty span { display: block; }
+  .card .cover:not(.empty) span { display: none; }
+  .card .name { padding: 0.5rem 0.6rem 0; font-size: 0.82rem; line-height: 1.25; flex: 1;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .card button { margin: 0.5rem; padding: 0.55rem; font-size: 0.85rem; }
+  .empty-note { color: var(--faint); text-align: center; padding: 2rem 0; }
+  /* System */
+  .list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 1rem; }
+  .list .item { display: flex; align-items: center; gap: 0.7rem; background: var(--surface); border-radius: var(--radius); padding: 0.7rem 0.9rem; }
+  .list .item .t { flex: 1; }
+  .list .item .s { font-size: 0.78rem; color: var(--faint); }
+  h2 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--faint); margin: 1.2rem 0 0.5rem; }
+  /* Pairing */
+  #pair { position: fixed; inset: 0; background: var(--bg); display: none; flex-direction: column; justify-content: center;
+    padding: 2rem 1.5rem; z-index: 20; gap: 1rem; text-align: center; }
+  #pair.show { display: flex; }
+  #pair input { font-size: 2rem; text-align: center; letter-spacing: 0.4em; }
+  #pair p { color: var(--dim); margin: 0; }
+  #pair .err { color: var(--danger); min-height: 1.4em; }
+</style>
+</head>
+<body>
+<header><span class="dot" id="dot"></span><h1>GameMode</h1><span id="phase" style="color:var(--faint);font-size:0.85rem"></span></header>
+<main>
+  <section class="view active" id="view-remote">
+    <div class="now hidden" id="now"><div><div class="label">In gioco</div><div class="name" id="now-name"></div></div></div>
+    <div class="row2">
+      <div class="pad">
+        <button class="c" disabled></button><button data-nav="up" data-hold>▲</button><button class="c" disabled></button>
+        <button data-nav="left" data-hold>◀</button><button class="c" disabled></button><button data-nav="right" data-hold>▶</button>
+        <button class="c" disabled></button><button data-nav="down" data-hold>▼</button><button class="c" disabled></button>
+      </div>
+      <div class="abxy">
+        <button class="c" disabled style="background:none"></button><button class="y" data-nav="y">Y</button><button class="c" disabled style="background:none"></button>
+        <button class="x" data-nav="x">X</button><button class="c" disabled style="background:none"></button><button class="b" data-nav="back">B</button>
+        <button class="c" disabled style="background:none"></button><button class="a" data-nav="confirm">A</button><button class="c" disabled style="background:none"></button>
+      </div>
+    </div>
+    <div class="shoulders">
+      <button data-nav="lb">LB</button><button data-nav="lt">LT</button><button data-nav="rt">RT</button><button data-nav="rb">RB</button>
+    </div>
+    <div class="sys">
+      <button data-nav="view">⧉ View</button><button class="guide" data-nav="guide">Xbox</button><button data-nav="menu">☰ Menu</button>
+    </div>
+  </section>
+
+  <section class="view" id="view-keyboard">
+    <textarea id="kb-text" placeholder="Scrivi qui e invia" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
+    <div class="kb-actions">
+      <button id="kb-backspace">⌫</button>
+      <button id="kb-write">Scrivi</button>
+      <button class="primary" id="kb-send">Invia ↵</button>
+    </div>
+    <p class="hint">Il testo finisce nel campo selezionato sul PC: la ricerca di GameMode, un negozio, la chat di un gioco. "Invia" aggiunge Invio.</p>
+  </section>
+
+  <section class="view" id="view-games">
+    <div class="sub"><button class="active" data-sub="library">Libreria</button><button data-sub="catalog">Scarica</button></div>
+    <input class="search" id="search" placeholder="Cerca" autocapitalize="off" autocomplete="off">
+    <div class="grid" id="grid"></div>
+    <p class="empty-note" id="grid-empty" style="display:none"></p>
+  </section>
+
+  <section class="view" id="view-system">
+    <h2>Gioco in corso</h2>
+    <div class="list" id="current"></div>
+    <h2>Giochi in pausa</h2>
+    <div class="list" id="suspended"></div>
+    <h2>Alimentazione</h2>
+    <div class="list">
+      <button data-power="sleep">Sospendi il PC</button>
+      <button data-power="restart">Riavvia il PC</button>
+      <button class="danger" data-power="shutdown">Spegni il PC</button>
+    </div>
+    <p class="hint">Funziona solo sulla stessa rete Wi-Fi del PC. Le notifiche arrivano finché questa pagina è aperta.</p>
+  </section>
+</main>
+<nav class="tabs">
+  <button class="active" data-view="remote"><span class="ico">🎮</span>Comando</button>
+  <button data-view="keyboard"><span class="ico">⌨️</span>Tastiera</button>
+  <button data-view="games"><span class="ico">🗂️</span>Giochi</button>
+  <button data-view="system"><span class="ico">⏻</span>Sistema</button>
+</nav>
+<div class="banner" id="banner"></div>
+<div id="pair">
+  <h1 style="margin:0">Collega al PC</h1>
+  <p>Scrivi il codice a 6 cifre che vedi in GameMode → Impostazioni → Sistema → Telefono</p>
+  <input id="pair-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000">
+  <div class="err" id="pair-err"></div>
+  <button class="primary" id="pair-btn">Collega</button>
+</div>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => [...document.querySelectorAll(s)];
+  const STORE = { steam: "Steam", xbox: "Xbox", epic: "Epic", gog: "GOG", ea: "EA", ubisoft: "Ubisoft", manual: "Manuale", emulator: "Emulatore", mock: "Demo" };
+
+  // ---- token / pairing ----
+  const params = new URLSearchParams(location.search);
+  let token = "";
+  try {
+    if (params.get("t")) {
+      localStorage.setItem("gm-token", params.get("t"));
+      history.replaceState(null, "", location.pathname);
+    }
+    token = localStorage.getItem("gm-token") || "";
+  } catch { token = params.get("t") || ""; }
+
+  const showPair = (msg) => { $("#pair").classList.add("show"); $("#pair-err").textContent = msg || ""; };
+  const hidePair = () => $("#pair").classList.remove("show");
+  $("#pair-btn").addEventListener("click", async () => {
+    const code = $("#pair-code").value.trim();
+    if (code.length !== 6) return showPair("Sei cifre");
+    const r = await fetch("/pair", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) }).catch(() => null);
+    if (!r || !r.ok) return showPair("Codice sbagliato");
+    token = (await r.json()).token;
+    try { localStorage.setItem("gm-token", token); } catch {}
+    hidePair();
+    boot();
+  });
+  $("#pair-code").addEventListener("keydown", (e) => e.key === "Enter" && $("#pair-btn").click());
+
+  // ---- api ----
+  async function api(path, body) {
+    const r = await fetch(path, {
+      method: body ? "POST" : "GET",
+      headers: { "X-Token": token, ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (r.status === 401) { showPair("Collegamento scaduto: inserisci di nuovo il codice"); throw new Error("401"); }
+    if (!r.ok) {
+      let msg = "Errore";
+      try { msg = (await r.json()).error || msg; } catch {}
+      throw new Error(msg);
+    }
+    return r.status === 204 ? null : r.json();
+  }
+  const withToken = (url) => (url && url.startsWith("/") ? `${url}?t=${encodeURIComponent(token)}` : url);
+  const buzz = (ms = 12) => navigator.vibrate && navigator.vibrate(ms);
+
+  // ---- banner ----
+  let bannerTimer;
+  function banner(text, error) {
+    const b = $("#banner");
+    b.textContent = text;
+    b.classList.toggle("error", !!error);
+    b.classList.add("show");
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(() => b.classList.remove("show"), 3200);
+  }
+  const fail = (e) => banner(e && e.message !== "401" ? e.message : "Errore", true);
+
+  // ---- tabs ----
+  $$("nav.tabs button").forEach((b) => b.addEventListener("click", () => {
+    $$("nav.tabs button").forEach((x) => x.classList.toggle("active", x === b));
+    $$(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${b.dataset.view}`));
+    if (b.dataset.view === "games") loadGames();
+    if (b.dataset.view === "system") refreshSession();
+  }));
+
+  // ---- remote ----
+  const nav = (action, repeat = false) => api("/nav", { action, repeat }).catch(fail);
+  $$("[data-nav]").forEach((b) => {
+    let timer = null, interval = null;
+    const stop = () => { clearTimeout(timer); clearInterval(interval); timer = interval = null; };
+    b.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      buzz();
+      nav(b.dataset.nav);
+      if ("hold" in b.dataset) {
+        timer = setTimeout(() => { interval = setInterval(() => nav(b.dataset.nav, true), 90); }, 400);
+      }
+    });
+    ["pointerup", "pointercancel", "pointerleave"].forEach((ev) => b.addEventListener(ev, stop));
+    b.addEventListener("contextmenu", (e) => e.preventDefault());
+  });
+
+  // ---- keyboard ----
+  const text = (body) => api("/text", body).catch(fail);
+  $("#kb-send").addEventListener("click", () => { const t = $("#kb-text").value; text({ text: t, enter: true }); $("#kb-text").value = ""; buzz(); });
+  $("#kb-write").addEventListener("click", () => { const t = $("#kb-text").value; if (t) text({ text: t }); $("#kb-text").value = ""; buzz(); });
+  $("#kb-backspace").addEventListener("click", () => { text({ text: "", backspace: true }); buzz(); });
+  $("#kb-text").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#kb-send").click(); } });
+
+  // ---- games ----
+  let sub = "library", library = [], catalog = [];
+  $$("[data-sub]").forEach((b) => b.addEventListener("click", () => {
+    sub = b.dataset.sub;
+    $$("[data-sub]").forEach((x) => x.classList.toggle("active", x === b));
+    loadGames();
+  }));
+  $("#search").addEventListener("input", render);
+
+  async function loadGames() {
+    try {
+      if (sub === "library") library = await api("/library");
+      else catalog = await api("/catalog");
+      render();
+    } catch (e) { fail(e); }
+  }
+  function render() {
+    const q = $("#search").value.trim().toLowerCase();
+    const items = (sub === "library" ? [...library].sort(byRecent) : catalog).filter((g) => !q || g.name.toLowerCase().includes(q));
+    const grid = $("#grid");
+    grid.innerHTML = "";
+    $("#grid-empty").style.display = items.length ? "none" : "";
+    $("#grid-empty").textContent = q ? "Nessun risultato" : sub === "library" ? "Nessun gioco" : "Niente da scaricare (configura le librerie in GameMode)";
+    for (const g of items) {
+      const card = document.createElement("div");
+      card.className = "card";
+      const cover = document.createElement("div");
+      cover.className = "cover" + (g.cover ? "" : " empty");
+      if (g.cover) cover.style.backgroundImage = `url("${withToken(g.cover)}")`;
+      cover.innerHTML = `<span></span>`;
+      cover.querySelector("span").textContent = STORE[g.store] || g.store;
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = g.name;
+      const btn = document.createElement("button");
+      btn.className = "primary";
+      btn.textContent = sub === "library" ? "Gioca" : "Installa";
+      btn.addEventListener("click", async () => {
+        buzz(20);
+        try {
+          await api(sub === "library" ? "/launch" : "/install", { id: g.id });
+          banner(sub === "library" ? `Avvio ${g.name}…` : `Installazione di ${g.name} aperta sul PC`);
+        } catch (e) { fail(e); }
+      });
+      card.append(cover, name, btn);
+      grid.append(card);
+    }
+  }
+  const byRecent = (a, b) => (b.favorite - a.favorite) || ((b.lastPlayed || 0) - (a.lastPlayed || 0)) || a.name.localeCompare(b.name);
+
+  // ---- session / system ----
+  let session = { current: null, suspended: [] };
+  const PHASE = { launching: "In avvio", running: "In gioco", suspended: "In pausa", exited: "Terminato", failed: "Non avviato" };
+  function showSession() {
+    const cur = session.current;
+    const active = cur && (cur.phase === "launching" || cur.phase === "running" || cur.phase === "suspended");
+    $("#now").classList.toggle("hidden", !active);
+    $("#now-name").textContent = active ? cur.gameName : "";
+    $("#phase").textContent = active ? PHASE[cur.phase] : "";
+    const list = $("#current");
+    list.innerHTML = "";
+    if (active) {
+      list.append(item(cur.gameName, PHASE[cur.phase], [
+        cur.phase === "running" ? ["Torna al gioco", () => game({ action: "front" })] : null,
+        cur.phase === "running" ? ["Pausa", () => game({ action: "suspend" })] : null,
+        ["Chiudi", () => confirm(`Chiudere ${cur.gameName}?`) && game({ action: "close" }), "danger"],
+      ]));
+    } else {
+      list.innerHTML = `<div class="item"><div class="t s">Nessun gioco in corso</div></div>`;
+    }
+    const sus = $("#suspended");
+    sus.innerHTML = "";
+    const frozen = session.suspended.filter((s) => !cur || s.gameId !== cur.gameId || cur.phase !== "suspended");
+    const all = cur && cur.phase === "suspended" ? [cur, ...frozen] : frozen;
+    if (!all.length) sus.innerHTML = `<div class="item"><div class="t s">Nessuno</div></div>`;
+    for (const s of all) sus.append(item(s.gameName, "In pausa", [["Riprendi", () => game({ action: "resume", id: s.gameId })]]));
+  }
+  function item(title, subtitle, actions) {
+    const el = document.createElement("div");
+    el.className = "item";
+    const t = document.createElement("div");
+    t.className = "t";
+    t.innerHTML = `<div></div><div class="s"></div>`;
+    t.firstChild.textContent = title;
+    t.lastChild.textContent = subtitle;
+    el.append(t);
+    for (const a of actions.filter(Boolean)) {
+      const b = document.createElement("button");
+      b.textContent = a[0];
+      if (a[2]) b.className = a[2];
+      b.addEventListener("click", a[1]);
+      el.append(b);
+    }
+    return el;
+  }
+  const game = (body) => api("/game", body).then(() => setTimeout(refreshSession, 600)).catch(fail);
+  async function refreshSession() {
+    try { session = await api("/session"); showSession(); } catch (e) { fail(e); }
+  }
+  $$("[data-power]").forEach((b) => b.addEventListener("click", () => {
+    const what = { sleep: "Sospendere il PC?", restart: "Riavviare il PC?", shutdown: "Spegnere il PC?" }[b.dataset.power];
+    if (!confirm(what)) return;
+    api("/power", { action: b.dataset.power }).then(() => banner("Fatto")).catch(fail);
+  }));
+
+  // ---- events ----
+  let ws = null, retry = 1000, wsTimer = null;
+  function connect() {
+    if (!token || (ws && ws.readyState <= 1)) return;
+    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/events?t=${encodeURIComponent(token)}`);
+    ws.onopen = () => { retry = 1000; $("#dot").classList.add("on"); };
+    ws.onmessage = (m) => {
+      let msg; try { msg = JSON.parse(m.data); } catch { return; }
+      if (msg.event === "hello") { session = msg.payload; showSession(); }
+      else if (msg.event === "game://state") {
+        const s = msg.payload;
+        const prev = session.current;
+        session.current = s;
+        if (s.phase === "exited") session.current = null;
+        showSession();
+        if (!prev || prev.gameId !== s.gameId || prev.phase !== s.phase) {
+          if (s.phase === "running") banner(`${s.gameName}: in gioco`);
+          else if (s.phase === "suspended") banner(`${s.gameName}: in pausa`);
+          else if (s.phase === "exited") banner(`${s.gameName}: terminato`);
+          else if (s.phase === "failed") banner(`${s.gameName}: non si è avviato`, true);
+        }
+        refreshSession();
+      }
+      else if (msg.event === "library://updated" || msg.event === "library://game") { if (sub === "library" && $("#view-games").classList.contains("active")) loadGames(); }
+      else if (msg.event === "install://queued") banner("Download avviato su Steam");
+      else if (msg.event === "bye") { ws.close(); }
+    };
+    ws.onclose = () => {
+      $("#dot").classList.remove("on");
+      ws = null;
+      clearTimeout(wsTimer);
+      wsTimer = setTimeout(connect, retry);
+      retry = Math.min(retry * 2, 15000);
+    };
+    ws.onerror = () => ws && ws.close();
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") { retry = 1000; connect(); if (token) refreshSession(); }
+  });
+
+  function boot() {
+    if (!token) return showPair("");
+    hidePair();
+    refreshSession();
+    connect();
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

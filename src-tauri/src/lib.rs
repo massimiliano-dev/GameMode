@@ -51,6 +51,7 @@ mod lifecycle;
 mod winupdate;
 mod capture;
 mod capture_osd;
+mod companion;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -349,6 +350,7 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> 
     if igdb_changed && metadata::igdb_credentials(&settings).is_some() {
         metadata::refresh(&app, true);
     }
+    companion::sync(&app);
     Ok(settings)
 }
 
@@ -724,11 +726,17 @@ fn start_assist(app: &AppHandle, needs_keys: bool) {
 
 #[tauri::command]
 async fn install_catalog_item(app: AppHandle, id: String) -> CmdResult<()> {
+    install_catalog(&app, id).await
+}
+
+/// Opens a catalog item's install dialog in its store, with the controller
+/// hand-off; shared with the phone companion.
+pub(crate) async fn install_catalog(app: &AppHandle, id: String) -> CmdResult<()> {
     // Cloud games run in Edge, which handles the controller itself and needs
     // View for the game; the Xbox app and Store handle the controller too.
     if !id.starts_with("cloud:") {
-        let native_controller = id.starts_with("gamepass:") || (id.starts_with("steam:") && storefront::uses_big_picture(&app));
-        start_assist(&app, !native_controller);
+        let native_controller = id.starts_with("gamepass:") || (id.starts_with("steam:") && storefront::uses_big_picture(app));
+        start_assist(app, !native_controller);
     }
     if let Some(appid) = id.strip_prefix("steam:") {
         catalog::watch_steam_install(app.clone(), appid.to_string());
@@ -1055,6 +1063,18 @@ fn capture_notice() -> Option<capture_osd::Notice> {
     capture_osd::current()
 }
 
+/// The phone companion's address, QR code, pairing code and firewall state.
+#[tauri::command]
+async fn companion_status(app: AppHandle) -> CmdResult<companion::Status> {
+    blocking(move || Ok(companion::status(&app))).await
+}
+
+/// Adds the firewall rule for the companion (one UAC prompt). False when refused.
+#[tauri::command]
+async fn companion_firewall() -> CmdResult<bool> {
+    blocking(companion::firewall_allow).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // The console-mode watchdog is this same executable with `--watchdog`.
@@ -1184,6 +1204,7 @@ pub fn run() {
             shutdown::install(&handle);
             lifecycle::start(&handle);
             capture::init(&handle);
+            companion::sync(&handle);
             updates::watch_packages();
             status::start(handle.clone());
             winupdate::watch(handle.clone());
@@ -1321,6 +1342,8 @@ pub fn run() {
             delete_capture,
             open_captures_folder,
             capture_notice,
+            companion_status,
+            companion_firewall,
         ])
         .on_window_event(|window, event| {
             // Alt+F4 on the launcher: the hidden overlay window would keep

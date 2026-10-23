@@ -329,6 +329,8 @@ pub struct Settings {
     pub igdb_client_secret: Option<String>,
     /// View+RB held during a game takes a screenshot.
     pub capture_combo: bool,
+    /// Phone companion: the LAN remote server (`companion.rs`).
+    pub companion_enabled: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -375,6 +377,7 @@ impl Default for Settings {
             igdb_client_id: None,
             igdb_client_secret: None,
             capture_combo: true,
+            companion_enabled: false,
         }
     }
 }

@@ -15,6 +15,7 @@ import type {
   CheatScan,
   CheatsStatus,
   Collection,
+  CompanionStatus,
   Controller,
   Deals,
   DisplayInfo,
@@ -184,6 +185,8 @@ export const api = {
   deleteCapture: (path: string) => call<void>("delete_capture", { path }),
   openCapturesFolder: (gameId?: string) => call<void>("open_captures_folder", { gameId: gameId ?? null }),
   captureNotice: () => call<CaptureNotice | null>("capture_notice"),
+  companionStatus: () => call<CompanionStatus>("companion_status"),
+  companionFirewall: () => call<boolean>("companion_firewall"),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

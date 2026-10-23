@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { CaptureSettings } from "../components/CaptureSettings";
+import { CompanionSettings } from "../components/CompanionSettings";
 import { ConsoleSettings } from "../components/ConsoleSettings";
 import { DiagnosticsSettings } from "../components/DiagnosticsSettings";
 import { EmulatorSettings } from "../components/EmulatorSettings";
@@ -447,6 +448,7 @@ export function Settings() {
           <>
             <SystemSettings settings={settings} />
             <ConsoleSettings />
+            <CompanionSettings settings={settings} />
             <DiagnosticsSettings />
           </>
         )}
