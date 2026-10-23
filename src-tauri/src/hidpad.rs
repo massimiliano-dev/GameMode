@@ -5,13 +5,15 @@
 //! stays shared with the game. Report layouts follow SDL's hidapi drivers
 //! and the Linux hid-playstation / hid-nintendo drivers.
 //!
-//! Parsing is pure and unit-tested; the hidapi side lives in `imp` and is
-//! driven from the XInput polling thread in `gamepad.rs`, which ORs these
-//! bits into the same bitmask so Guide, Back+Start, LB+RB and the store
-//! assist behave the same on every pad.
+//! Parsing and the mirror detection are pure and unit-tested; the hidapi
+//! side lives in `imp`: a prober thread enumerates and opens the pads, and
+//! the XInput polling thread in `gamepad.rs` only does non-blocking reads,
+//! ORing these bits into the same bitmask so Guide, Back+Start, LB+RB and
+//! the store assist behave the same on every pad.
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -401,23 +403,211 @@ pub fn is_xinput_path(path: &str) -> bool {
     path.to_ascii_lowercase().contains("ig_")
 }
 
+/// How long a press may wait for its twin on the other backend.
+const MIRROR_WINDOW: Duration = Duration::from_millis(80);
+/// Presses in a row an XInput slot must echo before it counts as the
+/// virtual copy of a HID pad.
+const MIRROR_CONFIRM: u8 = 3;
+
+/// The buttons Steam Input and DS4Windows pass to their virtual Xbox pad,
+/// folded so a Nintendo-layout swap (A/B, X/Y) still matches. Sticks and
+/// triggers are left out (thresholds differ) and so is Guide (Steam keeps it).
+fn mirror_classes(bits: u32) -> u32 {
+    let mut classes = bits & (LB | RB | BACK | START);
+    if bits & (A | B) != 0 {
+        classes |= 1;
+    }
+    if bits & (X | Y) != 0 {
+        classes |= 2;
+    }
+    classes
+}
+
+/// Press edges of one device, plus the latest one still waiting for a twin.
+#[derive(Default)]
+struct Edges {
+    prev: u32,
+    pending: Option<(Instant, u32)>,
+}
+
+impl Edges {
+    /// Newly pressed button classes this frame.
+    fn step(&mut self, bits: u32) -> u32 {
+        let classes = mirror_classes(bits);
+        let new = classes & !self.prev;
+        self.prev = classes;
+        new
+    }
+}
+
+/// Per-HID-pad state of the mirror detection.
+#[derive(Default)]
+pub struct Shadow {
+    edges: Edges,
+    /// Echoed presses in a row, per XInput slot.
+    streak: [u8; 4],
+    /// The XInput slot that is this pad's virtual copy (Steam Input,
+    /// DS4Windows): the pad is then read through it only.
+    pub by: Option<usize>,
+}
+
+/// Tells HID pads that Steam Input or DS4Windows also expose as a virtual
+/// Xbox pad: that slot echoes every press of the HID pad within a few
+/// frames, while a real second pad presses on its own. A pad is shadowed
+/// after `MIRROR_CONFIRM` echoed presses in a row, and back as soon as its
+/// slot disconnects. Until then both are read and ORed into one bitmask,
+/// so the twin presses still collapse into one.
+#[derive(Default)]
+pub struct Mirror {
+    slots: [Edges; 4],
+}
+
+impl Mirror {
+    /// One frame: `pads` are the HID pads with this frame's buttons,
+    /// `xinput` the slots' buttons (`None` when disconnected). True when a
+    /// pad got shadowed or released.
+    pub fn step(&mut self, now: Instant, pads: &mut [(&mut Shadow, u32)], xinput: &[Option<u32>; 4]) -> bool {
+        let mut changed = false;
+        let mut claimed = [false; 4];
+        for (pad, _) in pads.iter_mut() {
+            if let Some(slot) = pad.by {
+                if xinput[slot].is_none() {
+                    pad.by = None;
+                    pad.streak = [0; 4];
+                    changed = true;
+                } else {
+                    claimed[slot] = true;
+                }
+            }
+        }
+        // Presses nobody echoed in time: not a twin.
+        for (pad, _) in pads.iter_mut() {
+            if pad.edges.pending.is_some_and(|(t, _)| now - t > MIRROR_WINDOW) {
+                pad.edges.pending = None;
+                pad.streak = [0; 4];
+            }
+        }
+        for slot in 0..4 {
+            if self.slots[slot].pending.is_some_and(|(t, _)| now - t > MIRROR_WINDOW) {
+                self.slots[slot].pending = None;
+                for (pad, _) in pads.iter_mut() {
+                    pad.streak[slot] = 0;
+                }
+            }
+        }
+        let mut slot_new = [0u32; 4];
+        for slot in 0..4 {
+            match xinput[slot] {
+                None => {
+                    self.slots[slot] = Edges::default();
+                    for (pad, _) in pads.iter_mut() {
+                        pad.streak[slot] = 0;
+                    }
+                }
+                Some(bits) => slot_new[slot] = self.slots[slot].step(bits),
+            }
+            if claimed[slot] {
+                slot_new[slot] = 0;
+                self.slots[slot].pending = None;
+            }
+        }
+        // HID presses against this frame's or still-pending slot presses.
+        for (pad, bits) in pads.iter_mut() {
+            let new = pad.edges.step(*bits);
+            if pad.by.is_some() || new == 0 {
+                continue;
+            }
+            let hit = (0..4).find(|&s| !claimed[s] && (slot_new[s] == new || self.slots[s].pending.is_some_and(|(_, c)| c == new)));
+            match hit {
+                Some(slot) => {
+                    if slot_new[slot] == new {
+                        slot_new[slot] = 0;
+                    } else {
+                        self.slots[slot].pending = None;
+                    }
+                    pad.streak[slot] = pad.streak[slot].saturating_add(1);
+                }
+                None => {
+                    // A press replaced before its twin came is a miss too.
+                    if pad.edges.pending.is_some() {
+                        pad.streak = [0; 4];
+                    }
+                    pad.edges.pending = Some((now, new));
+                }
+            }
+        }
+        // Slot presses left over: against still-pending HID presses.
+        for slot in 0..4 {
+            let new = slot_new[slot];
+            if new == 0 {
+                continue;
+            }
+            let hit = pads.iter_mut().find(|(p, _)| p.by.is_none() && p.edges.pending.is_some_and(|(_, c)| c == new));
+            match hit {
+                Some((pad, _)) => {
+                    pad.edges.pending = None;
+                    pad.streak[slot] = pad.streak[slot].saturating_add(1);
+                }
+                None => {
+                    if self.slots[slot].pending.is_some() {
+                        for (pad, _) in pads.iter_mut() {
+                            pad.streak[slot] = 0;
+                        }
+                    }
+                    self.slots[slot].pending = Some((now, new));
+                }
+            }
+        }
+        for (pad, _) in pads.iter_mut() {
+            if pad.by.is_some() {
+                continue;
+            }
+            if let Some(slot) = (0..4).find(|&s| !claimed[s] && pad.streak[s] >= MIRROR_CONFIRM) {
+                pad.by = Some(slot);
+                pad.streak = [0; 4];
+                pad.edges.pending = None;
+                claimed[slot] = true;
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
 #[cfg(windows)]
 mod imp {
+    use std::collections::HashMap;
     use std::ffi::CString;
+    use std::sync::mpsc::{channel, Receiver, Sender};
     use std::time::{Duration, Instant};
 
     use hidapi::{BusType, HidApi, HidDevice};
 
-    use super::{parse, Model, Reading};
+    use super::{parse, Mirror, Model, Reading, Shadow};
     use crate::gamepad::Controller;
 
-    /// Enumerating opens every HID interface on the system, so it's rare.
+    /// Enumerating opens every HID interface on the system, so it's rare
+    /// and runs on its own thread, away from the input loop.
     const PROBE_INTERVAL: Duration = Duration::from_secs(2);
-    /// A pad that Steam Input or DS4Windows mirror as a virtual Xbox one
-    /// shows up on XInput right after we open it: that pad is theirs.
-    const SHADOW_WINDOW: Duration = Duration::from_secs(3);
+    /// A path whose reads failed (another app holds it exclusively) isn't
+    /// reopened before this.
+    const RETRY_AFTER: Duration = Duration::from_secs(10);
     /// Largest input report of the supported pads (Sony over BT: 78).
     const REPORT_BUF: usize = 128;
+
+    /// A pad the prober opened and set up.
+    struct Opened {
+        dev: HidDevice,
+        path: CString,
+        model: Model,
+        wired: bool,
+    }
+
+    /// One enumeration: the supported paths present, and the new ones.
+    struct Probe {
+        seen: Vec<CString>,
+        fresh: Vec<Opened>,
+    }
 
     struct Pad {
         dev: HidDevice,
@@ -425,50 +615,68 @@ mod imp {
         model: Model,
         wired: bool,
         reading: Reading,
-        opened: Instant,
-        shadowed: bool,
+        /// Buttons this frame: every report read ORed, so a tap shorter
+        /// than a frame still counts.
+        bits: u32,
+        shadow: Shadow,
     }
 
     pub struct Backend {
-        api: Option<HidApi>,
         pads: Vec<Pad>,
-        last_probe: Option<Instant>,
+        mirror: Mirror,
+        probes: Receiver<Probe>,
+        /// Paths the input loop let go of; `true` when reads failed.
+        closed: Sender<(CString, bool)>,
         dirty: bool,
     }
 
     impl Backend {
         pub fn new() -> Self {
-            HidApi::disable_device_discovery();
-            Backend { api: HidApi::new().ok(), pads: Vec::new(), last_probe: None, dirty: false }
+            let (probe_tx, probes) = channel();
+            let (closed, closed_rx) = channel();
+            let _ = std::thread::Builder::new().name("hidpad-probe".into()).spawn(move || prober(probe_tx, closed_rx));
+            Backend { pads: Vec::new(), mirror: Mirror::default(), probes, closed, dirty: false }
         }
 
-        /// Reads every pad and returns the merged button bits.
-        /// `xinput_appeared` is true the frame a new XInput slot connected.
-        pub fn poll(&mut self, now: Instant, xinput_appeared: bool) -> u32 {
+        /// Reads every pad without blocking and returns the merged button
+        /// bits of those that aren't read through XInput already.
+        /// `xinput`: this frame's buttons per slot, `None` when disconnected.
+        pub fn poll(&mut self, now: Instant, xinput: &[Option<u32>; 4]) -> u32 {
             if !super::enabled() {
                 if !self.pads.is_empty() {
-                    self.pads.clear();
                     self.dirty = true;
+                }
+                for pad in self.pads.drain(..) {
+                    let _ = self.closed.send((pad.path, false));
+                }
+                while let Ok(probe) = self.probes.try_recv() {
+                    for opened in probe.fresh {
+                        let _ = self.closed.send((opened.path, false));
+                    }
                 }
                 return 0;
             }
-            if self.last_probe.is_none_or(|t| now - t >= PROBE_INTERVAL) {
-                self.last_probe = Some(now);
-                self.probe(now);
-            }
-            if xinput_appeared {
-                for pad in &mut self.pads {
-                    if !pad.shadowed && now - pad.opened < SHADOW_WINDOW {
-                        pad.shadowed = true;
+            while let Ok(probe) = self.probes.try_recv() {
+                let mut i = 0;
+                while i < self.pads.len() {
+                    if probe.seen.contains(&self.pads[i].path) {
+                        i += 1;
+                    } else {
+                        let pad = self.pads.remove(i);
+                        let _ = self.closed.send((pad.path, false));
                         self.dirty = true;
                     }
                 }
+                for Opened { dev, path, model, wired } in probe.fresh {
+                    self.pads.push(Pad { dev, path, model, wired, reading: Reading::default(), bits: 0, shadow: Shadow::default() });
+                    self.dirty = true;
+                }
             }
-            let mut buttons = 0;
             let mut i = 0;
             while i < self.pads.len() {
                 let pad = &mut self.pads[i];
                 let mut buf = [0u8; REPORT_BUF];
+                let mut pressed = 0;
                 let mut latest = None;
                 let mut gone = false;
                 loop {
@@ -476,6 +684,7 @@ mod imp {
                         Ok(0) => break,
                         Ok(n) => {
                             if let Some(reading) = parse(pad.model, &buf[..n]) {
+                                pressed |= reading.buttons;
                                 latest = Some(reading);
                             }
                         }
@@ -486,22 +695,29 @@ mod imp {
                     }
                 }
                 if gone {
-                    self.pads.remove(i);
+                    let pad = self.pads.remove(i);
+                    let _ = self.closed.send((pad.path, true));
                     self.dirty = true;
                     continue;
                 }
-                if let Some(reading) = latest {
-                    if reading.level != pad.reading.level || reading.charging != pad.reading.charging {
-                        self.dirty = true;
+                pad.bits = match latest {
+                    Some(reading) => {
+                        if reading.level != pad.reading.level || reading.charging != pad.reading.charging {
+                            self.dirty = true;
+                        }
+                        pad.reading = reading;
+                        pressed
                     }
-                    pad.reading = reading;
-                }
-                if !pad.shadowed {
-                    buttons |= pad.reading.buttons;
-                }
+                    // No new report: the pad still holds what it last said.
+                    None => pad.reading.buttons,
+                };
                 i += 1;
             }
-            buttons
+            let mut pairs: Vec<(&mut Shadow, u32)> = self.pads.iter_mut().map(|p| (&mut p.shadow, p.bits)).collect();
+            if self.mirror.step(now, &mut pairs, xinput) {
+                self.dirty = true;
+            }
+            self.pads.iter().filter(|p| p.shadow.by.is_none()).fold(0, |acc, p| acc | p.bits)
         }
 
         /// True once after the pad list or a battery level changed.
@@ -513,7 +729,7 @@ mod imp {
         pub fn controllers(&self, first_slot: u32) -> Vec<Controller> {
             self.pads
                 .iter()
-                .filter(|p| !p.shadowed)
+                .filter(|p| p.shadow.by.is_none())
                 .enumerate()
                 .map(|(i, p)| Controller {
                     slot: first_slot + i as u32,
@@ -524,75 +740,95 @@ mod imp {
                 })
                 .collect()
         }
+    }
 
-        fn probe(&mut self, now: Instant) {
-            let Some(api) = self.api.as_mut() else { return };
-            if api.reset_devices().is_err() || api.add_devices(0, 0).is_err() {
-                return;
-            }
-            let mut seen: Vec<CString> = Vec::new();
-            let mut fresh = Vec::new();
-            for info in api.device_list() {
-                let Some(model) = Model::from_ids(info.vendor_id(), info.product_id()) else { continue };
-                // The gamepad collection only; skip XInput interfaces.
-                if info.usage_page() != 0 && (info.usage_page() != 1 || !matches!(info.usage(), 4 | 5)) {
-                    continue;
+    /// Enumerates, opens and sets up the supported pads every
+    /// `PROBE_INTERVAL`, handing them to the input loop. Opening and the
+    /// setup writes can block, so they never run on the input thread.
+    fn prober(tx: Sender<Probe>, closed: Receiver<(CString, bool)>) {
+        HidApi::disable_device_discovery();
+        let mut api: Option<HidApi> = None;
+        // Paths the input loop holds, and failed ones waiting for a retry.
+        let mut handed: Vec<CString> = Vec::new();
+        let mut cooldown: HashMap<CString, Instant> = HashMap::new();
+        loop {
+            while let Ok((path, failed)) = closed.try_recv() {
+                handed.retain(|p| *p != path);
+                if failed {
+                    cooldown.insert(path, Instant::now() + RETRY_AFTER);
                 }
-                if super::is_xinput_path(&info.path().to_string_lossy()) {
-                    continue;
-                }
-                let path = info.path().to_owned();
-                seen.push(path.clone());
-                if self.pads.iter().any(|p| p.path == path) {
-                    continue;
-                }
-                let Ok(dev) = api.open_path(&path) else { continue };
-                let bus = info.bus_type();
-                let wired = matches!(bus, BusType::Usb);
-                setup(&dev, model, bus);
-                fresh.push(Pad { dev, path, model, wired, reading: Reading::default(), opened: now, shadowed: false });
             }
-            let before = self.pads.len();
-            self.pads.retain(|p| seen.contains(&p.path));
-            if self.pads.len() != before || !fresh.is_empty() {
-                self.dirty = true;
+            if super::enabled() {
+                if api.is_none() {
+                    api = HidApi::new().ok();
+                }
+                if let Some(probe) = api.as_mut().and_then(|api| probe(api, &mut handed, &mut cooldown)) {
+                    if tx.send(probe).is_err() {
+                        return;
+                    }
+                }
             }
-            self.pads.append(&mut fresh);
+            std::thread::sleep(PROBE_INTERVAL);
         }
     }
 
-    /// Puts the pad in the report mode the parsers expect. Best effort:
-    /// a failed write just leaves the simpler report, which still works.
-    fn setup(dev: &HidDevice, model: Model, bus: BusType) {
-        match model {
-            // Over Bluetooth the Sony pads send the full report only after
-            // the calibration feature report has been requested.
-            Model::DualSense | Model::DualShock4 => {
-                if !matches!(bus, BusType::Usb) {
-                    let mut buf = [0u8; 41];
-                    buf[0] = 0x05;
-                    let _ = dev.get_feature_report(&mut buf);
-                }
-            }
-            Model::SwitchPro => {
-                if !matches!(bus, BusType::Bluetooth) {
-                    // USB: handshake, 3 Mbaud, handshake, no USB timeout.
-                    for cmd in [0x02u8, 0x03, 0x02, 0x04] {
-                        let mut packet = [0u8; 64];
-                        packet[0] = 0x80;
-                        packet[1] = cmd;
-                        let _ = dev.write(&packet);
-                        std::thread::sleep(Duration::from_millis(20));
-                    }
-                }
-                let len = if matches!(bus, BusType::Bluetooth) { 49 } else { 64 };
-                // Full input reports (0x30), then player LED 1 so the pad
-                // stops blinking.
-                switch_subcommand(dev, len, 0, 0x03, &[0x30]);
-                std::thread::sleep(Duration::from_millis(20));
-                switch_subcommand(dev, len, 1, 0x30, &[0x01]);
-            }
+    fn probe(api: &mut HidApi, handed: &mut Vec<CString>, cooldown: &mut HashMap<CString, Instant>) -> Option<Probe> {
+        if api.reset_devices().is_err() || api.add_devices(0, 0).is_err() {
+            return None;
         }
+        let now = Instant::now();
+        cooldown.retain(|_, until| *until > now);
+        let mut seen: Vec<CString> = Vec::new();
+        let mut fresh = Vec::new();
+        for info in api.device_list() {
+            let Some(model) = Model::from_ids(info.vendor_id(), info.product_id()) else { continue };
+            // The gamepad collection only; skip XInput interfaces.
+            if info.usage_page() != 0 && (info.usage_page() != 1 || !matches!(info.usage(), 4 | 5)) {
+                continue;
+            }
+            if super::is_xinput_path(&info.path().to_string_lossy()) {
+                continue;
+            }
+            let path = info.path().to_owned();
+            seen.push(path.clone());
+            if handed.contains(&path) || cooldown.contains_key(&path) {
+                continue;
+            }
+            let Ok(dev) = api.open_path(&path) else { continue };
+            let bus = info.bus_type();
+            setup(&dev, model, bus);
+            handed.push(path.clone());
+            fresh.push(Opened { dev, path, model, wired: matches!(bus, BusType::Usb) });
+        }
+        handed.retain(|p| seen.contains(p));
+        Some(Probe { seen, fresh })
+    }
+
+    /// Readies the pad for the parsers. Over Bluetooth the pads stay in
+    /// their simple report (Sony 0x01, Nintendo 0x3F): the full ones
+    /// (0x31, 0x11, 0x30) would carry the battery but are vendor-defined,
+    /// and switching to them breaks DirectInput and generic HID readers in
+    /// every other app until the pad reconnects (SDL leaves it off too).
+    fn setup(dev: &HidDevice, model: Model, bus: BusType) {
+        if model != Model::SwitchPro {
+            return;
+        }
+        let bluetooth = matches!(bus, BusType::Bluetooth);
+        if !bluetooth {
+            // USB sends nothing until the handshake: handshake, 3 Mbaud,
+            // handshake, no USB timeout; then full reports (0x30).
+            for cmd in [0x02u8, 0x03, 0x02, 0x04] {
+                let mut packet = [0u8; 64];
+                packet[0] = 0x80;
+                packet[1] = cmd;
+                let _ = dev.write(&packet);
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            switch_subcommand(dev, 64, 0, 0x03, &[0x30]);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // Player LED 1, so the pad stops blinking.
+        switch_subcommand(dev, if bluetooth { 49 } else { 64 }, 1, 0x30, &[0x01]);
     }
 
     /// Output report 0x01: packet counter, neutral rumble, subcommand, args.
@@ -751,6 +987,78 @@ mod tests {
         assert!(parse(Model::SwitchPro, &r).unwrap().buttons & DPAD_RIGHT != 0);
         // Subcommand replies and unknown ids aren't state.
         assert!(parse(Model::SwitchPro, &[0x81, 0x02, 0, 0]).is_none());
+    }
+
+    /// Runs one frame per entry: (HID buttons, slot 0 buttons), 8 ms apart.
+    fn run(mirror: &mut Mirror, shadow: &mut Shadow, start: Instant, frames: &[(u32, Option<u32>)]) -> Instant {
+        let mut now = start;
+        for &(hid, slot0) in frames {
+            now += Duration::from_millis(8);
+            mirror.step(now, &mut [(&mut *shadow, hid)], &[slot0, None, None, None]);
+        }
+        now
+    }
+
+    #[test]
+    fn a_virtual_twin_shadows_the_hid_pad() {
+        let mut mirror = Mirror::default();
+        let mut pad = Shadow::default();
+        let t = Instant::now();
+        // Both present from the start: nothing happens without presses.
+        let t = run(&mut mirror, &mut pad, t, &[(0, Some(0)); 50]);
+        assert_eq!(pad.by, None);
+        // Three presses echoed one frame later, the last one swapped A/B
+        // (Nintendo layout in Steam).
+        let t = run(&mut mirror, &mut pad, t, &[(A, Some(0)), (A, Some(A)), (0, Some(A)), (0, Some(0))]);
+        let t = run(&mut mirror, &mut pad, t, &[(0, Some(START)), (START, Some(START)), (0, Some(0))]);
+        assert_eq!(pad.by, None);
+        let t = run(&mut mirror, &mut pad, t, &[(A, Some(0)), (A, Some(B)), (0, Some(0))]);
+        assert_eq!(pad.by, Some(0));
+        // DS4Windows closes: the slot goes and the pad is read again.
+        run(&mut mirror, &mut pad, t, &[(0, None)]);
+        assert_eq!(pad.by, None);
+    }
+
+    #[test]
+    fn a_real_second_pad_never_shadows() {
+        let mut mirror = Mirror::default();
+        let mut pad = Shadow::default();
+        let t = Instant::now();
+        // Two presses happen to coincide, then the Xbox pad presses alone.
+        let t = run(&mut mirror, &mut pad, t, &[(A, Some(A)), (0, Some(0)), (LB, Some(LB)), (0, Some(0))]);
+        let t = run(&mut mirror, &mut pad, t, &[(0, Some(X)); 20]);
+        let t = run(&mut mirror, &mut pad, t, &[(0, Some(0)), (RB, Some(RB)), (0, Some(0))]);
+        assert_eq!(pad.by, None);
+        // The DualSense presses alone: the streak starts over.
+        let t = run(&mut mirror, &mut pad, t, &[(Y, Some(0)); 20]);
+        let t = run(&mut mirror, &mut pad, t, &[(0, Some(0)), (B, Some(B)), (0, Some(0))]);
+        run(&mut mirror, &mut pad, t, &[(START, Some(START)), (0, Some(0))]);
+        assert_eq!(pad.by, None);
+        // Triggers, sticks and Guide never count.
+        let mut pad = Shadow::default();
+        let t = Instant::now();
+        let mut frames = Vec::new();
+        for bits in [GUIDE, LT, DPAD_UP, RT] {
+            frames.push((bits, Some(bits)));
+            frames.push((0, Some(0)));
+        }
+        run(&mut mirror, &mut pad, t, &frames);
+        assert_eq!(pad.by, None);
+    }
+
+    #[test]
+    fn each_slot_shadows_one_pad() {
+        let mut mirror = Mirror::default();
+        let mut one = Shadow::default();
+        let mut two = Shadow::default();
+        let mut now = Instant::now();
+        // Pad one is mirrored on slot 1, pad two on slot 0.
+        for (a, b) in [(A, 0), (0, 0), (0, X), (0, 0), (LB, 0), (0, 0), (0, BACK), (0, 0), (Y, 0), (0, 0), (0, RB), (0, 0)] {
+            now += Duration::from_millis(8);
+            mirror.step(now, &mut [(&mut one, a), (&mut two, b)], &[Some(b), Some(a), None, None]);
+        }
+        assert_eq!(one.by, Some(1));
+        assert_eq!(two.by, Some(0));
     }
 
     #[test]

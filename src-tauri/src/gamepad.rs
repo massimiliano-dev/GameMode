@@ -243,6 +243,7 @@ mod xinput {
             loop {
                 let now = Instant::now();
                 let mut buttons = 0u32;
+                let mut slots = [None::<u32>; 4];
                 for slot in 0..4 {
                     if !connected[slot] && last_probe[slot].is_some_and(|t| now - t < PROBE_INTERVAL) {
                         continue;
@@ -251,11 +252,12 @@ mod xinput {
                     let mut state = XINPUT_STATE::default();
                     connected[slot] = unsafe { get_state(slot as u32, &mut state) } == 0;
                     if connected[slot] {
-                        buttons |= read_buttons(&state);
+                        let bits = read_buttons(&state);
+                        slots[slot] = Some(bits);
+                        buttons |= bits;
                     }
                 }
-                let xinput_appeared = (0..4).any(|s| connected[s] && !was_connected[s]);
-                buttons |= hid.poll(now, xinput_appeared);
+                buttons |= hid.poll(now, &slots);
 
                 // Input goes only to the GameMode window that has focus.
                 let target = if overlay::is_open() {

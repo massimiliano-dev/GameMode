@@ -212,7 +212,7 @@ export function Settings() {
                 label="Pad PlayStation e Switch"
                 hint={
                   settings.hidPads
-                    ? "DualSense, DualShock 4 e Pro Controller funzionano anche senza Steam Input, pure durante il gioco (il tasto PS/Home apre l'overlay). Spegni se usi DS4Windows o Steam Input e i tasti risultano doppi"
+                    ? "DualSense, DualShock 4 e Pro Controller funzionano anche senza Steam Input, pure durante il gioco (il tasto PS/Home apre l'overlay). Con DS4Windows o Steam Input il pad viene letto una volta sola"
                     : "Letti solo tramite Steam Input o DS4Windows, oppure quando GameMode è in primo piano"
                 }
                 onClick={() => void saveSettings({ ...settings, hidPads: !settings.hidPads })}

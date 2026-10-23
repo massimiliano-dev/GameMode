@@ -77,19 +77,29 @@ function controllerActive() {
   document.body.classList.add("no-cursor");
 }
 
-/** True while the native HID backend has a Sony/Nintendo pad open. */
-let nativeHidPads = false;
+/**
+ * True while the native backend reports any controller. A supported
+ * Sony/Nintendo pad is then read natively: straight over HID, or through
+ * the virtual Xbox pad Steam Input or DS4Windows make of it (the HID copy
+ * is hidden then, or the HID backend is off).
+ */
+let nativePads = false;
+
+/** Pads the Rust HID backend reads, as Chromium's "vendor product" ids (see `Model::from_ids`). */
+const HID_MODELS = new Set(["054c 0ce6", "054c 0df2", "054c 05c4", "054c 09cc", "057e 2009"]);
 
 /**
  * Pads the native backend already reads, so the browser must skip them:
- * XInput ones always, Sony/Nintendo ones while the HID backend has one.
+ * XInput ones always, the supported Sony/Nintendo ones while it reports
+ * any controller. Others (Joy-Con, generic HID pads) stay with the browser.
  * Chromium's ids look like "Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)".
  */
-export function nativelyHandled(id: string, native: boolean, hidPads: boolean) {
+export function nativelyHandled(id: string, native: boolean, pads: boolean) {
   if (!native) return false;
   const lower = id.toLowerCase();
   if (lower.includes("xinput") || lower.includes("vendor: 045e")) return true;
-  return hidPads && (lower.includes("vendor: 054c") || lower.includes("vendor: 057e"));
+  const ids = /vendor: ([0-9a-f]{4}) product: ([0-9a-f]{4})/.exec(lower);
+  return pads && !!ids && HID_MODELS.has(`${ids[1]} ${ids[2]}`);
 }
 
 function browserGamepad(native: boolean) {
@@ -103,7 +113,7 @@ function browserGamepad(native: boolean) {
     }
     const pressed = new Set<Action>();
     for (const pad of navigator.getGamepads()) {
-      if (!pad || nativelyHandled(pad.id, native, nativeHidPads)) continue;
+      if (!pad || nativelyHandled(pad.id, native, nativePads)) continue;
       for (const [i, action] of BUTTONS) if (pad.buttons[i]?.pressed) pressed.add(action);
       const [x = 0, y = 0] = pad.axes;
       if (x < -STICK) pressed.add("left");
@@ -161,7 +171,7 @@ async function start(): Promise<boolean> {
       controllerActive();
       dispatch(e.action, e.repeat, "pad");
     });
-    const track = (list: Controller[]) => (nativeHidPads = list.some((c) => c.kind !== "xbox"));
+    const track = (list: Controller[]) => (nativePads = list.length > 0);
     on<Controller[]>("gamepad://controllers", track);
     void api.getControllers().then(track).catch(() => {});
   }
