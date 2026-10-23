@@ -142,13 +142,13 @@ async function start(): Promise<boolean> {
   pointer();
   remoteText();
   const native = isTauri ? await api.nativeGamepad().catch(() => false) : false;
-  if (native) {
+  // Also without XInput: the phone companion's presses arrive here too.
+  if (isTauri) {
     onWindow<{ action: Action; repeat: boolean }>("gamepad://nav", (e) => {
       controllerActive();
       dispatch(e.action, e.repeat, "pad");
     });
-  } else {
-    browserGamepad();
   }
+  if (!native) browserGamepad();
   return native;
 }

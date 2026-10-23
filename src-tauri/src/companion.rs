@@ -190,8 +190,10 @@ fn router(ctx: Arc<Ctx>) -> Router {
 /// Blocking (runs netsh on Windows): call it off the main thread.
 pub fn status(app: &AppHandle) -> Status {
     let enabled = app.state::<AppState>().db.lock().settings.companion_enabled;
-    let server = SERVER.lock().unwrap();
-    let Some(server) = server.as_ref() else {
+    // Only the context under the lock: netsh/PowerShell and DNS below are
+    // slow, and `sync` takes the same lock from `save_settings`.
+    let ctx = SERVER.lock().unwrap().as_ref().map(|s| s.ctx.clone());
+    let Some(ctx) = ctx else {
         return Status {
             enabled,
             running: false,
@@ -203,7 +205,6 @@ pub fn status(app: &AppHandle) -> Status {
             error: None,
         };
     };
-    let ctx = &server.ctx;
     let address = lan_ip().map(|ip| format!("http://{ip}:{PORT}"));
     let url = address.as_ref().map(|a| format!("{a}/?t={}", ctx.token));
     Status {
@@ -567,14 +568,17 @@ struct PowerBody {
 }
 
 async fn power(State(ctx): State<Arc<Ctx>>, Json(body): Json<PowerBody>) -> Response {
-    // Frozen games can't answer the shutdown: let them go first.
-    if !matches!(body.action, system::PowerAction::Sleep) {
-        launcher::thaw_all(&ctx.app);
-    }
-    match system::power(body.action) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => fail(&e.to_string()),
-    }
+    let app = ctx.app.clone();
+    done(
+        tauri::async_runtime::spawn_blocking(move || {
+            // Frozen games can't answer the shutdown: let them go first.
+            if !matches!(body.action, system::PowerAction::Sleep) {
+                launcher::thaw_all(&app);
+            }
+            system::power(body.action).map_err(|e| format!("{e:#}"))
+        })
+        .await,
+    )
 }
 
 #[derive(Deserialize)]
@@ -648,8 +652,13 @@ pub fn firewall_state() -> Firewall {
 }
 
 /// Adds the firewall rule (UAC prompt) unless it exists. Returns whether
-/// the rule is present afterwards; false when the user refused.
+/// the rule is present afterwards; false when the user refused. Called
+/// before the server binds, so Windows' own "allow access" alert (whose
+/// Cancel adds block rules) doesn't show up.
 pub fn firewall_allow() -> Result<bool> {
+    // One prompt at a time: a second caller waits, then finds the rule.
+    static PROMPT: Mutex<()> = Mutex::new(());
+    let _prompt = PROMPT.lock().unwrap_or_else(|e| e.into_inner());
     if fw::present() == Some(true) {
         return Ok(true);
     }
@@ -668,34 +677,54 @@ mod fw {
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    /// Whether the rule exists; `None` when netsh couldn't tell.
-    pub fn present() -> Option<bool> {
-        let out = Command::new("netsh")
-            .args(["advfirewall", "firewall", "show", "rule", &format!("name={FIREWALL_RULE}")])
+    /// The current executable, quoted for a single-quoted PowerShell string.
+    fn exe() -> Result<String> {
+        Ok(std::env::current_exe().context("eseguibile")?.display().to_string().replace('\'', "''"))
+    }
+
+    fn powershell(script: &str) -> std::io::Result<std::process::Output> {
+        let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+        Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &encoded])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
-            .ok()?;
-        Some(out.status.success() && String::from_utf8_lossy(&out.stdout).contains(FIREWALL_RULE))
+    }
+
+    /// Whether our allow rule exists and no inbound block rule targets the
+    /// executable (Windows adds those when its own alert is cancelled, and
+    /// they win over any allow rule); `None` when PowerShell couldn't tell.
+    /// Enum values, not netsh's localized text.
+    pub fn present() -> Option<bool> {
+        let exe = exe().ok()?;
+        let script = format!(
+            "$ErrorActionPreference = 'SilentlyContinue'\n\
+             $block = Get-NetFirewallRule -Direction Inbound -Action Block -Enabled True | Get-NetFirewallApplicationFilter | Where-Object {{ $_.Program -eq '{exe}' }}\n\
+             $allow = Get-NetFirewallRule -DisplayName '{FIREWALL_RULE}' | Where-Object {{ $_.Enabled -eq 'True' -and $_.Action -eq 'Allow' }}\n\
+             if ($block) {{ 'blocked' }} elseif ($allow) {{ 'ok' }} else {{ 'missing' }}"
+        );
+        let out = powershell(&script).ok()?;
+        match String::from_utf8_lossy(&out.stdout).trim() {
+            "ok" => Some(true),
+            "missing" | "blocked" => Some(false),
+            _ => None,
+        }
     }
 
     /// Runs netsh elevated through PowerShell's `Start-Process -Verb RunAs`
     /// and waits for it: the UAC prompt shows on the secure desktop, also
-    /// in console mode.
+    /// in console mode. Every inbound rule of the executable goes first,
+    /// block rules from Windows' alert included, then ours is added.
     pub fn add() -> Result<bool> {
-        let exe = std::env::current_exe().context("eseguibile")?.display().to_string().replace('\'', "''");
+        let exe = exe()?;
         let args = format!(
-            "advfirewall firewall add rule name=\"{FIREWALL_RULE}\" dir=in action=allow protocol=TCP localport={PORT} profile=any program=\"{exe}\""
+            "/c netsh advfirewall firewall delete rule name=all dir=in program=\"{exe}\" >nul & \
+             netsh advfirewall firewall add rule name=\"{FIREWALL_RULE}\" dir=in action=allow protocol=TCP localport={PORT} profile=any program=\"{exe}\""
         );
         let script = format!(
-            "$p = Start-Process -FilePath 'netsh.exe' -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList '{args}'; exit $p.ExitCode"
+            "$p = Start-Process -FilePath 'cmd.exe' -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList '{args}'; exit $p.ExitCode"
         );
-        let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-        let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
-        let status = Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &encoded])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status()
-            .context("powershell")?;
+        let status = powershell(&script).context("powershell")?.status;
         if !status.success() {
             // UAC refused, or netsh failed.
             return Ok(false);
