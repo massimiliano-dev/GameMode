@@ -208,6 +208,12 @@ export function Settings() {
                 onClick={() => void saveSettings({ ...settings, steamGuide: !settings.steamGuide })}
                 control={<Toggle on={settings.steamGuide} />}
               />
+              <Row
+                label="Indicatore del volume"
+                hint="Tasti volume della tastiera e ⧉ + croce su/giù mostrano il volume sopra il gioco, al posto del pannello di Windows"
+                onClick={() => void saveSettings({ ...settings, osdVolume: !settings.osdVolume })}
+                control={<Toggle on={settings.osdVolume} />}
+              />
             </Section>
             <Section title="Negozi e finestre degli store">
               <Row

@@ -1243,6 +1243,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "windows",
+ "windows-core",
  "winreg",
 ]
 

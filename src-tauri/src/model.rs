@@ -233,6 +233,8 @@ pub struct Settings {
     pub wand_combo: bool,
     /// Freeze the game while Wand has the screen.
     pub wand_pause: bool,
+    /// Volume keys and View + D-pad show the volume over the game (OSD).
+    pub osd_volume: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -266,6 +268,7 @@ impl Default for Settings {
             wand_backtick: false,
             wand_combo: false,
             wand_pause: true,
+            osd_volume: true,
         }
     }
 }

@@ -44,6 +44,8 @@ export interface Settings {
   wandCombo: boolean;
   /** Freeze the game while Wand has the screen. */
   wandPause: boolean;
+  /** Volume keys and View + D-pad show the volume over the game. */
+  osdVolume: boolean;
 }
 
 export interface ShellStatus {
@@ -233,6 +235,18 @@ export interface GameUpdate {
 export interface Volume {
   level: number;
   muted: boolean;
+}
+
+/** `audio://volume`: pushed to every window when the system volume changes. */
+export interface VolumeEvent extends Volume {
+  /** Changed from GameMode's own quick menu or overlay. */
+  own: boolean;
+}
+
+/** `osd://show`: what the volume indicator window displays. */
+export interface OsdPayload extends Volume {
+  /** Shown instead of "Volume": the new output after a device change. */
+  label: string | null;
 }
 
 export interface ScanError {

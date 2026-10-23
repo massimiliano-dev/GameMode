@@ -32,6 +32,8 @@ mod uninstall;
 mod updates;
 mod wand;
 mod window;
+mod audio_events;
+mod osd;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -789,6 +791,8 @@ pub fn run() {
                 std::thread::spawn(launcher::preload_steam);
             }
             overlay::create(&handle);
+            osd::create(&handle);
+            audio_events::start(handle.clone());
             updates::watch_packages();
             let native = gamepad::start(handle.clone());
             app.state::<AppState>().native_gamepad.store(native, Ordering::SeqCst);

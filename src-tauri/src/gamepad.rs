@@ -282,6 +282,12 @@ mod xinput {
                 let wand = target.is_none() && crate::wand::is_open();
                 for (bit, repeat) in repeater.step(buttons, DIRECTIONS, now) {
                     let Some(&(_, action)) = MAPPING.iter().find(|(b, _)| *b == bit) else { continue };
+                    // View held + D-pad up/down during a game: volume, with
+                    // the on-screen indicator as feedback.
+                    if target.is_none() && buttons & BACK != 0 && (bit == DPAD_UP || bit == DPAD_DOWN) && crate::osd::combo_active(&app) {
+                        crate::osd::nudge(&app, if bit == DPAD_UP { crate::osd::PAD_STEP } else { -crate::osd::PAD_STEP });
+                        continue;
+                    }
                     if wand {
                         wand_key(&app, action);
                     } else if action == Action::Guide {

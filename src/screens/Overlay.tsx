@@ -9,7 +9,7 @@ import { focusInitial } from "../input/focus";
 import { setupInput } from "../input/sources";
 import { api, on } from "../lib/api";
 import { formatClock, formatDate, formatPlaytime } from "../lib/format";
-import type { Volume } from "../lib/types";
+import type { Volume, VolumeEvent } from "../lib/types";
 import { useApp } from "../store/app";
 import { QmButton, VolumeRow } from "./QuickMenu";
 
@@ -43,7 +43,12 @@ export function OverlayApp() {
       requestAnimationFrame(() => focusInitial());
     };
     refresh();
-    return on("overlay://open", refresh);
+    const offOpen = on("overlay://open", refresh);
+    const offVolume = on<VolumeEvent>("audio://volume", ({ level, muted }) => setVolume({ level, muted }));
+    return () => {
+      offOpen();
+      offVolume();
+    };
   }, []);
 
   const resume = () => void api.overlayHide(true);
