@@ -1,13 +1,15 @@
+import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CatalogCard } from "../components/CatalogCard";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 import { Glyph, StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
 import { forgetGroup } from "../input/focus";
 import { api } from "../lib/api";
-import { formatPlaytime } from "../lib/format";
-import type { Catalog, CatalogItem, Deals } from "../lib/types";
+import { formatBytes, formatPlaytime } from "../lib/format";
+import type { Catalog, CatalogItem, Deals, Drive } from "../lib/types";
 import { useApp } from "../store/app";
 
 type Filter = "all" | CatalogItem["source"];
@@ -58,6 +60,8 @@ export function Downloads() {
   const [filter, setFilter] = useState<Filter>("all");
   const [focused, setFocused] = useState<CatalogItem | null>(null);
   const focusedRef = useRef<CatalogItem | null>(null);
+  /** An install that doesn't fit on the drive it would go to, waiting for a yes. */
+  const [tight, setTight] = useState<{ item: CatalogItem; drive: Drive } | null>(null);
 
   const load = useCallback(async (force: boolean) => {
     setLoading(true);
@@ -124,6 +128,16 @@ export function Downloads() {
       if (item.source === "deal") {
         void api.openLink(`steam://store/${item.id.slice("deal:".length)}`);
         toast(`${item.name} a ${item.price} nel negozio Steam. Premi Guide per tornare qui`);
+      } else if (item.source === "gamepass" && item.sizeBytes) {
+        // The Xbox app picks the drive itself: a heads-up, not a wall.
+        void api
+          .storageOverview()
+          .then((o) => o.drives.find((d) => d.mount === o.xboxMount) ?? null)
+          .catch(() => null)
+          .then((drive) => {
+            if (drive && drive.available < item.sizeBytes!) setTight({ item, drive });
+            else void installFromCatalog(item.id, item.name);
+          });
       } else {
         void installFromCatalog(item.id, item.name);
       }
@@ -184,6 +198,21 @@ export function Downloads() {
           ))}
         </div>
       )}
+      <AnimatePresence>
+        {tight && (
+          <ConfirmDialog
+            key="tight"
+            title={`Spazio insufficiente su ${tight.drive.mount.replace(/[\\/]+$/, "")}`}
+            text={`${tight.item.name} scarica ${formatBytes(tight.item.sizeBytes ?? 0)} e sull'unità ne restano ${formatBytes(tight.drive.available)}. Puoi liberare spazio da Impostazioni → Archiviazione, oppure scegliere un'altra unità nell'app Xbox.`}
+            confirmLabel="Installa comunque"
+            onCancel={() => setTight(null)}
+            onConfirm={() => {
+              setTight(null);
+              void installFromCatalog(tight.item.id, tight.item.name);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -191,7 +220,7 @@ export function Downloads() {
 function describe(item: CatalogItem) {
   switch (item.source) {
     case "gamepass":
-      return "Incluso in PC Game Pass";
+      return item.sizeBytes ? `Incluso in PC Game Pass · ${formatBytes(item.sizeBytes)}` : "Incluso in PC Game Pass";
     case "cloud":
       return "Gioca in streaming con Xbox Cloud Gaming";
     case "deal":

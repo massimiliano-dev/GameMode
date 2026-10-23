@@ -10,7 +10,7 @@ import { SteamExtras } from "../components/SteamExtras";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
 import { api, artUrl } from "../lib/api";
-import { formatLastPlayed, formatPlaytime, SHOP_LABEL, UPDATE_LABEL, updateProgress } from "../lib/format";
+import { formatGameSize, formatLastPlayed, formatPlaytime, SHOP_LABEL, UPDATE_LABEL, updateProgress } from "../lib/format";
 import type { Game } from "../lib/types";
 import { useApp } from "../store/app";
 
@@ -157,6 +157,12 @@ export function GameDetail({ gameId }: { gameId: string }) {
                 <dt>Ultima partita</dt>
                 <dd>{formatLastPlayed(game.lastPlayed)}</dd>
               </div>
+              {formatGameSize(game) && (
+                <div className="stat">
+                  <dt>Spazio occupato</dt>
+                  <dd>{formatGameSize(game)}</dd>
+                </div>
+              )}
               {game.installDir && (
                 <div className="stat stat-wide">
                   <dt>Installato in</dt>

@@ -1,7 +1,7 @@
 // In-browser stand-in for the Rust backend, so the UI can be developed and
 // tested with `npm run dev` in any browser.
 
-import type { Collection, Game, ManualGame, Profile, SessionState, Settings, Store, Volume } from "./types";
+import type { Cleanup, Collection, Game, ManualGame, Profile, SessionState, Settings, Store, Volume } from "./types";
 
 const CDN = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps";
 
@@ -31,7 +31,7 @@ let games: Game[] = SEED.map(([store, name, appid], i) => ({
   id: `${store}:mock-${i}`,
   store,
   name,
-  installDir: null,
+  installDir: `${i % 3 === 0 ? "C:\\Program Files" : "D:\\Giochi"}\\${name.replace(/[:']/g, "")}`,
   steamAppid: appid || null,
   artwork: appid
     ? {
@@ -46,6 +46,9 @@ let games: Game[] = SEED.map(([store, name, appid], i) => ({
   addedAt: now() - (i < 3 ? day : 30 * day),
   lastPlayed: i % 3 === 0 ? now() - i * day * 0.7 : null,
   playtimeSecs: i % 3 === 0 ? (i + 1) * 5400 : 0,
+  sizeBytes: i === 9 ? null : (((i * 7919) % 90) + 4) * 1024 ** 3 + i * 123_456_789,
+  sizeCheckedAt: store === "steam" || store === "epic" ? null : now() - i * day,
+  sizePartial: store === "xbox" && i === 7,
 }));
 
 let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true };
@@ -64,6 +67,23 @@ let backups: { id: string; created: number; automatic: boolean; bytes: number }[
   { id: "b2", created: now() - 2 * day, automatic: false, bytes: 2_400_000 },
 ];
 let romDirs: Record<string, string | null> = {};
+let cleanup: Cleanup = { artworkItems: 3, artworkBytes: 14_200_000, backupItems: 5, backupBytes: 48_000_000, applied: false };
+
+function mockStorage() {
+  const bytesOn = (prefix: string) => games.filter((g) => g.installDir?.startsWith(prefix)).map((g) => g.sizeBytes ?? 0);
+  const onC = bytesOn("C:");
+  const onD = bytesOn("D:");
+  return {
+    drives: [
+      { mount: "C:\\", label: "Windows", total: 931 * 1024 ** 3, available: 112 * 1024 ** 3, removable: false, gamesBytes: onC.reduce((a, b) => a + b, 0), games: onC.length },
+      { mount: "D:\\", label: "Giochi", total: 1863 * 1024 ** 3, available: 640 * 1024 ** 3, removable: false, gamesBytes: onD.reduce((a, b) => a + b, 0), games: onD.length },
+      { mount: "E:\\", label: "", total: 476 * 1024 ** 3, available: 20 * 1024 ** 3, removable: true, gamesBytes: 0, games: 0 },
+    ],
+    measuring: false,
+    unknown: games.filter((g) => g.installDir && g.sizeBytes == null).length,
+    xboxMount: "C:\\",
+  };
+}
 
 function mockEmulators() {
   const systems: [string, string, string][] = [
@@ -360,6 +380,7 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
             cover: `${CDN}/${appid}/library_600x900_2x.jpg`,
             hero: `${CDN}/${appid}/library_hero.jpg`,
             playtimeSecs: 0,
+            sizeBytes: (appid % 7) * 11 * 1024 ** 3 + 20 * 1024 ** 3,
           })),
         ].sort((a, b) => a.name.localeCompare(b.name));
         return { items, steam: settings.steamApiKey ? "ok" : "needsKey", gamepassOk: true };
@@ -489,6 +510,22 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "open_store":
         console.info("[mock] open_store", args);
         return ["steam", "xbox", "epic"].includes(args.store) ? "client" : "browser";
+      case "storage_overview":
+        await wait(300);
+        return mockStorage();
+      case "storage_cleanup": {
+        await wait(args.apply ? 900 : 300);
+        const out = { ...cleanup, applied: !!args.apply };
+        if (args.apply) cleanup = { artworkItems: 0, artworkBytes: 0, backupItems: 0, backupBytes: 0, applied: false };
+        return out;
+      }
+      case "storage_remeasure":
+        setTimeout(() => {
+          games = games.map((g) => (g.sizeBytes == null && g.installDir ? { ...g, sizeBytes: 12 * 1024 ** 3, sizeCheckedAt: now() } : g));
+          games.forEach((g) => emit("library://game", g));
+          emit("storage://measured", null);
+        }, 1500);
+        return;
       default:
         // power, exit_to_desktop, toggle_fullscreen, quit_app, refresh_artwork
         console.info(`[mock] ${cmd}`, args);

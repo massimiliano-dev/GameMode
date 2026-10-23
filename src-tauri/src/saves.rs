@@ -13,6 +13,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{now, Game, Store};
+use crate::storage::dir_size;
 
 const MANIFEST_URL: &str = "https://raw.githubusercontent.com/mtkennerly/ludusavi-manifest/master/data/manifest.yaml";
 const INDEX_FILE: &str = "saves-index.json";
@@ -330,13 +331,6 @@ pub struct SaveInfo {
 fn game_dir(root: &Path, game_id: &str) -> PathBuf {
     let safe: String = game_id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
     root.join(safe)
-}
-
-fn dir_size(path: &Path) -> u64 {
-    if path.is_file() {
-        return fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    }
-    fs::read_dir(path).map(|it| it.flatten().map(|e| dir_size(&e.path())).sum()).unwrap_or(0)
 }
 
 fn copy_recursive(from: &Path, to: &Path) -> Result<()> {

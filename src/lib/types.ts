@@ -19,6 +19,12 @@ export interface Game {
   addedAt: number;
   lastPlayed: number | null;
   playtimeSecs: number;
+  /** Space on disk; null while unknown. */
+  sizeBytes: number | null;
+  /** Unix seconds of the last folder walk; null when the store manifest gave the size. */
+  sizeCheckedAt: number | null;
+  /** Part of the folder couldn't be read: the size is a lower bound. */
+  sizePartial: boolean;
 }
 
 export interface Settings {
@@ -279,6 +285,8 @@ export interface CatalogItem {
   cover: string | null;
   hero: string | null;
   playtimeSecs: number;
+  /** Download size, when the catalog says (Game Pass). */
+  sizeBytes?: number | null;
   /** Wishlist deals only. */
   discount?: number;
   price?: string;
@@ -296,3 +304,33 @@ export interface Catalog {
 export type UninstallOutcome = "started" | "removed";
 
 export type PowerAction = "shutdown" | "restart" | "sleep";
+
+export interface Drive {
+  /** `C:\` on Windows. */
+  mount: string;
+  label: string;
+  total: number;
+  available: number;
+  removable: boolean;
+  /** Bytes of the library's games on this drive (known sizes only). */
+  gamesBytes: number;
+  games: number;
+}
+
+export interface StorageOverview {
+  drives: Drive[];
+  /** Sizes are still being measured in the background. */
+  measuring: boolean;
+  /** Installed games whose size isn't known. */
+  unknown: number;
+  /** Where the Xbox app installs, as far as GameMode can tell. */
+  xboxMount: string | null;
+}
+
+export interface Cleanup {
+  artworkItems: number;
+  artworkBytes: number;
+  backupItems: number;
+  backupBytes: number;
+  applied: boolean;
+}

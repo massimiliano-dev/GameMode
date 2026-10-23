@@ -355,7 +355,7 @@ struct SgdbImage {
     url: String,
 }
 
-fn safe_name(id: &str) -> String {
+pub(crate) fn safe_name(id: &str) -> String {
     id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect()
 }
 

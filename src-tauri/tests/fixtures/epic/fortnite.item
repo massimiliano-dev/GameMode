@@ -5,6 +5,7 @@
 	"LaunchExecutable": "FortniteGame/Binaries/Win64/FortniteLauncher.exe",
 	"DisplayName": "Fortnite",
 	"InstallLocation": "C:\\Program Files\\Epic Games\\Fortnite",
+	"InstallSize": 42949672960,
 	"AppName": "Fortnite",
 	"CatalogNamespace": "fn",
 	"CatalogItemId": "4fe75bbc5a674f4f9b356b5c90567da5",

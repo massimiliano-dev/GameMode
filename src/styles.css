@@ -2232,3 +2232,73 @@ html.is-overlay .qm-volume[data-nav-current] {
   background: var(--surface-strong);
   box-shadow: inset 0 0 0 0.14rem var(--focus);
 }
+
+/* ---------- Storage (Impostazioni → Archiviazione) ---------- */
+
+.drive-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.55rem;
+}
+
+.drive-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+}
+
+.drive-track {
+  display: flex;
+  height: 0.75rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-strong);
+}
+
+.drive-bar {
+  display: block;
+  height: 100%;
+}
+
+.drive-bar-other {
+  background: var(--text-faint);
+}
+
+.drive-bar-games {
+  background: var(--accent);
+}
+
+.drive-legend {
+  display: flex;
+  gap: 1.4rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.drive-legend i {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-right: 0.35rem;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+
+.storage-size {
+  flex: none;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.size-pill {
+  margin-left: auto;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}

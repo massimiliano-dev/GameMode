@@ -8,6 +8,7 @@ import type {
   BackupInfo,
   BtDevice,
   Catalog,
+  Cleanup,
   CatalogItem,
   Collection,
   Controller,
@@ -29,6 +30,7 @@ import type {
   Store,
   SteamExtras,
   Storefront,
+  StorageOverview,
   UpdateInfo,
   UninstallOutcome,
   Volume,
@@ -124,6 +126,9 @@ export const api = {
   removeCollection: (id: string) => call<void>("remove_collection", { id }),
   setInCollection: (collectionId: string, gameId: string, value: boolean) =>
     call<Collection[]>("set_in_collection", { collectionId, gameId, value }),
+  storageOverview: () => call<StorageOverview>("storage_overview"),
+  storageCleanup: (apply: boolean) => call<Cleanup>("storage_cleanup", { apply }),
+  storageRemeasure: () => call<void>("storage_remeasure"),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

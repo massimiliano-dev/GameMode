@@ -51,6 +51,8 @@ pub struct CatalogItem {
     pub cover: Option<String>,
     pub hero: Option<String>,
     pub playtime_secs: u64,
+    /// Download size, when the catalog says (Game Pass only).
+    pub size_bytes: Option<u64>,
 }
 
 #[derive(Serialize, Clone, Copy, PartialEq, Debug, Default)]
@@ -245,6 +247,7 @@ pub fn parse_epic_catcache(text: &str, installed: &HashSet<String>) -> Vec<Catal
                 cover: image(i, &["DieselGameBoxTall", "OfferImageTall", "Thumbnail"]),
                 hero: image(i, &["DieselGameBox", "OfferImageWide", "DieselStoreFrontWide"]),
                 playtime_secs: 0,
+                size_bytes: None,
             })
         })
         .collect()
@@ -318,6 +321,7 @@ pub fn gog_items(rows: &[Vec<String>], installed: &HashSet<String>) -> Vec<Catal
                 cover: p.cover,
                 hero: p.hero,
                 playtime_secs: 0,
+                size_bytes: None,
             })
         })
         .collect()
@@ -476,6 +480,7 @@ fn parse_owned(body: &[u8], installed: &HashSet<String>) -> Vec<CatalogItem> {
             cover: Some(format!("{STEAM_CDN}/{}/library_600x900_2x.jpg", g.appid)),
             hero: Some(format!("{STEAM_CDN}/{}/library_hero.jpg", g.appid)),
             playtime_secs: g.playtime_forever * 60,
+            size_bytes: None,
         })
         .collect()
 }
@@ -543,6 +548,7 @@ struct SkuProperties {
 #[serde(rename_all = "PascalCase", default)]
 struct Package {
     package_family_name: Option<String>,
+    max_download_size_in_bytes: Option<u64>,
 }
 
 fn parse_products(body: &[u8], installed: &HashSet<String>) -> Vec<CatalogItem> {
@@ -560,6 +566,18 @@ fn parse_products(body: &[u8], installed: &HashSet<String>) -> Vec<CatalogItem> 
             if families.iter().any(|f| installed.contains(&format!("xbox:{f}"))) {
                 return None;
             }
+            // Several packages per product: the PC build is the one with a
+            // package family name, console builds have none.
+            let packages: Vec<&Package> = p.display_sku_availabilities.iter().flat_map(|s| s.sku.properties.packages.iter()).collect();
+            let size_of = |pc_only: bool| {
+                packages
+                    .iter()
+                    .filter(|pk| !pc_only || pk.package_family_name.is_some())
+                    .filter_map(|pk| pk.max_download_size_in_bytes)
+                    .filter(|&b| b > 0)
+                    .max()
+            };
+            let size_bytes = size_of(true).or_else(|| size_of(false));
             let local = p.localized_properties.into_iter().next()?;
             Some(CatalogItem {
                 id: format!("gamepass:{}", p.product_id),
@@ -569,6 +587,7 @@ fn parse_products(body: &[u8], installed: &HashSet<String>) -> Vec<CatalogItem> 
                 cover: pick_ms_image(&local.images, Kind::Cover),
                 hero: pick_ms_image(&local.images, Kind::Hero),
                 playtime_secs: 0,
+                size_bytes,
             })
         })
         .filter(|i| !i.name.is_empty() && !i.id.ends_with(':'))
@@ -591,7 +610,10 @@ mod tests {
         let client = reqwest::Client::new();
         let items = tauri::async_runtime::block_on(gamepass(&client, &HashSet::new())).unwrap();
         println!("{} Game Pass titles, e.g. {:?}", items.len(), items.first().map(|i| &i.name));
+        let sized = items.iter().filter(|i| i.size_bytes.is_some()).count();
+        println!("{sized} with a download size, e.g. {:?}", items.iter().find(|i| i.size_bytes.is_some()).map(|i| (&i.name, i.size_bytes)));
         assert!(items.len() > 100);
+        assert!(sized * 2 > items.len(), "MaxDownloadSizeInBytes missing from most products");
         assert!(items.iter().filter(|i| i.cover.is_some()).count() * 10 > items.len() * 9);
     }
 
@@ -672,6 +694,8 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, "gamepass:9NPDN9R45JX4");
         assert!(items[0].cover.as_deref().unwrap().ends_with("?w=600"));
+        assert_eq!(items[0].size_bytes, Some(8_001_105_920), "the PC package, not the bigger console one");
+        assert_eq!(items[1].size_bytes, None);
 
         let installed: HashSet<String> = ["xbox:surpriseattackptyltd.1000xresist_8k24hnfn3vvj0".to_string()].into();
         let items = parse_products(&fixture("products.json"), &installed);

@@ -98,7 +98,8 @@ interface AppState {
   /** Steam's downloads, or the game's page in the Xbox app. */
   showGameUpdate: (game: Game) => Promise<void>;
   installFromCatalog: (id: string, name: string) => Promise<void>;
-  uninstall: (game: Game) => Promise<void>;
+  /** `stay`: don't leave the current screen once the game is gone. */
+  uninstall: (game: Game, stay?: boolean) => Promise<void>;
   returnedToApp: () => void;
   toast: (text: string, tone?: Toast["tone"]) => void;
   setKeyboardField: (field: HTMLInputElement | null) => void;
@@ -362,7 +363,7 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
-  uninstall: async (game) => {
+  uninstall: async (game, stay = false) => {
     try {
       if (!["manual", "xbox", "mock"].includes(game.store)) {
         const what = `Apro la disinstallazione di ${game.name}.`;
@@ -372,7 +373,7 @@ export const useApp = create<AppState>((set, get) => ({
       const outcome = await api.uninstallGame(game.id);
       if (outcome === "removed") {
         get().toast(`${game.name} disinstallato`);
-        get().back();
+        if (!stay) get().back();
       } else {
         set({ rescanOnReturn: true });
       }

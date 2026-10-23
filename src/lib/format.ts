@@ -1,4 +1,4 @@
-import type { GameUpdate, Store, UpdateState } from "./types";
+import type { Game, GameUpdate, Store, UpdateState } from "./types";
 
 export const STORE_LABEL: Record<Store, string> = {
   steam: "Steam",
@@ -71,6 +71,22 @@ function startOfDay(ms: number) {
   const d = new Date(ms);
   d.setHours(0, 0, 0, 0);
   return d.getTime();
+}
+
+/** Drive letter of a Windows path ("D:"), or the volume name of a macOS one. */
+export function driveOf(path: string | null | undefined): string | null {
+  if (!path) return null;
+  const letter = /^([a-zA-Z]):[\\/]/.exec(path);
+  if (letter) return `${letter[1].toUpperCase()}:`;
+  const volume = /^\/Volumes\/([^/]+)/.exec(path);
+  return volume ? volume[1] : null;
+}
+
+/** "48,2 GB su D:", "circa 48,2 GB" for a partial walk, null when unknown. */
+export function formatGameSize(game: Pick<Game, "sizeBytes" | "sizePartial" | "installDir">): string | null {
+  if (game.sizeBytes == null) return null;
+  const drive = driveOf(game.installDir);
+  return `${game.sizePartial ? "circa " : ""}${formatBytes(game.sizeBytes)}${drive ? ` su ${drive}` : ""}`;
 }
 
 export function formatClock(d: Date): string {
