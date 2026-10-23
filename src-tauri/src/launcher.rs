@@ -248,6 +248,9 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
         probe.retain_alive(sys.processes());
         let pids = game_pids(&sys, &mut probe, &target);
         let window = if pids.is_empty() { None } else { window::game_window(&pids) };
+        // The game's window keeps it alive even when its processes can't be
+        // read any more (anti-cheat, a launcher that started it).
+        let window_alive = running_since.is_some() && handed.is_some_and(window::window_alive);
 
         if running_since.is_none() {
             // Updates first: say what's going on, and keep waiting meanwhile.
@@ -324,7 +327,7 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
             // reporters, launchers, services): once its window is gone for
             // good, the game is over.
             if let Some(since) = running_since.filter(|_| handed.is_some()) {
-                if window.is_some() {
+                if window.is_some() || window_alive {
                     window_gone = None;
                 } else {
                     let gone = *window_gone.get_or_insert_with(Instant::now);
@@ -334,6 +337,8 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
                     }
                 }
             }
+        } else if window_alive {
+            last_seen = Instant::now();
         } else {
             alive_since = None;
             match running_since {
@@ -385,7 +390,11 @@ impl Dialogs {
         if self.aside.is_some_and(|h| !self.seen.contains_key(&h)) {
             self.aside = None;
         }
-        if self.aside.is_none() {
+        // Only when it's GameMode covering them; and a full-screen app in
+        // front is most likely the game, started in a way GameMode can't
+        // follow: leave that alone.
+        let covering = window::is_foreground(app) || self.stepped_aside;
+        if self.aside.is_none() && covering && !window::fullscreen_app_in_front(app) {
             if let Some((&hwnd, _)) = self.seen.iter().find(|(_, at)| at.elapsed() >= DIALOG_SETTLE) {
                 self.aside = Some(hwnd);
                 self.stepped_aside = true;
@@ -458,8 +467,9 @@ fn end(app: &AppHandle, generation: u64, phase: Phase, seconds: u64) {
     let _ = app.emit("game://state", &session);
     crate::performance::end();
     crate::overlay::hide(app);
-    // A failed launch leaves GameMode where it is, unless it stepped aside.
-    if phase == Phase::Exited || window::is_minimized(app) {
+    // A failed launch leaves GameMode where it is, unless it stepped aside;
+    // and it never jumps over a full-screen app (a game it lost track of).
+    if (phase == Phase::Exited || window::is_minimized(app)) && !window::fullscreen_app_in_front(app) {
         window::bring_to_front(app);
     }
 }

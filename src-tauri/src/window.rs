@@ -192,6 +192,55 @@ pub fn game_window(pids: &[u32]) -> Option<isize> {
     }
 }
 
+/// The window still exists and is shown.
+pub fn window_alive(raw: isize) -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{IsWindow, IsWindowVisible};
+        let hwnd = win::hwnd(raw);
+        unsafe { IsWindow(Some(hwnd)).as_bool() && IsWindowVisible(hwnd).as_bool() }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = raw;
+        false
+    }
+}
+
+/// Another app covers the whole screen in front (most likely a game GameMode
+/// lost track of): GameMode must not jump over it.
+pub fn fullscreen_app_in_front(app: &AppHandle) -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::RECT;
+        use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect};
+        if is_foreground(app) || crate::overlay::is_open() {
+            return false;
+        }
+        if foreground_process_name().is_none_or(|n| n == "explorer.exe") {
+            return false;
+        }
+        unsafe {
+            let hwnd = GetForegroundWindow();
+            let mut rect = RECT::default();
+            let mut monitor = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+            if GetWindowRect(hwnd, &mut rect).is_err()
+                || !GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut monitor).as_bool()
+            {
+                return false;
+            }
+            let screen = monitor.rcMonitor;
+            rect.left <= screen.left && rect.top <= screen.top && rect.right >= screen.right && rect.bottom >= screen.bottom
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        false
+    }
+}
+
 /// Brings the running game back and gets GameMode out of its way.
 pub fn resume_game(app: &AppHandle, pids: &[u32]) -> bool {
     let found = focus_process(pids);
