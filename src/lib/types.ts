@@ -69,6 +69,8 @@ export interface Settings {
   keyboardAuto: boolean;
   /** When Windows shuts down with a game open, back up its saves once it has closed. */
   backupOnExit: boolean;
+  /** Sleep after this many idle minutes (keyboard, mouse and controller still, no game); null never. */
+  autoSleepMinutes: number | null;
 }
 
 export interface ShellStatus {
@@ -482,3 +484,15 @@ export interface PowerOptions {
   sleep: boolean;
   hibernate: boolean;
 }
+
+/** What the PC is doing: sleep, wake, lock screen, the automatic sleep timer. */
+export type PowerEvent =
+  | { kind: "suspended" }
+  | { kind: "resumed"; slept: number }
+  | { kind: "locked" }
+  | { kind: "unlocked" }
+  | { kind: "displayOff" }
+  | { kind: "displayOn" }
+  | { kind: "sleepSoon"; seconds: number }
+  | { kind: "sleepCancelled" }
+  | { kind: "sessionEnding" };

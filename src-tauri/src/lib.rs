@@ -45,6 +45,7 @@ mod window;
 mod audio_events;
 mod osd;
 mod idle;
+mod lifecycle;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -1046,6 +1047,7 @@ pub fn run() {
             keyboard::create(&handle);
             keyboard::watch(handle.clone());
             shutdown::install(&handle);
+            lifecycle::start(&handle);
             updates::watch_packages();
             status::start(handle.clone());
             let native = gamepad::start(handle.clone());

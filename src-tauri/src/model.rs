@@ -281,6 +281,9 @@ pub struct Settings {
     /// When Windows shuts down with a game open, back up its saves once it
     /// has closed.
     pub backup_on_exit: bool,
+    /// Put the PC to sleep after this many idle minutes (keyboard, mouse
+    /// and controller all still, no game running); `None` never does.
+    pub auto_sleep_minutes: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -324,6 +327,7 @@ impl Default for Settings {
             idle_wait_downloads: true,
             keyboard_auto: true,
             backup_on_exit: true,
+            auto_sleep_minutes: None,
         }
     }
 }

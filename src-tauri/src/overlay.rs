@@ -169,6 +169,16 @@ fn claim_focus(w: &WebviewWindow) {
     }
 }
 
+/// The screen changed (resolution, a TV coming back): the open overlay
+/// covers the new screen.
+pub fn fit_screen(app: &AppHandle) {
+    let Some(w) = window(app) else { return };
+    if let Ok(Some(monitor)) = w.primary_monitor() {
+        let _ = w.set_position(*monitor.position());
+        let _ = w.set_size(*monitor.size());
+    }
+}
+
 pub fn hide(app: &AppHandle) {
     VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
     if let Some(w) = window(app) {

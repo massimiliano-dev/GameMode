@@ -14,6 +14,15 @@ const IDLE_MINUTES = [0, 5, 10, 15, 30, 60, 120];
 const minutes = (m: number) => (m === 0 ? "Mai" : m < 60 ? `${m} minuti` : m === 60 ? "1 ora" : `${m / 60} ore`);
 const IDLE_ACTION: Record<PowerAction, string> = { sleep: "Sospendi il PC", shutdown: "Spegni il PC", restart: "Riavvia il PC", restartToDesktop: "Riavvia in modalità desktop", hibernate: "Iberna il PC", lock: "Blocca il PC", logoff: "Disconnetti" };
 type IdleKey = "idleScreensaverMin" | "idleDisplayOffMin" | "idleSleepMin";
+/** Idle minutes before the automatic sleep. */
+export const SLEEP_CHOICES: { minutes: number | null; label: string }[] = [
+  { minutes: null, label: "Mai" },
+  { minutes: 15, label: "Dopo 15 minuti" },
+  { minutes: 30, label: "Dopo 30 minuti" },
+  { minutes: 60, label: "Dopo un'ora" },
+];
+
+export const sleepLabel = (minutes: number | null) => SLEEP_CHOICES.find((c) => c.minutes === minutes)?.label ?? `Dopo ${minutes} minuti`;
 
 /** TV mode (display + audio output) and performance mode. */
 export function SystemSettings({ settings }: { settings: Settings }) {
@@ -21,7 +30,7 @@ export function SystemSettings({ settings }: { settings: Settings }) {
   const toast = useApp((s) => s.toast);
   const [display, setDisplay] = useState<DisplayInfo | null>(null);
   const [outputs, setOutputs] = useState<AudioOutput[]>([]);
-  const [sheet, setSheet] = useState<"display" | "audio" | IdleKey | null>(null);
+  const [sheet, setSheet] = useState<"display" | "audio" | "sleep" | IdleKey | null>(null);
   const [apps, setApps] = useState(settings.closeApps.join(", "));
 
   useEffect(() => {
@@ -56,6 +65,11 @@ export function SystemSettings({ settings }: { settings: Settings }) {
   const audioName = outputs.find((o) => o.id === settings.tvAudio)?.name;
   const idleActions = (key: IdleKey): SheetAction[] =>
     IDLE_MINUTES.map((m) => ({ label: minutes(m), hint: settings[key] === m ? "Adesso" : undefined, onSelect: () => void saveSettings({ ...settings, [key]: m }) }));
+  const sleepActions: SheetAction[] = SLEEP_CHOICES.map(({ minutes, label }) => ({
+    label,
+    hint: minutes === settings.autoSleepMinutes ? "Scelta attuale" : undefined,
+    onSelect: () => void saveSettings({ ...settings, autoSleepMinutes: minutes }).catch((e) => toast(String(e), "error")),
+  }));
 
   return (
     <>
@@ -143,6 +157,19 @@ export function SystemSettings({ settings }: { settings: Settings }) {
         </p>
       </Section>
 
+      <Section title="Risparmio energetico">
+        <Row
+          label="Sospendi il PC se inattivo"
+          hint={sleepLabel(settings.autoSleepMinutes)}
+          onClick={() => setSheet("sleep")}
+          control={<span className="setting-action">Cambia</span>}
+        />
+        <p className="setting-hint settings-note">
+          Conta anche il controller, che Windows ignora. Un minuto prima compare un avviso; durante una partita il PC resta
+          acceso.
+        </p>
+      </Section>
+
       <AnimatePresence>
         {sheet === "display" && <ActionSheet key="display" title="Risoluzione" actions={displayActions} onClose={() => setSheet(null)} />}
         {sheet === "audio" && <ActionSheet key="audio" title="Uscita audio" actions={audioActions} onClose={() => setSheet(null)} />}
@@ -151,6 +178,7 @@ export function SystemSettings({ settings }: { settings: Settings }) {
         {sheet === "idleSleepMin" && (
           <ActionSheet key="sleep" title={`${settings.idleAction === "shutdown" ? "Spegni" : "Sospendi"} il PC dopo`} actions={idleActions("idleSleepMin")} onClose={() => setSheet(null)} />
         )}
+        {sheet === "sleep" && <ActionSheet key="sleep" title="Sospensione automatica" actions={sleepActions} onClose={() => setSheet(null)} />}
       </AnimatePresence>
     </>
   );

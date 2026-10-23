@@ -1,11 +1,12 @@
 import { AnimatePresence } from "motion/react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ActionSheet } from "../components/ActionSheet";
 import { AppCard } from "../components/AppCard";
 import { Cover, GameCard } from "../components/GameCard";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
+import { ensureFocus, focusElement } from "../input/focus";
 import { artUrl } from "../lib/api";
 import { formatLastPlayed, formatPlaytime, STORE_LABEL, STORES } from "../lib/format";
 import type { Collection, Game, SessionState, Store } from "../lib/types";
@@ -74,6 +75,9 @@ export function Home({ focusId }: { focusId?: string }) {
   const suspended = useApp((s) => s.suspended);
   const resumeSuspended = useApp((s) => s.resumeSuspended);
   const closeSuspended = useApp((s) => s.closeSuspended);
+  // The PC just woke up with a game still running.
+  const wokeGame = useApp((s) => (s.wokeAt && s.session ? s.games.find((g) => g.id === s.session?.gameId) : undefined));
+  const resumeAfterWake = useApp((s) => s.resumeAfterWake);
   const rows = useMemo(() => buildRows(games, collections), [games, collections]);
   // Frozen games (Quick Resume), with their sessions.
   const paused = useMemo(() => pausedGames(games, suspended), [games, suspended]);
@@ -82,22 +86,51 @@ export function Home({ focusId }: { focusId?: string }) {
   const [onPausedRow, setOnPausedRow] = useState(false);
   // …or on the apps row, where A opens the app.
   const [onAppsRow, setOnAppsRow] = useState(false);
+  // The focus sits on the "Bentornato" card: X resumes the game left open.
+  const [onWakeRow, setOnWakeRow] = useState(false);
+  const wakeResume = useRef<HTMLButtonElement>(null);
+  const wokeId = wokeGame?.id;
 
   useScreenFocus(focusId, rows.length > 0 || paused.length > 0);
   useHints(
-    [
-      { button: "A", label: onPausedRow ? "Opzioni" : onAppsRow ? "Apri" : "Dettagli" },
-      { button: "X", label: onAppsRow ? "Dettagli" : "Gioca" },
-      { button: "Y", label: onAppsRow ? "Preferita" : "Preferito" },
-    ],
-    [onPausedRow, onAppsRow],
+    onWakeRow
+      ? [
+          { button: "A", label: "Seleziona" },
+          { button: "X", label: "Riprendi" },
+        ]
+      : [
+          { button: "A", label: onPausedRow ? "Opzioni" : onAppsRow ? "Apri" : "Dettagli" },
+          { button: "X", label: onAppsRow ? "Dettagli" : "Gioca" },
+          { button: "Y", label: onAppsRow ? "Preferita" : "Preferito" },
+        ],
+    [onPausedRow, onAppsRow, onWakeRow],
   );
+
+  // The card comes and goes while Home is up (a wake, the game ending):
+  // the focus goes to "Riprendi la partita", and back to the rows after.
+  const shownWake = useRef(wokeId);
+  useEffect(() => {
+    // On mount the screen's own focus (useScreenFocus) stands.
+    if (shownWake.current === wokeId) return;
+    shownWake.current = wokeId;
+    requestAnimationFrame(() => {
+      if (wokeId && wakeResume.current?.isConnected) focusElement(wakeResume.current);
+      else ensureFocus();
+    });
+  }, [wokeId]);
+  const onFocusWake = useCallback(() => {
+    if (wokeId) setBackdrop(wokeId);
+    setOnWakeRow(true);
+    setOnPausedRow(false);
+    setOnAppsRow(false);
+  }, [wokeId, setBackdrop]);
 
   const onFocus = useCallback(
     (g: Game) => {
       setBackdrop(g.id);
       setOnPausedRow(false);
       setOnAppsRow(false);
+      setOnWakeRow(false);
     },
     [setBackdrop],
   );
@@ -106,6 +139,7 @@ export function Home({ focusId }: { focusId?: string }) {
       setBackdrop(g.id);
       setOnPausedRow(true);
       setOnAppsRow(false);
+      setOnWakeRow(false);
     },
     [setBackdrop],
   );
@@ -114,6 +148,7 @@ export function Home({ focusId }: { focusId?: string }) {
       setBackdrop(g.id);
       setOnPausedRow(false);
       setOnAppsRow(true);
+      setOnWakeRow(false);
     },
     [setBackdrop],
   );
@@ -124,6 +159,14 @@ export function Home({ focusId }: { focusId?: string }) {
 
   useAction((action, repeat) => {
     if (repeat || !featured || sheet) return;
+    if (onWakeRow && wokeGame) {
+      // The buttons speak for the game left open, not for the last card.
+      if (action === "x") {
+        void resumeAfterWake();
+        return true;
+      }
+      if (action === "y") return true;
+    }
     if (action === "x") {
       if (onAppsRow) open({ name: "detail", gameId: featured.id });
       else void launch(featured.id);
@@ -141,6 +184,36 @@ export function Home({ focusId }: { focusId?: string }) {
     <div className="screen home">
       <section className="home-hero">{featured && <FeaturedInfo game={featured} />}</section>
       <div className="rows">
+        {wokeGame && (
+          <section className="row wake-row" data-nav-group="row:wake">
+            <h2 className="row-title">Bentornato</h2>
+            <div className="wake-card">
+              <div className="wake-cover">
+                <Cover game={wokeGame} />
+              </div>
+              <div className="wake-info">
+                <span className="wake-title">{wokeGame.name}</span>
+                <span className="wake-text">La partita è rimasta aperta durante la sospensione</span>
+              </div>
+              <div className="wake-actions">
+                <button
+                  ref={wakeResume}
+                  type="button"
+                  className="btn btn-primary"
+                  data-nav
+                  data-nav-autofocus
+                  onFocus={onFocusWake}
+                  onClick={() => void resumeAfterWake()}
+                >
+                  Riprendi la partita
+                </button>
+                <button type="button" className="btn" data-nav onFocus={onFocusWake} onClick={() => useApp.setState({ wokeAt: null })}>
+                  Resta qui
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
         {paused.length > 0 && (
           <section className="row" data-nav-group="row:paused">
             <h2 className="row-title">
@@ -156,7 +229,7 @@ export function Home({ focusId }: { focusId?: string }) {
                   onFocus={onFocusPaused}
                   onSelect={onSelectPaused}
                   paused
-                  autofocus={i === 0}
+                  autofocus={!wokeGame && i === 0}
                 />
               ))}
             </div>
@@ -178,7 +251,7 @@ export function Home({ focusId }: { focusId?: string }) {
                     onFocus={onFocusApp}
                     onSelect={onSelectApp}
                     running={sessionGame === g.id}
-                    autofocus={!paused.length && rowIndex === 0 && i === 0}
+                    autofocus={!wokeGame && !paused.length && rowIndex === 0 && i === 0}
                   />
                 ) : (
                   <GameCard
@@ -189,7 +262,7 @@ export function Home({ focusId }: { focusId?: string }) {
                     onSelect={onSelect}
                     playing={sessionGame === g.id}
                     paused={suspended.some((p) => p.gameId === g.id)}
-                    autofocus={!paused.length && rowIndex === 0 && i === 0}
+                    autofocus={!wokeGame && !paused.length && rowIndex === 0 && i === 0}
                   />
                 ),
               )}

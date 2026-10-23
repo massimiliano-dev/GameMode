@@ -6,6 +6,7 @@ import { HintBar, Toasts, TopBar } from "./components/Chrome";
 import { LaunchOverlay } from "./components/LaunchOverlay";
 import { PowerCountdown } from "./components/PowerCountdown";
 import { Screensaver } from "./components/Screensaver";
+import { SleepNotice } from "./components/SleepNotice";
 import { VirtualKeyboard } from "./components/VirtualKeyboard";
 import { Priority, setKeyboardOpener, useAction } from "./input/dispatcher";
 import { play } from "./input/sfx";
@@ -123,6 +124,7 @@ export default function App() {
       <Toasts />
       <PowerCountdown />
       <Screensaver />
+      <SleepNotice />
     </div>
   );
 }

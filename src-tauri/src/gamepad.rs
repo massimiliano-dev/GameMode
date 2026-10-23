@@ -49,6 +49,43 @@ pub fn controllers() -> Vec<Controller> {
     CONTROLLERS.lock().unwrap().clone()
 }
 
+/// Unix seconds of the last controller activity (buttons, sticks or
+/// triggers moved); 0 before any. Windows doesn't count the pad as input,
+/// so the idle timer asks here.
+static LAST_INPUT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+pub fn last_input() -> i64 {
+    LAST_INPUT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn note_input() {
+    LAST_INPUT.store(crate::model::now(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// What the idle timer looks at on one controller.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct PadSnapshot {
+    pub buttons: u16,
+    pub sticks: [i16; 4],
+    pub triggers: [u8; 2],
+}
+
+/// How far a stick axis or a trigger has to travel from where it last
+/// counted as activity: drift and noise (even a worn stick resting near
+/// any given value) never get there, a real push always does.
+const STICK_TRAVEL: i32 = 4_096;
+const TRIGGER_TRAVEL: i32 = 32;
+
+impl PadSnapshot {
+    /// Someone touched the controller since `before` (the last state that
+    /// counted as activity): a button changed or an axis travelled far enough.
+    pub fn moved_from(&self, before: &PadSnapshot) -> bool {
+        self.buttons != before.buttons
+            || self.sticks.iter().zip(before.sticks).any(|(a, b)| (i32::from(*a) - i32::from(b)).abs() >= STICK_TRAVEL)
+            || self.triggers.iter().zip(before.triggers).any(|(a, b)| (i32::from(*a) - i32::from(b)).abs() >= TRIGGER_TRAVEL)
+    }
+}
+
 /// Starts the polling thread. Returns false when no native backend exists on
 /// this platform, so the frontend falls back to the Gamepad API.
 pub fn start(app: AppHandle) -> bool {
@@ -277,6 +314,8 @@ mod xinput {
             let mut wand_fired = false;
             let mut wand_checked = Instant::now();
             let mut haptics = crate::haptics::PulseQueue::default();
+            // Per slot, the state that last counted as activity.
+            let mut last_motion = [None::<super::PadSnapshot>; 4];
 
             loop {
                 let now = Instant::now();
@@ -293,6 +332,25 @@ mod xinput {
                     if connected[slot] {
                         buttons |= read_buttons(&state);
                         dpad |= state.Gamepad.wButtons.0 as u32 & (DPAD_UP | DPAD_DOWN);
+                        let pad = &state.Gamepad;
+                        let snap = super::PadSnapshot {
+                            buttons: pad.wButtons.0,
+                            sticks: [pad.sThumbLX, pad.sThumbLY, pad.sThumbRX, pad.sThumbRY],
+                            triggers: [pad.bLeftTrigger, pad.bRightTrigger],
+                        };
+                        // A pad turning on or off (auto power-off, flat battery)
+                        // is not someone playing: only changes on a pad that
+                        // was already there count.
+                        match last_motion[slot] {
+                            Some(before) if snap.moved_from(&before) => {
+                                last_motion[slot] = Some(snap);
+                                super::note_input();
+                            }
+                            Some(_) => {}
+                            None => last_motion[slot] = Some(snap),
+                        }
+                    } else {
+                        last_motion[slot] = None;
                     }
                 }
                 // Windows doesn't count controllers as activity: GameMode does.
@@ -548,6 +606,21 @@ mod xinput {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn stick_drift_is_not_activity() {
+        let pad = |buttons, sticks, triggers| PadSnapshot { buttons, sticks, triggers };
+        let rest = pad(0, [0, 0, 0, 0], [0, 0]);
+        assert!(!pad(0, [900, -700, 300, 0], [10, 0]).moved_from(&rest));
+        // A worn stick resting anywhere, with noise around it.
+        let worn = pad(0, [2_040, 0, 0, 0], [0, 0]);
+        assert!(!pad(0, [2_070, 0, 0, 0], [0, 0]).moved_from(&worn));
+        assert!(!pad(0, [2_010, 30, -30, 0], [0, 0]).moved_from(&worn));
+        // Real input.
+        assert!(pad(0, [20_000, 0, 0, 0], [0, 0]).moved_from(&rest));
+        assert!(pad(0, [0, 0, 0, 0], [200, 0]).moved_from(&rest));
+        assert!(pad(0x1000, [0, 0, 0, 0], [0, 0]).moved_from(&rest));
+    }
 
     #[test]
     fn repeats_only_repeatable_buttons_after_delay() {

@@ -75,8 +75,11 @@ pub fn teardown(app: &AppHandle, reason: Reason) {
     match reason {
         Reason::Quit => {
             crate::display::reset_mode();
-            // In console mode there is no desktop until Explorer runs.
-            crate::shell::start_explorer();
+            // In console mode there is no desktop until Explorer runs;
+            // unless Windows is signing out and taking the desktop down.
+            if !crate::lifecycle::session_ending() {
+                crate::shell::start_explorer();
+            }
         }
         Reason::Restart => crate::display::reset_mode(),
         Reason::Session => {

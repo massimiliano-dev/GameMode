@@ -53,7 +53,8 @@ mod imp {
     use windows::core::BOOL;
     use windows::Win32::Foundation::{HWND, LPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, FindWindowW, GetClassNameW, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOWNA,
+        EnumWindows, FindWindowW, GetClassNameW, GetSystemMetrics, IsWindowVisible, ShowWindow, SM_SHUTTINGDOWN,
+        SW_HIDE, SW_SHOWNA,
     };
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
     use winreg::{RegKey, HKEY};
@@ -204,6 +205,10 @@ mod imp {
         }
         // A clean exit to the desktop already started Explorer.
         std::thread::sleep(std::time::Duration::from_millis(500));
+        // GameMode died because the user is signing out: no desktop to open.
+        if unsafe { GetSystemMetrics(SM_SHUTTINGDOWN) } != 0 {
+            return;
+        }
         start_explorer();
     }
 
@@ -376,6 +381,12 @@ pub fn keep_desktop_hidden(app: tauri::AppHandle) {
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
             if DESKTOP_WANTED.load(std::sync::atomic::Ordering::SeqCst) || !status().active {
+                empty_for = 0;
+                continue;
+            }
+            // Behind the lock screen (or asleep) nothing is in front by
+            // design: no pulling GameMode over it.
+            if crate::lifecycle::locked() || crate::lifecycle::suspended() {
                 empty_for = 0;
                 continue;
             }

@@ -24,7 +24,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::model::{now, Game, LaunchSpec, Session, Store};
 use crate::updates::GameUpdate;
-use crate::{freeze, live, window, AppState};
+use crate::{freeze, lifecycle, live, window, AppState};
 
 const POLL: Duration = Duration::from_secs(2);
 /// How long a store client may take before the game process shows up
@@ -223,7 +223,7 @@ impl Launcher {
         self.sessions.lock().unwrap().retain(|a| a.generation != generation);
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.sessions.lock().unwrap().is_empty()
     }
 
@@ -236,6 +236,34 @@ impl Launcher {
     /// another session (a launcher app whose folder holds a frozen game).
     fn frozen_elsewhere(&self, generation: u64) -> Vec<u32> {
         self.sessions.lock().unwrap().iter().filter(|a| a.generation != generation).flat_map(|a| a.frozen.iter().copied()).collect()
+    }
+
+    /// Takes `secs` (the PC was asleep) out of the play time of every game
+    /// that was running; frozen ones don't count time anyway. Returns the
+    /// sessions touched, with their play time refreshed.
+    fn add_pause(&self, secs: u64, at: i64) -> Vec<(u64, SessionState)> {
+        let mut guard = self.sessions.lock().unwrap();
+        guard
+            .iter_mut()
+            .filter(|a| a.state.phase != Phase::Suspended && a.running_since.is_some())
+            .map(|a| {
+                a.paused_secs += secs;
+                a.state.seconds = a.played(at);
+                (a.generation, a.state.clone())
+            })
+            .collect()
+    }
+}
+
+/// Back from sleep after `slept` seconds: that wasn't play time.
+pub fn after_sleep(app: &AppHandle, slept: u64) {
+    if slept == 0 {
+        return;
+    }
+    let launcher = &app.state::<AppState>().launcher;
+    for (generation, state) in launcher.add_pause(slept, now()) {
+        heartbeat(launcher, generation);
+        let _ = app.emit("game://state", &state);
     }
 }
 
@@ -507,10 +535,26 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
     let mut update: Option<GameUpdate> = None;
     let mut relaunch_at: Option<Instant> = None;
     let mut dialogs = Dialogs::new();
+    // Windows doesn't count controller input: this thread keeps the PC up
+    // while the game is starting or running (not while frozen), and not
+    // after an unattended wake until the user shows up, so Windows can put
+    // a PC woken by a timer back to sleep.
+    let mut awake = lifecycle::Awake::default();
+    let mut wakes = lifecycle::wakes();
 
     loop {
         // A newer launch took over, or the session was closed.
         let Some(phase) = launcher.phase(generation) else { return };
+        awake.set(phase != Phase::Suspended && lifecycle::user_present());
+        // Back from sleep: clocks jumped, the game (if still there) gets a
+        // fresh grace period instead of being written off at once.
+        let woke = lifecycle::wakes();
+        if woke != wakes {
+            wakes = woke;
+            last_seen = Instant::now();
+            waiting_since = Instant::now();
+            window_gone = None;
+        }
         sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
         probe.retain_alive(sys.processes());
         let mut pids = game_pids(&sys, &mut probe, &target);
@@ -1157,6 +1201,24 @@ mod tests {
         assert_eq!(record.played(), 240);
         a.running_since = None;
         assert!(a.live_record(1900).is_none());
+    }
+
+    #[test]
+    fn sleep_is_not_play_time() {
+        let launcher = Launcher::default();
+        let mut frozen = active(Phase::Suspended);
+        frozen.generation = 2;
+        frozen.state.game_id = "steam:2".into();
+        frozen.state.suspended_at = Some(1200);
+        launcher.insert(frozen);
+        launcher.insert(active(Phase::Running));
+        // Running since 1000 with 60 s paused: at 2000 that's 940 s, minus 500 s asleep.
+        let touched = launcher.add_pause(500, 2000);
+        assert_eq!(touched.len(), 1);
+        assert_eq!(touched[0].1.seconds, 440);
+        assert_eq!(launcher.current().map(|s| s.seconds), Some(440));
+        // The frozen one stays frozen and untouched.
+        assert_eq!(launcher.suspended()[0].seconds, 0);
     }
 
     #[test]
