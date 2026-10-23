@@ -2,7 +2,8 @@
 //! uninstall dialogs, the Xbox app…). During a hand-off, holding View brings
 //! GameMode back. For windows that don't understand a controller the
 //! controller also types keys: A = Enter, B = Esc, D-pad = arrows,
-//! LB/RB = Shift+Tab/Tab, X = Space, and a short View press goes back.
+//! LB/RB = Shift+Tab/Tab, X = Space, Y = on-screen keyboard (`keyboard`),
+//! and a short View press goes back.
 //! Never active while a game runs, so keys are never typed into a game.
 
 // Driven from the XInput thread, which only exists on Windows.
@@ -61,6 +62,7 @@ pub enum Key {
     Tab,
     ShiftTab,
     Space,
+    Backspace,
     /// Wand's overlay shortcuts.
     AltW,
     AltBacktick,
@@ -70,8 +72,8 @@ pub enum Key {
 #[cfg(windows)]
 pub fn press(key: Key) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_DOWN,
-        VK_ESCAPE, VK_LEFT, VK_MENU, VK_OEM_3, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP, VK_W,
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_BACK,
+        VK_DOWN, VK_ESCAPE, VK_LEFT, VK_MENU, VK_OEM_3, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP, VK_W,
     };
 
     fn input(vk: VIRTUAL_KEY, up: bool) -> INPUT {
@@ -98,6 +100,7 @@ pub fn press(key: Key) {
         Key::Right => VK_RIGHT,
         Key::Tab | Key::ShiftTab => VK_TAB,
         Key::Space => VK_SPACE,
+        Key::Backspace => VK_BACK,
         Key::AltW => VK_W,
         Key::AltBacktick => VK_OEM_3,
     };
@@ -123,4 +126,45 @@ pub fn press(key: Key) {
 #[cfg(not(windows))]
 pub fn press(key: Key) {
     let _ = key;
+}
+
+/// Types `text` into whatever window has focus, as Unicode characters
+/// (VK_PACKET): text fields and chat boxes take them like keystrokes, which
+/// is what the on-screen keyboard needs. Games polling key states don't see
+/// letters this way, and some anti-cheats drop injected input: both are
+/// out of reach without a keyboard driver.
+#[cfg(windows)]
+pub fn type_text(text: &str) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY,
+    };
+
+    let inputs: Vec<INPUT> = text
+        .encode_utf16()
+        .flat_map(|unit| {
+            [false, true].map(|up| INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VIRTUAL_KEY(0),
+                        wScan: unit,
+                        dwFlags: if up { KEYEVENTF_UNICODE | KEYEVENTF_KEYUP } else { KEYEVENTF_UNICODE },
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            })
+        })
+        .collect();
+    if inputs.is_empty() {
+        return;
+    }
+    unsafe {
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn type_text(text: &str) {
+    let _ = text;
 }

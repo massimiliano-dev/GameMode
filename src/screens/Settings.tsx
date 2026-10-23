@@ -218,9 +218,15 @@ export function Settings() {
               />
               <Row
                 label="Controller nelle finestre degli store"
-                hint="Nei dialoghi di installazione e disinstallazione: A = Invio, B = Esc, croce = frecce, LB/RB = Tab, ⧉ torna a GameMode"
+                hint="Nei dialoghi di installazione e disinstallazione: A = Invio, B = Esc, croce = frecce, LB/RB = Tab, Y = tastiera, ⧉ torna a GameMode"
                 onClick={() => void saveSettings({ ...settings, keyboardAssist: !settings.keyboardAssist })}
                 control={<Toggle on={settings.keyboardAssist} />}
+              />
+              <Row
+                label="Tastiera a schermo automatica"
+                hint="Nelle finestre degli store la tastiera compare da sola quando un campo di testo ha il focus; con Y si apre comunque"
+                onClick={() => void saveSettings({ ...settings, keyboardAuto: !settings.keyboardAuto })}
+                control={<Toggle on={settings.keyboardAuto} />}
               />
             </Section>
             <WandSettings />

@@ -29,6 +29,7 @@ import type {
   Store,
   SteamExtras,
   Storefront,
+  TypedKey,
   UpdateInfo,
   UninstallOutcome,
   Volume,
@@ -124,6 +125,10 @@ export const api = {
   removeCollection: (id: string) => call<void>("remove_collection", { id }),
   setInCollection: (collectionId: string, gameId: string, value: boolean) =>
     call<Collection[]>("set_in_collection", { collectionId, gameId, value }),
+  overlayKeyboard: () => call<void>("overlay_keyboard"),
+  keyboardHide: () => call<void>("keyboard_hide"),
+  typeText: (text: string) => call<void>("type_text", { text }),
+  typeKey: (key: TypedKey) => call<void>("type_key", { key }),
 };
 
 /** Like `on`, but only for events sent to this window (controller input). */

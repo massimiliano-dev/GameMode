@@ -233,6 +233,9 @@ pub struct Settings {
     pub wand_combo: bool,
     /// Freeze the game while Wand has the screen.
     pub wand_pause: bool,
+    /// The on-screen keyboard opens by itself when a text field takes the
+    /// focus in a store window during a hand-off.
+    pub keyboard_auto: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -266,6 +269,7 @@ impl Default for Settings {
             wand_backtick: false,
             wand_combo: false,
             wand_pause: true,
+            keyboard_auto: true,
         }
     }
 }

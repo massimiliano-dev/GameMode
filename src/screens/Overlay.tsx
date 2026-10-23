@@ -133,6 +133,7 @@ export function OverlayApp() {
               <QmButton onClick={() => void api.openWand()}>Overlay di Wand</QmButton>
             </>
           )}
+          <QmButton onClick={() => void api.overlayKeyboard()}>Tastiera</QmButton>
           <QmButton onClick={() => void api.overlayToLauncher()}>Vai a GameMode</QmButton>
           {session?.phase === "running" && (
             <QmButton armed={suspendArmed} confirmText="Non consigliato per i giochi online · premi di nuovo" onClick={suspend}>

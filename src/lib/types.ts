@@ -44,6 +44,8 @@ export interface Settings {
   wandCombo: boolean;
   /** Freeze the game while Wand has the screen. */
   wandPause: boolean;
+  /** The system keyboard opens by itself on text fields in store windows. */
+  keyboardAuto: boolean;
 }
 
 export interface ShellStatus {
@@ -296,3 +298,6 @@ export interface Catalog {
 export type UninstallOutcome = "started" | "removed";
 
 export type PowerAction = "shutdown" | "restart" | "sleep";
+
+/** Keys the system keyboard sends besides text. */
+export type TypedKey = "enter" | "backspace" | "escape" | "tab" | "space";

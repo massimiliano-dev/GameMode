@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 
 import { Priority, useAction } from "../input/dispatcher";
 import { play } from "../input/sfx";
+import { api } from "../lib/api";
 import { Glyph, useScreenFocus } from "./common";
 
 const LETTERS = [
@@ -27,33 +28,48 @@ function setFieldValue(field: HTMLInputElement, value: string) {
 }
 
 interface Props {
-  field: HTMLInputElement;
+  /** The field typed into; without one, keystrokes go to whatever window
+   * has the focus (the system keyboard window). */
+  field?: HTMLInputElement;
+  /** Remote mode: the preview shows dots (a password field). */
+  masked?: boolean;
   onClose: () => void;
 }
 
-/** On-screen keyboard bound to a text field, for typing with a controller. */
-export function VirtualKeyboard({ field, onClose }: Props) {
-  const [value, setValue] = useState(field.value);
+/** On-screen keyboard for typing with a controller: into a text field of
+ * the launcher, or (without a field) into the focused window of another app. */
+export function VirtualKeyboard({ field, masked, onClose }: Props) {
+  const [value, setValue] = useState(field?.value ?? "");
   const [shift, setShift] = useState(false);
   const [symbols, setSymbols] = useState(false);
-  const label = field.getAttribute("aria-label") ?? field.placeholder ?? "Testo";
+  const label = field ? (field.getAttribute("aria-label") ?? field.placeholder ?? "Testo") : "Tastiera";
 
   useScreenFocus();
-  useEffect(() => setFieldValue(field, value), [field, value]);
+  useEffect(() => {
+    if (field) setFieldValue(field, value);
+  }, [field, value]);
 
   const type = (text: string) => {
     setValue((v) => v + text);
+    if (!field) void api.typeText(text);
     if (shift) setShift(false);
   };
-  const erase = () => setValue((v) => v.slice(0, -1));
+  const erase = () => {
+    setValue((v) => v.slice(0, -1));
+    if (!field) void api.typeKey("backspace");
+  };
   const close = () => {
     onClose();
-    requestAnimationFrame(() => field.focus({ preventScroll: true }));
+    if (field) requestAnimationFrame(() => field.focus({ preventScroll: true }));
   };
   const done = () => {
     close();
-    // Screens save on Enter (e.g. API key fields).
-    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    if (field) {
+      // Screens save on Enter (e.g. API key fields).
+      field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    } else {
+      void api.typeKey("enter");
+    }
   };
 
   useAction((action, repeat) => {
@@ -90,7 +106,8 @@ export function VirtualKeyboard({ field, onClose }: Props) {
   }, Priority.BLOCKING);
 
   const rows = symbols ? SYMBOLS : LETTERS;
-  const masked = field.type === "password" ? "•".repeat(value.length) : value;
+  const hidden = field ? field.type === "password" : masked;
+  const shown = hidden ? "•".repeat(value.length) : value;
 
   return (
     <motion.div
@@ -109,7 +126,7 @@ export function VirtualKeyboard({ field, onClose }: Props) {
         <div className="osk-preview">
           <span className="osk-label">{label}</span>
           <span className="osk-text">
-            {masked}
+            {shown}
             <span className="osk-caret" />
           </span>
         </div>
@@ -147,7 +164,7 @@ export function VirtualKeyboard({ field, onClose }: Props) {
               ⌫
             </button>
             <button type="button" className="osk-key osk-wide osk-done" data-nav onClick={done}>
-              Fatto
+              {field ? "Fatto" : "Invio"}
             </button>
           </div>
         </div>
@@ -156,7 +173,7 @@ export function VirtualKeyboard({ field, onClose }: Props) {
           <span className="hint"><Glyph button="Y" /> Spazio</span>
           <span className="hint"><Glyph button="LT" /> Maiuscole</span>
           <span className="hint"><Glyph button="RT" /> Simboli</span>
-          <span className="hint"><Glyph button="menu" /> Fatto</span>
+          <span className="hint"><Glyph button="menu" /> {field ? "Fatto" : "Invio"}</span>
           <span className="hint"><Glyph button="B" /> Chiudi</span>
         </div>
       </motion.div>
