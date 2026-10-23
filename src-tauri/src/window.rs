@@ -96,6 +96,37 @@ pub fn force_foreground_raw(raw: isize) {
     let _ = raw;
 }
 
+/// Background tools started with Windows whose own windows jump over
+/// whatever is on screen (update notices, tips): RivaTuner Statistics
+/// Server and MSI Afterburner. Their in-game OSD isn't a window: untouched.
+#[cfg_attr(not(windows), allow(dead_code))]
+const PUSHY_TOOLS: &[&str] = &["rtss.exe", "msiafterburner.exe"];
+
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn is_pushy_tool(process: &str) -> bool {
+    PUSHY_TOOLS.contains(&process.to_ascii_lowercase().as_str())
+}
+
+/// The foreground window, as a raw handle (0 when there is none).
+pub fn foreground_raw() -> isize {
+    #[cfg(windows)]
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
+    }
+    #[cfg(not(windows))]
+    0
+}
+
+/// A pushy background tool's window has the foreground.
+pub fn pushy_tool_in_front() -> bool {
+    #[cfg(windows)]
+    {
+        foreground_process_name().is_some_and(|name| is_pushy_tool(&name))
+    }
+    #[cfg(not(windows))]
+    false
+}
+
 /// Executable name (lowercase, e.g. "steam.exe") of the foreground window's process.
 #[cfg(windows)]
 pub fn foreground_process_name() -> Option<String> {
@@ -443,5 +474,18 @@ pub(crate) mod win {
             let _ = EnumWindows(Some(visit), LPARAM(&mut search as *mut Search as isize));
         }
         search.found
+    }
+}
+
+#[cfg(test)]
+mod pushy_tests {
+    use super::is_pushy_tool;
+
+    #[test]
+    fn recognizes_rivatuner_and_afterburner_only() {
+        assert!(is_pushy_tool("RTSS.exe"));
+        assert!(is_pushy_tool("msiafterburner.exe"));
+        assert!(!is_pushy_tool("rtsshooksloader64.exe"));
+        assert!(!is_pushy_tool("steam.exe"));
     }
 }

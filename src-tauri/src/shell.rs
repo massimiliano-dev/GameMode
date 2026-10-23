@@ -482,6 +482,8 @@ static DESKTOP_WANTED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 pub fn keep_desktop_hidden(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut empty_for = 0;
+        // The last window in front that wasn't a pushy background tool.
+        let mut last_good: isize = 0;
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
             if DESKTOP_WANTED.load(std::sync::atomic::Ordering::SeqCst) || !status().active {
@@ -497,6 +499,7 @@ pub fn keep_desktop_hidden(app: tauri::AppHandle) {
             if imp::explorer_running() {
                 imp::hide_desktop();
             }
+            give_back_from_tools(&app, &mut last_good);
             empty_for = if crate::window::nothing_in_front() { empty_for + 1 } else { 0 };
             if empty_for >= BLACK_SCREEN_SECS {
                 empty_for = 0;
@@ -508,6 +511,31 @@ pub fn keep_desktop_hidden(app: tauri::AppHandle) {
 
 /// Seconds of an empty screen before GameMode comes back by itself.
 const BLACK_SCREEN_SECS: u32 = 3;
+
+/// RivaTuner and Afterburner start with Windows and their update notices
+/// jump in front when games start or close. The focus goes back to the
+/// window that had it: GameMode, the game, or a store window of a launch.
+/// Not while the user is in an app started from GameMode (it may be one of
+/// those tools) or in the overlay (it keeps its own focus).
+fn give_back_from_tools(app: &tauri::AppHandle, last_good: &mut isize) {
+    use tauri::Manager;
+    if !crate::window::pushy_tool_in_front() {
+        let now = crate::window::foreground_raw();
+        if now != 0 {
+            *last_good = now;
+        }
+        return;
+    }
+    let in_app = app.state::<crate::AppState>().launcher.current().is_some_and(|s| s.game_id.starts_with("app:"));
+    if in_app || crate::overlay::is_open() {
+        return;
+    }
+    if *last_good != 0 && crate::window::window_alive(*last_good) {
+        crate::window::force_foreground_raw(*last_good);
+    } else {
+        crate::window::bring_to_front(app);
+    }
+}
 
 /// GameMode is back in front: in console mode, the desktop goes away again.
 pub fn console_in_front() {
