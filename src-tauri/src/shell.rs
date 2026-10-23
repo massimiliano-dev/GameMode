@@ -754,6 +754,12 @@ pub fn set_enabled(enabled: bool) -> Result<ShellStatus> {
     Ok(status())
 }
 
+/// Cheap early guess, before `status()` settles it (no flags consumed, no
+/// controller wait): GameMode is the registered shell and no Explorer runs.
+pub fn likely_shell_start() -> bool {
+    imp::enabled() && !imp::explorer_running()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

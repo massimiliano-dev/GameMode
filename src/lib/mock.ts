@@ -835,6 +835,8 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       case "companion_firewall":
         await wait(500);
         return true;
+      case "app_ready":
+        return;
       default:
         // exit_to_desktop, toggle_fullscreen, quit_app, refresh_artwork, refresh_metadata
         console.info(`[mock] ${cmd}`, args);

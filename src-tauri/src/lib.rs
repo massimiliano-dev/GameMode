@@ -32,6 +32,7 @@ mod procinfo;
 mod saves;
 mod shell;
 mod shutdown;
+mod splash;
 #[cfg(windows)]
 mod sqlite;
 mod status;
@@ -1078,6 +1079,14 @@ async fn companion_firewall() -> CmdResult<bool> {
     blocking(companion::firewall_allow).await
 }
 
+/// The launcher painted its first screen: show it, drop the splash.
+#[tauri::command]
+fn app_ready(app: AppHandle, window: tauri::WebviewWindow) {
+    if window.label() == "main" {
+        splash::ready(&app);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // The console-mode watchdog is this same executable with `--watchdog`.
@@ -1094,6 +1103,9 @@ pub fn run() {
         env!("CARGO_PKG_VERSION"),
         std::env::args().skip(1).collect::<Vec<_>>()
     );
+    let context = tauri::generate_context!();
+    // Before anything slow: the screen must not stay black at sign-in.
+    splash::begin(&context.config().identifier);
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // On the desktop for once, Explorer runs the `Run` entries itself,
@@ -1156,6 +1168,7 @@ pub fn run() {
                     // After an update the user was looking at GameMode.
                     if !shell::restarted_for_update() {
                         let _ = w.hide();
+                        splash::stay_hidden();
                     }
                     // The X goes back to the tray, like any tray app: a
                     // destroyed main window would leave the tray's "Apri
@@ -1179,6 +1192,8 @@ pub fn run() {
                 // foreground back: claim it again once things calm down.
                 let h = handle.clone();
                 std::thread::spawn(move || {
+                    // The window only shows once the first screen is up.
+                    splash::wait_settled();
                     for delay in [3, 8] {
                         std::thread::sleep(std::time::Duration::from_secs(delay));
                         if !window::is_foreground(&h) {
@@ -1196,7 +1211,7 @@ pub fn run() {
             }
             // Safe mode starts as little as possible besides GameMode itself.
             if !safe && app.state::<AppState>().db.lock().settings.preload_steam {
-                std::thread::spawn(launcher::preload_steam);
+                splash::after_startup(launcher::preload_steam);
             }
             overlay::create(&handle);
             media::init(&handle);
@@ -1208,7 +1223,7 @@ pub fn run() {
             lifecycle::start(&handle);
             capture::init(&handle);
             companion::sync(&handle);
-            updates::watch_packages();
+            splash::after_startup(updates::watch_packages);
             status::start(handle.clone());
             winupdate::watch(handle.clone());
             hidpad::set_enabled(app.state::<AppState>().db.lock().settings.hid_pads);
@@ -1218,8 +1233,12 @@ pub fn run() {
 
             // Games left running by a crash or an update come first; then the
             // saved library shows instantly and the fresh scan replaces it.
+            splash::watch(&handle);
             std::thread::spawn(move || {
                 launcher::reattach(&handle);
+                // The scan (and the artwork and metadata after it) waits for
+                // the first screen: the saved library is enough until then.
+                splash::wait_settled();
                 let state = handle.state::<AppState>();
                 if !state.scanning.swap(true, Ordering::SeqCst) {
                     scan(&handle);
@@ -1348,6 +1367,7 @@ pub fn run() {
             capture_notice,
             companion_status,
             companion_firewall,
+            app_ready,
         ])
         .on_window_event(|window, event| {
             // Alt+F4 on the launcher: the hidden overlay window would keep
@@ -1361,7 +1381,7 @@ pub fn run() {
                 }
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while running tauri application")
         .run(|app, event| {
             // Whatever ends GameMode (its own quit, a closed window, an

@@ -133,6 +133,8 @@ let wokeSeen = false;
 const HANDOFF_DELAY = 2200;
 /** How often to ask the stores about game updates. */
 const GAME_UPDATES_EVERY = 20_000;
+/** First check, once the first screen is up. */
+const GAME_UPDATES_DELAY = 4_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let initialized = false;
 /** The overlay window shares this store but never owns the screen stack. */
@@ -233,7 +235,8 @@ export const useApp = create<AppState>((set, get) => ({
         .catch(() => {});
     }, 20_000);
     set({ games, settings, session, loaded: games.length > 0 });
-    void get().refreshGameUpdates();
+    // Asking every store about updates is slow: not while the first screen comes up.
+    setTimeout(() => void get().refreshGameUpdates(), GAME_UPDATES_DELAY);
     setInterval(() => void get().refreshGameUpdates(), GAME_UPDATES_EVERY);
     if (games.length === 0) setTimeout(() => set({ loaded: true }), 8000);
     if (!isOverlayWindow) {
