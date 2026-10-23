@@ -167,7 +167,8 @@ export const useApp = create<AppState>((set, get) => ({
     });
     on<SystemInfo>("system://status", (info) => onSystemStatus(info, set, get));
     void api.getControllers().then((controllers) => set({ controllers })).catch(() => {});
-    void api.getSystemStatus().then((system) => set({ system })).catch(() => {});
+    // The event may land first with a fresher snapshot: never overwrite it with this one.
+    void api.getSystemStatus().then((system) => { if (!get().system) set({ system }); }).catch(() => {});
 
     const [games, settings, session, suspended, profiles, collections, shell] = await Promise.all([
       api.getLibrary(),

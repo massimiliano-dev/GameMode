@@ -193,6 +193,12 @@ mod imp {
             }
             Ok(())
         }))?;
+        // DeviceWatcher only reports additions and removals once Updated is also
+        // subscribed; a poke is enough since the snapshot re-reads CONNECTED.
+        watcher.Updated(&TypedEventHandler::<DeviceWatcher, DeviceInformationUpdate>::new(|_, _| {
+            poke();
+            Ok(())
+        }))?;
         watcher.EnumerationCompleted(&TypedEventHandler::<DeviceWatcher, IInspectable>::new(|_, _| {
             poke();
             Ok(())

@@ -36,11 +36,14 @@ export function Connections() {
   // A device connected or dropped (the top bar's counter moved): re-read the list.
   const btConnected = useApp((s) => s.system?.bluetooth.connected ?? 0);
   const btSeen = useRef(btConnected);
+  // Skipped while a scan or a pair is running: they set the list themselves, and a
+  // paired-only refresh landing after the scan would drop the discovered devices.
   useEffect(() => {
     if (btSeen.current === btConnected) return;
     btSeen.current = btConnected;
+    if (discovering || busy) return;
     if (radios?.bluetooth) void api.bluetoothDevices(false).then(setDevices).catch(() => {});
-  }, [btConnected, radios?.bluetooth]);
+  }, [btConnected, radios?.bluetooth, discovering, busy]);
   useScreenFocus(undefined, radios !== null);
   useHints([
     { button: "A", label: "Seleziona" },
