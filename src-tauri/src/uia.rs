@@ -10,14 +10,16 @@
 /// A text field with the keyboard focus.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextField {
-    /// Bottom edge of the field, in screen pixels.
-    pub bottom: i32,
+    /// Left, top, right and bottom edges of the field, in screen pixels:
+    /// also tells one field from another.
+    pub rect: [i32; 4],
     /// A password field.
     pub password: bool,
 }
 
-/// The focused text field, if the focus is in one. Call from one dedicated
-/// thread: the UI Automation client is created there on first use.
+/// The focused text field, if the focus is in one. Never from the
+/// controller loop: the UI Automation client is created on each calling
+/// thread's first use, and the call is cross-process.
 pub fn focused_text_field() -> Option<TextField> {
     #[cfg(windows)]
     {
@@ -66,7 +68,7 @@ mod imp {
             }
             let rect = element.CurrentBoundingRectangle().ok()?;
             let password = element.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(false);
-            Some(TextField { bottom: rect.bottom, password })
+            Some(TextField { rect: [rect.left, rect.top, rect.right, rect.bottom], password })
         }
     }
 }

@@ -2240,6 +2240,12 @@ html.is-keyboard body {
   background: transparent;
 }
 
+/* The window is half the screen's height: on screens wider than 16:9 the
+   width-based scale would overflow it, so the height caps it too. */
+html.is-keyboard {
+  font-size: clamp(12px, min(1.05vw, 3.6vh), 34px);
+}
+
 /* The window is sized to the keyboard: nothing to dim behind it. */
 html.is-keyboard .osk-scrim {
   background: transparent;

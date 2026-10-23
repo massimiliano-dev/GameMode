@@ -42,6 +42,9 @@ export function VirtualKeyboard({ field, masked, onClose }: Props) {
   const [value, setValue] = useState(field?.value ?? "");
   const [shift, setShift] = useState(false);
   const [symbols, setSymbols] = useState(false);
+  // Remote mode: View shows or hides the text, for passwords UI Automation
+  // can't see (Steam's login).
+  const [hidden, setHidden] = useState(masked ?? false);
   const label = field ? (field.getAttribute("aria-label") ?? field.placeholder ?? "Testo") : "Tastiera";
 
   useScreenFocus();
@@ -94,6 +97,9 @@ export function VirtualKeyboard({ field, masked, onClose }: Props) {
       case "menu":
         if (!repeat) done();
         return true;
+      case "view":
+        if (!repeat && !field) setHidden((h) => !h);
+        return true;
       case "up":
       case "down":
       case "left":
@@ -106,8 +112,8 @@ export function VirtualKeyboard({ field, masked, onClose }: Props) {
   }, Priority.BLOCKING);
 
   const rows = symbols ? SYMBOLS : LETTERS;
-  const hidden = field ? field.type === "password" : masked;
-  const shown = hidden ? "•".repeat(value.length) : value;
+  const dots = field ? field.type === "password" : hidden;
+  const shown = dots ? "•".repeat(value.length) : value;
 
   return (
     <motion.div
@@ -174,6 +180,7 @@ export function VirtualKeyboard({ field, masked, onClose }: Props) {
           <span className="hint"><Glyph button="LT" /> Maiuscole</span>
           <span className="hint"><Glyph button="RT" /> Simboli</span>
           <span className="hint"><Glyph button="menu" /> {field ? "Fatto" : "Invio"}</span>
+          {!field && <span className="hint"><Glyph button="view" /> {hidden ? "Mostra" : "Nascondi"}</span>}
           <span className="hint"><Glyph button="B" /> Chiudi</span>
         </div>
       </motion.div>

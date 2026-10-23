@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { VirtualKeyboard } from "../components/VirtualKeyboard";
 import { focusInitial } from "../input/focus";
+import { setSoundsEnabled } from "../input/sfx";
 import { setupInput } from "../input/sources";
 import { api, on } from "../lib/api";
 
@@ -16,6 +17,11 @@ export function KeyboardApp() {
     void setupInput();
     return on<{ masked: boolean }>("keyboard://open", (e) => {
       setMasked(e.masked);
+      // The setting can change while the window lives: read it on every open.
+      api
+        .getSettings()
+        .then((s) => setSoundsEnabled(s.uiSounds))
+        .catch(() => {});
       // A fresh keyboard on every open: the preview starts empty.
       setOpenedAt(Date.now());
       requestAnimationFrame(() => focusInitial());

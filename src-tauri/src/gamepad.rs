@@ -290,12 +290,17 @@ mod xinput {
                 let typing = target.is_none() && keyboard::is_open();
                 for (bit, repeat) in repeater.step(buttons, DIRECTIONS, now) {
                     let Some(&(_, action)) = MAPPING.iter().find(|(b, _)| *b == bit) else { continue };
-                    if action == Action::Guide {
-                        summon(&app, target, true);
-                    } else if typing {
+                    // Guide closes the keyboard and keeps its meaning
+                    // underneath: leaving Wand, or summoning GameMode.
+                    if typing && action != Action::Guide {
                         let _ = app.emit_to(keyboard::LABEL, "gamepad://nav", NavEvent { action, repeat });
                     } else if wand {
+                        if typing {
+                            keyboard::hide(&app);
+                        }
                         wand_key(&app, action);
+                    } else if action == Action::Guide {
+                        summon(&app, target, true);
                     } else if let Some(label) = target {
                         let _ = app.emit_to(label, "gamepad://nav", NavEvent { action, repeat });
                     } else if assisting && assist::types_keys() {

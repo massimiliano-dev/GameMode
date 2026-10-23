@@ -388,7 +388,7 @@ fn overlay_keyboard(app: AppHandle, state: State<AppState>) {
 
 #[tauri::command]
 fn keyboard_hide(app: AppHandle) {
-    keyboard::hide(&app);
+    keyboard::dismiss(&app);
 }
 
 /// The system keyboard types into the focused window.
