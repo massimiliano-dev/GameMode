@@ -5,7 +5,7 @@ import { ensureFocus } from "../input/focus";
 import { api, on } from "../lib/api";
 import { driveOf, formatBytes, formatLastPlayed, STORE_LABEL } from "../lib/format";
 import type { Cleanup, Drive, Game, StorageOverview } from "../lib/types";
-import { useApp } from "../store/app";
+import { libraryGames, useApp } from "../store/app";
 import { ActionSheet, type SheetAction } from "./ActionSheet";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Row, Section } from "./SettingsRows";
@@ -60,7 +60,7 @@ export function StorageSettings() {
 
   const bySize = useMemo(
     () =>
-      games
+      libraryGames(games)
         .filter((g) => g.store !== "mock" || g.sizeBytes != null)
         .sort((a, b) => (b.sizeBytes ?? -1) - (a.sizeBytes ?? -1) || a.name.localeCompare(b.name, "it")),
     [games],

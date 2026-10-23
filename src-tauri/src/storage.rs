@@ -132,7 +132,8 @@ pub struct Attribution {
 pub fn attribute(drives: &mut [Drive], games: &[Game]) -> Attribution {
     let mut out = Attribution::default();
     let mut xbox = vec![0u32; drives.len()];
-    for game in games {
+    // Applications aren't games: their folders count as "other" space.
+    for game in games.iter().filter(|g| g.store != Store::App) {
         let Some(path) = location(game) else { continue };
         if game.size_bytes.is_none() {
             if game.install_dir.is_some() && game.size_checked_at.is_none() {
@@ -270,7 +271,7 @@ pub fn holds_other_games(dir: &Path, others: &[PathBuf]) -> bool {
 /// Games to measure now: a folder, and a size unknown or stale.
 fn due_games(app: &AppHandle) -> Vec<Game> {
     let ts = now();
-    app.state::<AppState>().db.lock().games.iter().filter(|g| g.install_dir.is_some() && is_due(g, ts)).cloned().collect()
+    app.state::<AppState>().db.lock().games.iter().filter(|g| g.store != Store::App && g.install_dir.is_some() && is_due(g, ts)).cloned().collect()
 }
 
 /// Measures, in a background thread, every game whose size is unknown or
@@ -383,7 +384,9 @@ pub fn cleanup(app: &AppHandle, apply: bool) -> Cleanup {
     let state = app.state::<AppState>();
     let (ids, backup_root) = {
         let data = state.db.lock();
-        let ids: HashSet<String> = data.games.iter().map(|g| crate::artwork::safe_name(&g.id)).collect();
+        let mut ids: HashSet<String> = data.games.iter().map(|g| crate::artwork::safe_name(&g.id)).collect();
+        // The applications' icons share one folder (library/apps.rs).
+        ids.insert(crate::library::apps::ICON_FOLDER.to_string());
         (ids, data.settings.backup_dir.clone().unwrap_or_else(|| state.data_dir.join("backups")))
     };
     let mut out = Cleanup { applied: apply, ..Cleanup::default() };

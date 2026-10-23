@@ -103,7 +103,8 @@ fn backup_on_exit(app: &AppHandle, game_ids: &[String]) {
     let state = app.state::<AppState>();
     let (enabled, games, root) = {
         let data = state.db.lock();
-        let games: Vec<_> = game_ids.iter().filter_map(|id| data.game(id).cloned()).collect();
+        // Applications have no saves.
+        let games: Vec<_> = game_ids.iter().filter_map(|id| data.game(id).cloned()).filter(|g| g.store != crate::model::Store::App).collect();
         let root = data.settings.backup_dir.clone().unwrap_or_else(|| state.data_dir.join("backups"));
         (data.settings.backup_on_exit, games, root)
     };

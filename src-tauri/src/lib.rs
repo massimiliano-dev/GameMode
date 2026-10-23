@@ -820,7 +820,8 @@ async fn backup_all(app: AppHandle) -> CmdResult<BackupAll> {
     let (data_dir, root) = (state.data_dir.clone(), backup_root(&state));
     blocking(move || {
         let mut out = BackupAll { saved: 0, skipped: 0 };
-        for game in &games {
+        // Applications have no saves.
+        for game in games.iter().filter(|g| g.store != model::Store::App) {
             match saves::backup(&data_dir, &root, game, false) {
                 Ok(_) => out.saved += 1,
                 Err(_) => out.skipped += 1,

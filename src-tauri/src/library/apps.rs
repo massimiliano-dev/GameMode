@@ -37,8 +37,11 @@ impl LibraryProvider for AppsProvider {
 
 /// The icon cache, inside the artwork folder the asset protocol may serve.
 pub fn icon_dir(data_dir: &Path) -> PathBuf {
-    data_dir.join("artwork").join("app")
+    data_dir.join("artwork").join(ICON_FOLDER)
 }
+
+/// The folder under `artwork` that holds every application's icon.
+pub const ICON_FOLDER: &str = "app";
 
 /// One entry of the Apps folder, before it becomes a `Game`.
 #[derive(Debug, Clone, PartialEq, Default)]
