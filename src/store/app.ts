@@ -18,10 +18,10 @@ import type {
   UpdateInfo,
 } from "../lib/types";
 
-export type Tab = "home" | "library" | "downloads" | "stores" | "stats" | "settings";
+export type Tab = "home" | "library" | "apps" | "downloads" | "stores" | "stats" | "settings";
 export type Screen = { name: Tab } | { name: "detail"; gameId: string } | { name: "search" } | { name: "connections" };
 
-const TABS: Tab[] = ["home", "library", "downloads", "stores", "stats", "settings"];
+const TABS: Tab[] = ["home", "library", "apps", "downloads", "stores", "stats", "settings"];
 
 interface Entry {
   screen: Screen;
@@ -210,7 +210,7 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const update = await api.rescan();
       set({ games: update.games, scanErrors: update.errors, loaded: true });
-      get().toast(`Libreria aggiornata: ${update.games.length} giochi`);
+      get().toast(`Libreria aggiornata: ${libraryGames(update.games).length} giochi`);
     } catch (e) {
       get().toast(String(e), "error");
     } finally {
@@ -572,3 +572,6 @@ export const activeProfileOf = (s: AppState) => s.profiles.find((p) => p.id === 
 
 export const currentScreen = (s: AppState) => s.stack.at(-1)!;
 export const visibleGames = (games: Game[]) => games.filter((g) => !g.hidden);
+/** The games proper: applications have their own screen. */
+export const libraryGames = (games: Game[]) => games.filter((g) => g.store !== "app");
+export const isApp = (game: Game) => game.store === "app";

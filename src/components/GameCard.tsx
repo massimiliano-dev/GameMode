@@ -60,7 +60,9 @@ export function Cover({ game }: { game: Game }) {
       </span>
     );
   }
+  // App icons are square: shown whole, never cropped to the poster shape.
+  const icon = game.store === "app" ? " cover-icon" : "";
   return (
-    <img className="cover" src={src} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} />
+    <img className={`cover${icon}`} src={src} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} />
   );
 }

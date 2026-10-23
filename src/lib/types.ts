@@ -1,4 +1,4 @@
-export type Store = "steam" | "xbox" | "epic" | "gog" | "ea" | "ubisoft" | "manual" | "emulator" | "mock";
+export type Store = "steam" | "xbox" | "epic" | "gog" | "ea" | "ubisoft" | "manual" | "emulator" | "mock" | "app";
 
 export interface Artwork {
   cover?: string | null;

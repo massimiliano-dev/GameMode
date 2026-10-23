@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { AppCard } from "../components/AppCard";
 import { CatalogCard } from "../components/CatalogCard";
 import { GameCard } from "../components/GameCard";
 import { useHints } from "../components/common";
 import { api } from "../lib/api";
 import type { CatalogItem, Game } from "../lib/types";
-import { useApp, visibleGames } from "../store/app";
+import { isApp, libraryGames, useApp, visibleGames } from "../store/app";
 
 const RESULT_LIMIT = 30;
 
@@ -22,6 +23,7 @@ function matches(name: string, words: string[]) {
 export function Search() {
   const games = useApp((s) => s.games);
   const open = useApp((s) => s.open);
+  const launch = useApp((s) => s.launch);
   const installFromCatalog = useApp((s) => s.installFromCatalog);
   const setBackdrop = useApp((s) => s.setBackdrop);
   const setBackdropArt = useApp((s) => s.setBackdropArt);
@@ -48,7 +50,11 @@ export function Search() {
 
   const words = useMemo(() => normalize(query).split(/\s+/).filter(Boolean), [query]);
   const installed = useMemo(
-    () => (words.length ? visibleGames(games).filter((g) => matches(g.name, words)).slice(0, RESULT_LIMIT) : []),
+    () => (words.length ? libraryGames(visibleGames(games)).filter((g) => matches(g.name, words)).slice(0, RESULT_LIMIT) : []),
+    [games, words],
+  );
+  const apps = useMemo(
+    () => (words.length ? visibleGames(games).filter((g) => isApp(g) && matches(g.name, words)).slice(0, RESULT_LIMIT) : []),
     [games, words],
   );
   const available = useMemo(
@@ -58,6 +64,7 @@ export function Search() {
 
   const onGameFocus = useCallback((g: Game) => setBackdrop(g.id), [setBackdrop]);
   const onGameSelect = useCallback((g: Game) => open({ name: "detail", gameId: g.id }), [open]);
+  const onAppSelect = useCallback((g: Game) => void launch(g.id), [launch]);
   const onItemFocus = useCallback(
     (i: CatalogItem) => setBackdropArt({ key: i.id, hero: i.hero, cover: i.cover, store: i.store }),
     [setBackdropArt],
@@ -73,14 +80,14 @@ export function Search() {
           data-nav
           data-nav-id="search-input"
           aria-label="Cerca un gioco"
-          placeholder="Cerca un gioco…"
+          placeholder="Cerca un gioco o un'app…"
           value={query}
           spellCheck={false}
           onChange={(e) => setQuery(e.target.value)}
         />
       </header>
       <div className="search-results">
-        {words.length > 0 && installed.length === 0 && available.length === 0 && (
+        {words.length > 0 && installed.length === 0 && apps.length === 0 && available.length === 0 && (
           <p className="empty-text">Nessun gioco trovato per “{query}”.</p>
         )}
         {installed.length > 0 && (
@@ -89,6 +96,16 @@ export function Search() {
             <div className="row-scroll" data-nav-group="search-installed">
               {installed.map((g) => (
                 <GameCard key={g.id} game={g} navId={`search:${g.id}`} onFocus={onGameFocus} onSelect={onGameSelect} />
+              ))}
+            </div>
+          </section>
+        )}
+        {apps.length > 0 && (
+          <section className="search-section">
+            <h2 className="row-title">App</h2>
+            <div className="row-scroll" data-nav-group="search-apps">
+              {apps.map((g) => (
+                <AppCard key={g.id} app={g} navId={`search:${g.id}`} onFocus={onGameFocus} onSelect={onAppSelect} />
               ))}
             </div>
           </section>

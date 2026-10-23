@@ -215,6 +215,11 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<()> {
         return resume_suspended(app, &game.id);
     }
     crate::assist::disable();
+    // An app over a running game keeps the game frozen (Quick Resume), as a
+    // console does; a game over a game still replaces it.
+    if game.store == Store::App {
+        park_running_game(app);
+    }
     let settings = app.state::<AppState>().db.lock().settings.clone();
     if settings.performance_mode {
         crate::performance::begin(&settings.close_apps);
@@ -223,7 +228,7 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<()> {
     // A spawned store client (Galaxy, Steam…) is not the game: follow the
     // spawned process only for hand-added executables, or when there is no
     // install folder to watch instead.
-    let track_child = matches!(game.store, Store::Manual | Store::Mock) || game.install_dir.is_none();
+    let track_child = matches!(game.store, Store::Manual | Store::Mock | Store::App) || game.install_dir.is_none();
     let child_pid = spawned.filter(|_| track_child);
     track(app, game, child_pid, None, 0, None);
     Ok(())
@@ -349,8 +354,13 @@ impl Target {
     fn of(game: &Game, child_pid: Option<u32>) -> Self {
         Target {
             dir: game.install_dir.as_deref().map(normalize).filter(|d| d.len() > 3),
-            // Xbox game ids are `xbox:<PackageFamilyName>`.
-            family: (game.store == Store::Xbox).then(|| native_id(game).to_lowercase()),
+            // Xbox game ids are `xbox:<PackageFamilyName>`; a packaged app's
+            // AUMID is `<PackageFamilyName>!<AppId>`.
+            family: match (game.store, &game.launch) {
+                (Store::Xbox, _) => Some(native_id(game).to_lowercase()),
+                (Store::App, LaunchSpec::AppsFolder { aumid }) => aumid.split('!').next().map(str::to_lowercase),
+                _ => None,
+            },
             child_pid,
         }
     }
@@ -807,6 +817,22 @@ pub fn resume_suspended(app: &AppHandle, game_id: &str) -> Result<()> {
     let pids = launcher.running_pids();
     window::resume_game(app, &pids);
     Ok(())
+}
+
+/// Freezes the running game before an app takes the screen, when that is
+/// safe (no anti-cheat, room in the suspended list, the game is really up);
+/// otherwise the app simply takes over, as a new game would.
+fn park_running_game(app: &AppHandle) {
+    let launcher = &app.state::<AppState>().launcher;
+    let Some(front) = launcher.current() else { return };
+    let parkable = front.phase == Phase::Running && !front.anti_cheat && !front.game_id.starts_with("app:");
+    if !parkable || launcher.suspended().len() >= MAX_SUSPENDED {
+        return;
+    }
+    let Ok(_transition) = launcher.transition() else { return };
+    if let Err(err) = swap_out(app) {
+        eprintln!("{err:#}");
+    }
 }
 
 /// Freezes the foreground game to make room for another one.

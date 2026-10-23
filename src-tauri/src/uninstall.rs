@@ -38,6 +38,7 @@ pub fn uninstall(app: &AppHandle, game: &Game) -> Result<Outcome> {
         Store::Gog | Store::Ubisoft | Store::Ea | Store::Epic => registered_uninstaller(app, game),
         Store::Emulator => bail!("Per toglierlo, elimina il file della ROM dalla sua cartella"),
         Store::Mock => bail!("Non disponibile per i giochi demo"),
+        Store::App => bail!("Le app si disinstallano dalle Impostazioni di Windows"),
     }
 }
 

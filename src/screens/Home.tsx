@@ -2,13 +2,14 @@ import { AnimatePresence } from "motion/react";
 import { useCallback, useMemo, useState } from "react";
 
 import { ActionSheet } from "../components/ActionSheet";
+import { AppCard } from "../components/AppCard";
 import { Cover, GameCard } from "../components/GameCard";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
 import { artUrl } from "../lib/api";
 import { formatLastPlayed, formatPlaytime, STORE_LABEL, STORES } from "../lib/format";
 import type { Collection, Game, SessionState, Store } from "../lib/types";
-import { useApp, visibleGames } from "../store/app";
+import { isApp, libraryGames, useApp, visibleGames } from "../store/app";
 
 interface Row {
   key: string;
@@ -17,9 +18,11 @@ interface Row {
 }
 
 const ROW_LIMIT = 14;
+/** The row of app tiles, where A opens the app. */
+const APPS_ROW = "apps";
 
 function buildRows(all: Game[], collections: Collection[]): Row[] {
-  const games = visibleGames(all);
+  const games = libraryGames(visibleGames(all));
   const rows: Row[] = [];
   const recent = games
     .filter((g) => g.lastPlayed)
@@ -29,6 +32,13 @@ function buildRows(all: Game[], collections: Collection[]): Row[] {
 
   const favorites = games.filter((g) => g.favorite);
   if (favorites.length) rows.push({ key: "favorites", title: "Preferiti", games: favorites });
+
+  // Apps opened from GameMode (Netflix, Spotify…), as tiles.
+  const apps = visibleGames(all)
+    .filter((g) => isApp(g) && g.lastPlayed)
+    .sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))
+    .slice(0, ROW_LIMIT);
+  if (apps.length) rows.push({ key: APPS_ROW, title: "App usate di recente", games: apps });
 
   for (const c of collections) {
     const list = c.gameIds.map((id) => games.find((g) => g.id === id)).filter((g): g is Game => !!g);
@@ -70,21 +80,24 @@ export function Home({ focusId }: { focusId?: string }) {
   const [sheet, setSheet] = useState<Game | null>(null);
   // The focus sits on the "In pausa" row, where A opens the options.
   const [onPausedRow, setOnPausedRow] = useState(false);
+  // …or on the apps row, where A opens the app.
+  const [onAppsRow, setOnAppsRow] = useState(false);
 
   useScreenFocus(focusId, rows.length > 0 || paused.length > 0);
   useHints(
     [
-      { button: "A", label: onPausedRow ? "Opzioni" : "Dettagli" },
-      { button: "X", label: "Gioca" },
-      { button: "Y", label: "Preferito" },
+      { button: "A", label: onPausedRow ? "Opzioni" : onAppsRow ? "Apri" : "Dettagli" },
+      { button: "X", label: onAppsRow ? "Dettagli" : "Gioca" },
+      { button: "Y", label: onAppsRow ? "Preferita" : "Preferito" },
     ],
-    [onPausedRow],
+    [onPausedRow, onAppsRow],
   );
 
   const onFocus = useCallback(
     (g: Game) => {
       setBackdrop(g.id);
       setOnPausedRow(false);
+      setOnAppsRow(false);
     },
     [setBackdrop],
   );
@@ -92,17 +105,28 @@ export function Home({ focusId }: { focusId?: string }) {
     (g: Game) => {
       setBackdrop(g.id);
       setOnPausedRow(true);
+      setOnAppsRow(false);
+    },
+    [setBackdrop],
+  );
+  const onFocusApp = useCallback(
+    (g: Game) => {
+      setBackdrop(g.id);
+      setOnPausedRow(false);
+      setOnAppsRow(true);
     },
     [setBackdrop],
   );
   const onSelect = useCallback((g: Game) => open({ name: "detail", gameId: g.id }), [open]);
   const onSelectPaused = useCallback((g: Game) => setSheet(g), []);
+  const onSelectApp = useCallback((g: Game) => void launch(g.id), [launch]);
   const sheetKnown = !!sheet && games.some((g) => g.id === sheet.id);
 
   useAction((action, repeat) => {
     if (repeat || !featured || sheet) return;
     if (action === "x") {
-      void launch(featured.id);
+      if (onAppsRow) open({ name: "detail", gameId: featured.id });
+      else void launch(featured.id);
       return true;
     }
     if (action === "y") {
@@ -145,18 +169,30 @@ export function Home({ focusId }: { focusId?: string }) {
               <span className="row-count">{row.games.length}</span>
             </h2>
             <div className="row-scroll">
-              {row.games.map((g, i) => (
-                <GameCard
-                  key={g.id}
-                  game={g}
-                  navId={`${row.key}:${g.id}`}
-                  onFocus={onFocus}
-                  onSelect={onSelect}
-                  playing={sessionGame === g.id}
-                  paused={suspended.some((p) => p.gameId === g.id)}
-                  autofocus={!paused.length && rowIndex === 0 && i === 0}
-                />
-              ))}
+              {row.games.map((g, i) =>
+                row.key === APPS_ROW ? (
+                  <AppCard
+                    key={g.id}
+                    app={g}
+                    navId={`${row.key}:${g.id}`}
+                    onFocus={onFocusApp}
+                    onSelect={onSelectApp}
+                    running={sessionGame === g.id}
+                    autofocus={!paused.length && rowIndex === 0 && i === 0}
+                  />
+                ) : (
+                  <GameCard
+                    key={g.id}
+                    game={g}
+                    navId={`${row.key}:${g.id}`}
+                    onFocus={onFocus}
+                    onSelect={onSelect}
+                    playing={sessionGame === g.id}
+                    paused={suspended.some((p) => p.gameId === g.id)}
+                    autofocus={!paused.length && rowIndex === 0 && i === 0}
+                  />
+                ),
+              )}
             </div>
           </section>
         ))}
@@ -188,7 +224,7 @@ function pausedGames(games: Game[], suspended: SessionState[]): { game: Game; se
 
 function placeholderGame(session: SessionState): Game {
   const prefix = session.gameId.split(":")[0];
-  const store = (STORES as string[]).includes(prefix) ? (prefix as Store) : "manual";
+  const store = (STORES as string[]).includes(prefix) || prefix === "app" ? (prefix as Store) : "manual";
   return {
     id: session.gameId,
     store,

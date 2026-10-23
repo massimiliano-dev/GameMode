@@ -71,7 +71,9 @@ fn scan(app: &AppHandle) -> LibraryUpdate {
         let data = state.db.lock();
         (data.manual_games.clone(), data.settings.clone())
     };
-    let result = library::scan_all(library::providers(manual, &settings), &settings.disabled_stores);
+    let mut providers = library::providers(manual, &settings);
+    providers.push(Box::new(library::apps::AppsProvider { icon_dir: library::apps::icon_dir(&state.data_dir) }));
+    let result = library::scan_all(providers, &settings.disabled_stores);
     let games = state
         .db
         .update(|d| {

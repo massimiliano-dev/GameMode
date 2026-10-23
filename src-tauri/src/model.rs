@@ -14,6 +14,8 @@ pub enum Store {
     Manual,
     Emulator,
     Mock,
+    /// Installed applications (packaged and desktop), not games.
+    App,
 }
 
 impl Store {
@@ -28,6 +30,7 @@ impl Store {
             Store::Manual => "manual",
             Store::Emulator => "emulator",
             Store::Mock => "mock",
+            Store::App => "app",
         }
     }
 
@@ -133,8 +136,11 @@ impl Game {
     /// Copies everything the user (or the artwork fetcher) set on a previous
     /// scan onto a freshly scanned entry.
     pub fn inherit_user_state(&mut self, old: &Game) {
-        self.artwork = old.artwork.clone();
-        self.artwork_checked_at = old.artwork_checked_at;
+        // A provider that brings its own artwork (app icons) keeps it.
+        if self.artwork == Artwork::default() {
+            self.artwork = old.artwork.clone();
+            self.artwork_checked_at = old.artwork_checked_at;
+        }
         self.favorite = old.favorite;
         self.hidden = old.hidden;
         self.added_at = old.added_at;
