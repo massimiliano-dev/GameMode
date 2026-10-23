@@ -1,6 +1,8 @@
 // Interface clicks, synthesized with WebAudio so no sound files ship. Kept
 // short and quiet: they confirm input, they shouldn't be noticed otherwise.
 
+import { rumble } from "./haptics";
+
 type Sound = "move" | "select" | "back" | "error";
 
 let enabled = true;
@@ -19,11 +21,14 @@ const VOICES: Record<Sound, { from: number; to: number; ms: number; gain: number
 };
 
 export function play(sound: Sound) {
-  if (!enabled) return;
   const now = performance.now();
   // Key repeat would otherwise turn into a buzz.
   if (sound === "move" && now - lastMove < 45) return;
   if (sound === "move") lastMove = now;
+  // Vibration goes with the click but is its own setting; never on `move`,
+  // which at repeat rate would turn into a hum.
+  if (sound !== "move") rumble(sound === "select" ? "select" : sound === "back" ? "tick" : "error");
+  if (!enabled) return;
   try {
     ctx ??= new AudioContext();
     if (ctx.state === "suspended") void ctx.resume();

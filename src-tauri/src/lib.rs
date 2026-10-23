@@ -15,6 +15,7 @@ mod devices;
 mod display;
 mod freeze;
 mod gamepad;
+mod haptics;
 mod launcher;
 mod library;
 mod live;
@@ -523,6 +524,22 @@ fn get_controllers() -> Vec<gamepad::Controller> {
     gamepad::controllers()
 }
 
+/// Interface vibration. During a game only `tick` goes through: the game
+/// drives the motors and the last writer wins.
+#[tauri::command]
+fn rumble(state: State<AppState>, pattern: String) {
+    if !state.native_gamepad.load(Ordering::SeqCst) {
+        return;
+    }
+    let Some(pattern) = haptics::Pattern::parse(&pattern) else { return };
+    let playing = state.launcher.current().is_some_and(|s| s.phase == launcher::Phase::Running);
+    if playing && pattern != haptics::Pattern::Tick {
+        return;
+    }
+    let level = state.db.lock().settings.haptics;
+    haptics::rumble(pattern, level);
+}
+
 #[tauri::command]
 fn get_autostart(app: AppHandle) -> bool {
     autostart::is_enabled(&app).unwrap_or(false)
@@ -923,6 +940,7 @@ pub fn run() {
             add_collection,
             remove_collection,
             set_in_collection,
+            rumble,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
