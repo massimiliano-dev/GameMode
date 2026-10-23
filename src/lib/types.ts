@@ -103,6 +103,8 @@ export interface Settings {
   companionEnabled: boolean;
   /** DualSense, DualShock 4 and Switch Pro read directly over HID. */
   hidPads: boolean;
+  /** In console mode the Xbox button opens GameMode instead of Game Bar. */
+  guideToGamemode: boolean;
 }
 
 export interface ShellStatus {

@@ -334,6 +334,9 @@ pub struct Settings {
     /// Read DualSense, DualShock 4 and Switch Pro directly over HID; off
     /// when Steam Input or DS4Windows already turn them into XInput pads.
     pub hid_pads: bool,
+    /// In console mode the Xbox button opens GameMode: Game Bar's hold on it
+    /// is switched off (and given back) by `gamebar.rs`.
+    pub guide_to_gamemode: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -382,6 +385,7 @@ impl Default for Settings {
             capture_combo: true,
             companion_enabled: false,
             hid_pads: true,
+            guide_to_gamemode: true,
         }
     }
 }
