@@ -21,6 +21,23 @@ const FOCUS_FIGHT: std::time::Duration = std::time::Duration::from_secs(3);
 /// them for as long as it is open.
 const GUIDE_GRABBERS: &[&str] = &["steam.exe", "steamwebhelper.exe", "gamebar.exe", "gamebarftserver.exe"];
 
+/// Steam's windows: these are minimized out of the way rather than fought
+/// over, since Steam keeps reclaiming the foreground after Guide.
+const STEAM: &[&str] = &["steam.exe", "steamwebhelper.exe"];
+
+/// Gets Steam out of the way if Guide brought it in front of the game.
+fn dismiss_steam() -> bool {
+    #[cfg(windows)]
+    {
+        crate::window::minimize_foreground_of(STEAM)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = STEAM;
+        false
+    }
+}
+
 /// The foreground window belongs to an app that grabs Guide.
 fn guide_grabber_in_front() -> bool {
     #[cfg(windows)]
@@ -81,6 +98,18 @@ pub fn is_foreground(app: &AppHandle) -> bool {
     }
 }
 
+/// Opens the overlay after Guide: Steam and Game Bar react to the same
+/// press, so wait for them to make their move, then clear Steam away and
+/// come up on top.
+pub fn show_after_guide(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        dismiss_steam();
+        show(&app);
+    });
+}
+
 /// Shows the overlay over the screen the game is on.
 pub fn show(app: &AppHandle) {
     let Some(w) = window(app) else { return };
@@ -111,6 +140,7 @@ pub fn show(app: &AppHandle) {
                 crate::window::raise_topmost_raw(hwnd.0 as isize);
             }
             if started.elapsed() < FOCUS_FIGHT || guide_grabber_in_front() {
+                dismiss_steam();
                 claim_focus(&w);
             }
         }

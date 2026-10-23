@@ -362,7 +362,7 @@ mod xinput {
         let state = app.state::<crate::AppState>();
         let playing = state.launcher.current().is_some_and(|s| s.phase == crate::launcher::Phase::Running);
         if playing && state.db.lock().settings.overlay_enabled && overlay::window(app).is_some() {
-            overlay::show(app);
+            overlay::show_after_guide(app);
             return;
         }
         window::bring_to_front(app);

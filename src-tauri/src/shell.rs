@@ -44,7 +44,7 @@ mod imp {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
     use winreg::{RegKey, HKEY};
 
-    use super::{approved_disabled, split_command, ShellStatus, WATCHDOG_ARG};
+    use super::{approved_disabled, split_command, WATCHDOG_ARG};
 
     const WINLOGON: &str = r"Software\Microsoft\Windows NT\CurrentVersion\Winlogon";
     const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -61,14 +61,14 @@ mod imp {
         unsafe { FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()).is_ok() }
     }
 
-    pub fn status() -> ShellStatus {
-        let enabled = RegKey::predef(HKEY_CURRENT_USER)
+    /// GameMode is this user's shell in the registry.
+    pub fn enabled() -> bool {
+        RegKey::predef(HKEY_CURRENT_USER)
             .open_subkey(WINLOGON)
             .and_then(|k| k.get_value::<String, _>("Shell"))
             .ok()
             .zip(exe().ok())
-            .is_some_and(|(value, exe)| value.trim_matches('"').eq_ignore_ascii_case(&exe));
-        ShellStatus { enabled, active: enabled && !explorer_running() }
+            .is_some_and(|(value, exe)| value.trim_matches('"').eq_ignore_ascii_case(&exe))
     }
 
     pub fn set(enabled: bool) -> Result<()> {
@@ -115,8 +115,8 @@ mod imp {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
             while std::time::Instant::now() < deadline {
                 std::thread::sleep(std::time::Duration::from_secs(2));
+                // The new version reads (and clears) the flag itself.
                 if other_instance_running() {
-                    super::clear_update_flag();
                     return;
                 }
             }
@@ -165,8 +165,13 @@ mod imp {
 
     /// Starts what Explorer would have at sign-in: the `Run` entries (minus
     /// those switched off in Task Manager and GameMode itself) and the
-    /// Startup folder.
+    /// Startup folders.
     pub fn run_startup_apps() {
+        use windows::core::HSTRING;
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
         let me = exe().unwrap_or_default().to_lowercase();
         let mut entries: Vec<(HKEY, String, String)> = Vec::new();
         for (name, cmd) in run_values(HKEY_CURRENT_USER, 0) {
@@ -189,18 +194,22 @@ mod imp {
                 eprintln!("startup app {name}: {err}");
             }
         }
-        if let Some(startup) = std::env::var_os("APPDATA")
-            .map(|a| Path::new(&a).join(r"Microsoft\Windows\Start Menu\Programs\Startup"))
-        {
-            for entry in std::fs::read_dir(startup).into_iter().flatten().flatten() {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        }
+        let folders = [("APPDATA", r"Microsoft\Windows\Start Menu\Programs\Startup"), ("PROGRAMDATA", r"Microsoft\Windows\Start Menu\Programs\StartUp")];
+        for (var, sub) in folders {
+            let Some(base) = std::env::var_os(var) else { continue };
+            for entry in std::fs::read_dir(Path::new(&base).join(sub)).into_iter().flatten().flatten() {
                 let path = entry.path();
-                if path.extension().is_some_and(|e| e != "ini") {
-                    // ShellExecute resolves shortcuts without Explorer running.
-                    let _ = std::process::Command::new("cmd")
-                        .args(["/C", "start", "\"\""])
-                        .arg(&path)
-                        .creation_flags(CREATE_NO_WINDOW)
-                        .spawn();
+                // A folder would open in Explorer, which then takes over as the shell.
+                if path.is_dir() || path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ini")) {
+                    continue;
+                }
+                // ShellExecute resolves shortcuts in-process, without Explorer.
+                let file = HSTRING::from(path.as_os_str());
+                unsafe {
+                    ShellExecuteW(None, PCWSTR::null(), &file, PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
                 }
             }
         }
@@ -229,12 +238,14 @@ mod imp {
 mod imp {
     use anyhow::Result;
 
-    use super::ShellStatus;
-
     static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-    pub fn status() -> ShellStatus {
-        ShellStatus { enabled: ENABLED.load(std::sync::atomic::Ordering::SeqCst), active: false }
+    pub fn enabled() -> bool {
+        ENABLED.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn explorer_running() -> bool {
+        true
     }
 
     pub fn set(enabled: bool) -> Result<()> {
@@ -253,23 +264,69 @@ mod imp {
     pub fn run_startup_apps() {}
 }
 
-pub use imp::{ensure_explorer, run_startup_apps, run_watchdog, set, spawn_watchdog, start_explorer, status};
+pub use imp::{ensure_explorer, run_startup_apps, run_watchdog, set, spawn_watchdog, start_explorer};
+
+/// How this GameMode process came up, fixed at the first check (during
+/// setup): Explorer started later in the background for the Xbox app or
+/// the Store doesn't turn console mode off.
+struct Start {
+    as_shell: bool,
+    after_update: bool,
+}
+
+static START: std::sync::OnceLock<Start> = std::sync::OnceLock::new();
+
+fn start() -> &'static Start {
+    START.get_or_init(|| {
+        let update = take_update_flag();
+        Start { as_shell: !imp::explorer_running() || update == Some(true), after_update: update.is_some() }
+    })
+}
+
+pub fn status() -> ShellStatus {
+    let enabled = imp::enabled();
+    ShellStatus { enabled, active: enabled && start().as_shell }
+}
+
+/// Console mode with nothing underneath GameMode: no desktop to step aside to.
+pub fn no_desktop() -> bool {
+    status().active && !imp::explorer_running()
+}
+
+/// This process is the new version started by an update.
+pub fn restarted_for_update() -> bool {
+    start().after_update
+}
 
 fn update_flag() -> std::path::PathBuf {
     std::env::temp_dir().join("gamemode-updating")
 }
 
-/// Marks that GameMode is about to restart for an update (read by the watchdog).
+/// Marks that GameMode is about to restart for an update (read by the
+/// watchdog and by the new version), noting whether it was in console mode.
 pub fn mark_updating() {
-    let _ = std::fs::write(update_flag(), crate::model::now().to_string());
+    let _ = std::fs::write(update_flag(), format!("{} {}", crate::model::now(), u8::from(status().active)));
+}
+
+/// `(written at, was in console mode)` of a recent update flag.
+fn read_update_flag() -> Option<(i64, bool)> {
+    let text = std::fs::read_to_string(update_flag()).ok()?;
+    let mut parts = text.split_whitespace();
+    let at = parts.next()?.parse::<i64>().ok()?;
+    let console = parts.next() == Some("1");
+    (crate::model::now() - at < 300).then_some((at, console))
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
 fn update_pending() -> bool {
-    std::fs::read_to_string(update_flag())
-        .ok()
-        .and_then(|s| s.trim().parse::<i64>().ok())
-        .is_some_and(|at| crate::model::now() - at < 300)
+    read_update_flag().is_some()
+}
+
+/// Consumes the update flag: `Some(was in console mode)` right after an update.
+fn take_update_flag() -> Option<bool> {
+    let flag = read_update_flag().map(|(_, console)| console);
+    clear_update_flag();
+    flag
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]

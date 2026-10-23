@@ -693,7 +693,10 @@ pub fn run() {
             if console {
                 // GameMode is the shell: do Explorer's sign-in chores.
                 shell::spawn_watchdog();
-                std::thread::spawn(shell::run_startup_apps);
+                // After an update the startup apps are already running.
+                if !shell::restarted_for_update() {
+                    std::thread::spawn(shell::run_startup_apps);
+                }
                 if let Some(w) = window::main_window(&handle) {
                     let _ = w.set_fullscreen(true);
                 }

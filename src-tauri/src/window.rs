@@ -40,7 +40,7 @@ pub fn bring_to_front(app: &AppHandle) {
 pub fn minimize(app: &AppHandle) {
     // In console mode there's no desktop underneath: stepping aside would
     // leave a black screen if the other app doesn't show up.
-    if crate::shell::status().active {
+    if crate::shell::no_desktop() {
         return;
     }
     if let Some(window) = main_window(app) {
@@ -107,6 +107,17 @@ pub fn foreground_process_name() -> Option<String> {
             path.rsplit(['\\', '/']).next().unwrap_or_default().to_lowercase()
         })
     }
+}
+
+/// Minimizes the foreground window if it belongs to one of `processes`
+/// (lowercase exe names). Returns whether it did.
+#[cfg(windows)]
+pub fn minimize_foreground_of(processes: &[&str]) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, ShowWindowAsync, SW_MINIMIZE};
+    if !foreground_process_name().is_some_and(|n| processes.contains(&n.as_str())) {
+        return false;
+    }
+    unsafe { ShowWindowAsync(GetForegroundWindow(), SW_MINIMIZE).as_bool() }
 }
 
 /// Puts a window back on top of other always-on-top windows (Steam, Game

@@ -146,10 +146,13 @@ fn spawn(app: &AppHandle, spec: &LaunchSpec) -> Result<Option<u32>> {
             Ok(None)
         }
         LaunchSpec::AppsFolder { aumid } => {
-            // Straight through the activation manager: going through
-            // explorer.exe would bring the whole desktop up in console mode.
-            if activate_packaged(aumid).is_err() {
-                Command::new("explorer.exe").arg(format!(r"shell:AppsFolder\{aumid}")).spawn()?;
+            // Packaged games, like the Xbox app, don't show up without
+            // Explorer: in console mode it starts in the background first.
+            if crate::shell::status().active {
+                crate::shell::ensure_explorer();
+            }
+            if Command::new("explorer.exe").arg(format!(r"shell:AppsFolder\{aumid}")).spawn().is_err() {
+                activate_packaged(aumid)?;
             }
             Ok(None)
         }
