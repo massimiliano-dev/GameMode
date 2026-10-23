@@ -82,6 +82,8 @@ export function QuickMenu() {
 
   const elapsed = session ? Math.max(0, Math.floor(Date.now() / 1000) - session.startedAt) : 0;
   const pausedNote = paused ? `${paused === 1 ? "Il gioco in pausa viene chiuso" : `I ${paused} giochi in pausa vengono chiusi`} · premi di nuovo` : undefined;
+  // A scheduled shutdown closes paused games too, without a second press.
+  const scheduledNote = paused ? (paused === 1 ? "Il gioco in pausa verrà chiuso" : `I ${paused} giochi in pausa verranno chiusi`) : undefined;
   const pausedQuitNote = paused ? `${paused === 1 ? "Il gioco in pausa riprende sul desktop" : "I giochi in pausa riprendono sul desktop"} · premi di nuovo` : undefined;
 
   return (
@@ -212,6 +214,7 @@ export function QuickMenu() {
             <span className="qm-label">Programmato</span>
             <span className="qm-sub">
               {schedule.at ? `${POWER_VERB[schedule.action]} alle ${formatClock(new Date(schedule.at * 1000))}` : `${POWER_VERB[schedule.action]} a fine download`}
+              {schedule.action !== "sleep" && scheduledNote ? ` · ${scheduledNote}` : ""}
             </span>
             <QmButton onClick={() => void cancelPower().then(() => toast("Programmazione annullata"))}>Annulla</QmButton>
           </div>
@@ -247,10 +250,14 @@ export function QuickMenu() {
             title="Spegni fra"
             onClose={() => setPowerSheet(false)}
             actions={[
-              { label: "30 minuti", onSelect: schedulePower("shutdown", { kind: "in", secs: 30 * 60 }) },
-              { label: "1 ora", onSelect: schedulePower("shutdown", { kind: "in", secs: 60 * 60 }) },
-              { label: "2 ore", onSelect: schedulePower("shutdown", { kind: "in", secs: 2 * 60 * 60 }) },
-              { label: "A fine download", hint: "Quando non scarica più nulla da un minuto", onSelect: schedulePower("shutdown", { kind: "atDownloadsEnd" }) },
+              { label: "30 minuti", hint: scheduledNote, onSelect: schedulePower("shutdown", { kind: "in", secs: 30 * 60 }) },
+              { label: "1 ora", hint: scheduledNote, onSelect: schedulePower("shutdown", { kind: "in", secs: 60 * 60 }) },
+              { label: "2 ore", hint: scheduledNote, onSelect: schedulePower("shutdown", { kind: "in", secs: 2 * 60 * 60 }) },
+              {
+                label: "A fine download",
+                hint: scheduledNote ? `Quando non scarica più nulla da un minuto · ${scheduledNote}` : "Quando non scarica più nulla da un minuto",
+                onSelect: schedulePower("shutdown", { kind: "atDownloadsEnd" }),
+              },
               { label: "Sospendi a fine download", hint: "Il PC si sospende invece di spegnersi", onSelect: schedulePower("sleep", { kind: "atDownloadsEnd" }) },
             ]}
           />

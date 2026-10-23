@@ -24,6 +24,8 @@ const FALLBACK_TICK = 15_000;
 let initialized = false;
 let lastTouch = 0;
 let lastInput = Date.now();
+/** A stage set by the backend (rest mode in the mock) holds until a wake. */
+let pinned = false;
 
 export const useIdle = create<IdleState>((set, get) => ({
   stage: "active",
@@ -33,9 +35,16 @@ export const useIdle = create<IdleState>((set, get) => ({
   init: () => {
     if (initialized) return;
     initialized = true;
-    on<{ stage: IdleStage }>("idle://state", ({ stage }) => set({ stage }));
+    on<{ stage: IdleStage }>("idle://state", ({ stage }) => {
+      pinned = stage !== "active";
+      set({ stage });
+    });
     on<PowerSchedule | null>("power://schedule", (schedule) => set({ schedule, ...(schedule ? {} : { countdown: null }) }));
-    on<PowerCountdown>("power://countdown", (c) => set({ countdown: c.secondsLeft > 0 ? c : null }));
+    on<PowerCountdown>("power://countdown", (c) => {
+      set({ countdown: c.secondsLeft > 0 ? c : null });
+      // The warning must be seen: leave the screensaver or the dark screen.
+      if (c.secondsLeft > 0 && get().stage !== "active") get().wake();
+    });
     void api.getPowerSchedule().then((schedule) => set({ schedule })).catch(() => {});
 
     // Controller presses through the Gamepad API and mouse moves inside the
@@ -52,7 +61,7 @@ export const useIdle = create<IdleState>((set, get) => ({
     if (!isTauri) {
       setInterval(() => {
         const settings = useApp.getState().settings;
-        if (!settings) return;
+        if (!settings || pinned || get().countdown) return;
         const idle = (Date.now() - lastInput) / 60_000;
         const off = settings.idleDisplayOffMin > 0 && idle >= settings.idleDisplayOffMin;
         const saver = settings.idleScreensaverMin > 0 && idle >= settings.idleScreensaverMin;
@@ -63,6 +72,7 @@ export const useIdle = create<IdleState>((set, get) => ({
 
   wake: () => {
     lastInput = Date.now();
+    pinned = false;
     if (get().stage === "active") return;
     set({ stage: "active" });
     void api.idleWake().catch(() => {});

@@ -162,12 +162,19 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** "Shut down in…": counts the last minute down out loud, then just logs. */
 function fakeSchedule(action: PowerSchedule["action"], mode: { kind: "in"; secs: number } | { kind: "atDownloadsEnd" }) {
   clearInterval(powerTimer);
-  // Nothing downloads in the mock: "at the end" is a minute away.
-  const secs = mode.kind === "in" ? mode.secs : 60;
-  powerSchedule = { action, at: now() + secs, atDownloadsEnd: mode.kind === "atDownloadsEnd" };
+  // Like the backend, "at the end of the downloads" has no time until the
+  // downloads are over; nothing downloads here, so that's a quiet minute away.
+  const armAt = mode.kind === "atDownloadsEnd" ? now() + 60 : 0;
+  powerSchedule = { action, at: mode.kind === "in" ? now() + mode.secs : null, atDownloadsEnd: mode.kind === "atDownloadsEnd" };
   emit("power://schedule", powerSchedule);
   powerTimer = setInterval(() => {
-    const left = Math.max(0, (powerSchedule?.at ?? 0) - now());
+    if (!powerSchedule) return;
+    if (powerSchedule.at === null) {
+      if (now() < armAt) return;
+      powerSchedule = { ...powerSchedule, at: now() + 60 };
+      emit("power://schedule", powerSchedule);
+    }
+    const left = Math.max(0, (powerSchedule.at ?? 0) - now());
     if (left <= 60) emit("power://countdown", { action, secondsLeft: left });
     if (left === 0) {
       clearInterval(powerTimer);

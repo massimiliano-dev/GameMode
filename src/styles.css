@@ -2296,7 +2296,8 @@ html.is-overlay .qm-volume[data-nav-current] {
 }
 
 .countdown-scrim {
-  z-index: 55;
+  /* Above the screensaver and the on-screen keyboard (both 60). */
+  z-index: 65;
 }
 
 .countdown {

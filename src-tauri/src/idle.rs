@@ -108,6 +108,9 @@ static STAGE: AtomicU8 = AtomicU8::new(0);
 static RESUMED: AtomicBool = AtomicBool::new(false);
 /// The user asked for the screen back (frontend or controller).
 static WAKE_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// A display-on is already underway for this wake: held buttons and late
+/// frontend echoes must not repeat it (it broadcasts and can block).
+static DISPLAY_WAKING: AtomicBool = AtomicBool::new(false);
 
 fn now_ms() -> u64 {
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
@@ -135,8 +138,10 @@ pub fn wake() {
     }
     LAST_PAD.store(now, Ordering::SeqCst);
     WAKE_REQUESTED.store(true, Ordering::SeqCst);
-    if stage() == Stage::DisplayOff {
-        imp::display_on();
+    // Called from the XInput thread and from sync commands (main thread):
+    // the display comes back once, on a thread of its own.
+    if stage() == Stage::DisplayOff && DISPLAY_WAKING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        std::thread::spawn(imp::display_on);
     }
 }
 
@@ -145,6 +150,7 @@ pub fn rest(app: &AppHandle) {
     let now = now_ms().max(1);
     REST_SINCE.store(now, Ordering::SeqCst);
     WAKE_REQUESTED.store(false, Ordering::SeqCst);
+    DISPLAY_WAKING.store(false, Ordering::SeqCst);
     set_stage(app, Stage::DisplayOff);
     imp::display_off(app);
 }
@@ -203,6 +209,15 @@ impl Scheduled {
         }
         ScheduleEvent::Waiting
     }
+}
+
+/// What the schedule asks for this tick, acted on once its lock is released:
+/// showing the overlay waits on the main thread, which may want the lock.
+enum ScheduleStep {
+    Nothing,
+    Armed(PowerSchedule),
+    Countdown { action: PowerAction, left: u64, first: bool },
+    Due(PowerAction),
 }
 
 #[derive(Debug, PartialEq)]
@@ -278,6 +293,7 @@ fn execute(app: &AppHandle, action: PowerAction) {
 /// Starts the inactivity thread.
 pub fn start(app: AppHandle) {
     LAST_RESUME.store(now_ms().max(1), Ordering::SeqCst);
+    imp::remember_window(&app);
     imp::watch_resume();
     std::thread::spawn(move || run(app));
 }
@@ -297,7 +313,7 @@ fn run(app: AppHandle) {
         if downloads_checked.is_none_or(|t| t.elapsed() >= DOWNLOADS_EVERY) {
             downloads_checked = Some(Instant::now());
             let games = state.db.lock().view();
-            downloads_active = updates::all(&games).iter().any(|u| u.active());
+            downloads_active = transferring(&updates::all(&games));
         }
 
         let playing = state
@@ -320,36 +336,46 @@ fn run(app: AppHandle) {
             }
         }
 
-        // Scheduled power action.
-        let schedule_waits = {
+        // Scheduled power action. The lock only covers the bookkeeping.
+        let (step, schedule_waits, counting_down) = {
             let mut guard = SCHEDULE.lock().unwrap();
-            let mut waits = false;
-            if let Some(s) = guard.as_mut() {
-                waits = s.at_downloads_end && s.deadline.is_none();
-                match s.tick(now, downloads_active) {
-                    ScheduleEvent::Waiting => {}
-                    ScheduleEvent::Armed => {
-                        let _ = app.emit("power://schedule", Some(s.view(now)));
-                    }
-                    ScheduleEvent::Countdown { left, first } => {
-                        let _ = app.emit("power://countdown", Countdown { action: s.action, seconds_left: left });
-                        if first && playing && settings.overlay_enabled && overlay::window(&app).is_some() && !overlay::is_open() {
-                            overlay::show(&app);
+            match guard.as_mut() {
+                None => (ScheduleStep::Nothing, false, false),
+                Some(s) => {
+                    let waits = s.at_downloads_end && s.deadline.is_none();
+                    let step = match s.tick(now, downloads_active) {
+                        ScheduleEvent::Waiting => ScheduleStep::Nothing,
+                        ScheduleEvent::Armed => ScheduleStep::Armed(s.view(now)),
+                        ScheduleEvent::Countdown { left, first } => ScheduleStep::Countdown { action: s.action, left, first },
+                        ScheduleEvent::Due => {
+                            let action = s.action;
+                            *guard = None;
+                            ScheduleStep::Due(action)
                         }
-                    }
-                    ScheduleEvent::Due => {
-                        let action = s.action;
-                        *guard = None;
-                        drop(guard);
-                        let _ = app.emit("power://schedule", None::<PowerSchedule>);
-                        let _ = app.emit("power://countdown", Countdown { action, seconds_left: 0 });
-                        execute(&app, action);
-                        continue;
-                    }
+                    };
+                    let counting = matches!(step, ScheduleStep::Countdown { .. });
+                    (step, waits, counting)
                 }
             }
-            waits
         };
+        match step {
+            ScheduleStep::Nothing => {}
+            ScheduleStep::Armed(view) => {
+                let _ = app.emit("power://schedule", Some(view));
+            }
+            ScheduleStep::Countdown { action, left, first } => {
+                let _ = app.emit("power://countdown", Countdown { action, seconds_left: left });
+                if first && playing && settings.overlay_enabled && overlay::window(&app).is_some() && !overlay::is_open() {
+                    overlay::show(&app);
+                }
+            }
+            ScheduleStep::Due(action) => {
+                let _ = app.emit("power://schedule", None::<PowerSchedule>);
+                let _ = app.emit("power://countdown", Countdown { action, seconds_left: 0 });
+                execute(&app, action);
+                continue;
+            }
+        }
         let wait_downloads = downloads_active && (settings.idle_wait_downloads || schedule_waits);
 
         // Inactivity.
@@ -357,7 +383,8 @@ fn run(app: AppHandle) {
         let pad_recent = now.saturating_sub(LAST_PAD.load(Ordering::SeqCst)) < PAD_KEEPS_DISPLAY_MS;
         let rest_since = REST_SINCE.load(Ordering::SeqCst);
         let woke = WAKE_REQUESTED.swap(false, Ordering::SeqCst);
-        let resting = rest_since > 0 && !woke && last <= rest_since + REST_GRACE_MS;
+        // The last-minute warning must be seen: it ends rest mode too.
+        let resting = rest_since > 0 && !woke && !counting_down && last <= rest_since + REST_GRACE_MS;
         if rest_since > 0 && !resting {
             REST_SINCE.store(0, Ordering::SeqCst);
         }
@@ -366,15 +393,23 @@ fn run(app: AppHandle) {
 
         let target = if resting {
             Stage::DisplayOff
-        } else if playing || wait_downloads || !in_front || woke {
+        } else if playing || wait_downloads || !in_front || woke || counting_down {
             Stage::Active
         } else {
             stage_for(idle_secs, thresholds)
         };
         if target != current {
             match (current, target) {
-                (_, Stage::DisplayOff) => imp::display_off(&app),
-                (Stage::DisplayOff, _) => imp::display_on(),
+                (_, Stage::DisplayOff) => {
+                    DISPLAY_WAKING.store(false, Ordering::SeqCst);
+                    imp::display_off(&app);
+                }
+                // A wake() may have turned it on already.
+                (Stage::DisplayOff, _) => {
+                    if !DISPLAY_WAKING.swap(false, Ordering::SeqCst) {
+                        imp::display_on();
+                    }
+                }
                 _ => {}
             }
             set_stage(&app, target);
@@ -395,6 +430,12 @@ fn run(app: AppHandle) {
     }
 }
 
+/// Something is being downloaded or installed right now. Paused downloads
+/// don't count: they can stay paused for days.
+fn transferring(list: &[updates::GameUpdate]) -> bool {
+    list.iter().any(|u| matches!(u.state, updates::UpdateState::Downloading | updates::UpdateState::Installing))
+}
+
 /// Ms since start of the most recent activity GameMode knows about.
 fn last_activity(now: u64) -> u64 {
     let os = imp::os_idle_ms().map_or(0, |age| now.saturating_sub(age));
@@ -403,7 +444,7 @@ fn last_activity(now: u64) -> u64 {
 
 #[cfg(windows)]
 mod imp {
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicIsize, Ordering};
 
     use tauri::AppHandle;
     use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, WPARAM};
@@ -423,6 +464,16 @@ mod imp {
     const MONITOR_OFF: isize = 2;
     const MONITOR_ON: isize = -1;
     const SEND_TIMEOUT_MS: u32 = 2000;
+
+    /// The main window's HWND, so no thread has to ask the event loop for it
+    /// (0 = unknown yet: the message is broadcast).
+    static MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
+
+    pub fn remember_window(app: &AppHandle) {
+        if let Some(h) = crate::window::main_window(app).and_then(|w| w.hwnd().ok()) {
+            MAIN_HWND.store(h.0 as isize, Ordering::SeqCst);
+        }
+    }
 
     /// Ms since the last keyboard or mouse input (controllers don't count).
     pub fn os_idle_ms() -> Option<u64> {
@@ -450,12 +501,9 @@ mod imp {
         }
     }
 
-    fn monitor_power(app: Option<&AppHandle>, state: isize) {
-        let target = app
-            .and_then(crate::window::main_window)
-            .and_then(|w| w.hwnd().ok())
-            .map(|h| HWND(h.0 as isize as *mut core::ffi::c_void))
-            .unwrap_or(HWND_BROADCAST);
+    fn monitor_power(state: isize) {
+        let hwnd = MAIN_HWND.load(Ordering::SeqCst);
+        let target = if hwnd != 0 { HWND(hwnd as *mut core::ffi::c_void) } else { HWND_BROADCAST };
         unsafe {
             SendMessageTimeoutW(
                 target,
@@ -470,7 +518,10 @@ mod imp {
     }
 
     pub fn display_off(app: &AppHandle) {
-        monitor_power(Some(app), MONITOR_OFF);
+        if MAIN_HWND.load(Ordering::SeqCst) == 0 {
+            remember_window(app);
+        }
+        monitor_power(MONITOR_OFF);
     }
 
     /// `SC_MONITORPOWER -1` alone is unreliable: a tiny mouse move counts as
@@ -484,7 +535,7 @@ mod imp {
         unsafe {
             SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
         }
-        monitor_power(None, MONITOR_ON);
+        monitor_power(MONITOR_ON);
     }
 
     unsafe extern "system" fn on_power_event(_ctx: *const core::ffi::c_void, kind: u32, _setting: *const core::ffi::c_void) -> u32 {
@@ -524,6 +575,8 @@ mod imp {
     }
 
     pub fn set_execution_state(_system: bool, _display: bool) {}
+
+    pub fn remember_window(_app: &AppHandle) {}
 
     pub fn display_off(_app: &AppHandle) {
         eprintln!("display off ignored outside Windows");
@@ -623,6 +676,16 @@ mod tests {
         assert_eq!(t, 90 + DOWNLOADS_SETTLE - 1);
         assert_eq!(s.deadline, Some(t * 1000 + WARNING_SECS * 1000));
         assert_eq!(s.tick(t * 1000 + 1000, false), ScheduleEvent::Countdown { left: 59, first: true });
+    }
+
+    #[test]
+    fn paused_downloads_dont_keep_the_pc_awake() {
+        use updates::{GameUpdate, UpdateState};
+        let of = |state| GameUpdate { game_id: "g".into(), state, done: 0, total: 0, progress: None };
+        assert!(!transferring(&[of(UpdateState::Paused), of(UpdateState::Available)]));
+        assert!(transferring(&[of(UpdateState::Paused), of(UpdateState::Downloading)]));
+        assert!(transferring(&[of(UpdateState::Installing)]));
+        assert!(!transferring(&[]));
     }
 
     #[test]

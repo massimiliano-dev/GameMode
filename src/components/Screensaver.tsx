@@ -23,7 +23,9 @@ const MAX_COVERS = 8;
  */
 export function Screensaver() {
   const stage = useIdle((s) => s.stage);
-  return <AnimatePresence>{stage !== "active" && <Ambient key="ambient" dark={stage === "displayOff"} />}</AnimatePresence>;
+  // The last-minute power warning must stay visible and get the input.
+  const countdown = useIdle((s) => s.countdown);
+  return <AnimatePresence>{stage !== "active" && !countdown && <Ambient key="ambient" dark={stage === "displayOff"} />}</AnimatePresence>;
 }
 
 function Ambient({ dark }: { dark: boolean }) {
