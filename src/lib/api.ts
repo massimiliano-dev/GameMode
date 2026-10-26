@@ -55,6 +55,7 @@ import type {
   UninstallOutcome,
   Volume,
   WifiNetwork,
+  OpenWindow,
 } from "./types";
 
 /** False when the UI runs in a plain browser (`npm run dev`), backed by mocks. */
@@ -94,6 +95,13 @@ export const api = {
   cheatsUnfreeze: (address: number) => call<void>("cheats_unfreeze", { address }),
   cheatsReset: () => call<void>("cheats_reset"),
   closeGame: () => call<boolean>("close_game"),
+  /** Open windows for the task switcher; `thumbnails` also draws them (slower). */
+  openWindows: (thumbnails: boolean) => call<OpenWindow[]>("open_windows", { thumbnails }),
+  switchToWindow: (hwnd: number, gameId: string | null) => call<void>("switch_to_window", { hwnd, gameId }),
+  /** Like the window's X, or with `force` ends its program. */
+  closeWindow: (hwnd: number, gameId: string | null, force: boolean) => call<void>("close_window", { hwnd, gameId, force }),
+  /** Asks every open window to close; returns how many took the request. */
+  closeAllWindows: () => call<number>("close_all_windows"),
   power: (action: PowerAction) => call<void>("power", { action }),
   powerOptions: () => call<PowerOptions>("power_options"),
   getVolume: () => call<Volume>("get_volume"),

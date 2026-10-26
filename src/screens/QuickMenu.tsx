@@ -191,6 +191,15 @@ export function QuickMenu() {
 
         <div className="qm-list">
           <QmButton
+            onClick={() => {
+              close();
+              useApp.getState().setSwitcher(true);
+            }}
+          >
+            App aperte
+            <span className="qm-sub">Passa da un'app all'altra o chiudile</span>
+          </QmButton>
+          <QmButton
             onClick={() =>
               void api
                 .audioOutputs()

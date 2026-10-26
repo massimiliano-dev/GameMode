@@ -515,8 +515,9 @@ const BLACK_SCREEN_SECS: u32 = 3;
 /// RivaTuner and Afterburner start with Windows and their update notices
 /// jump in front when games start or close. The focus goes back to the
 /// window that had it: GameMode, the game, or a store window of a launch.
-/// Not while the user is in an app started from GameMode (it may be one of
-/// those tools) or in the overlay (it keeps its own focus).
+/// Not while the user is in an app started from GameMode or one picked in
+/// the task switcher (it may be one of those tools), nor in the overlay (it
+/// keeps its own focus).
 fn give_back_from_tools(app: &tauri::AppHandle, last_good: &mut isize) {
     use tauri::Manager;
     if !crate::window::pushy_tool_in_front() {
@@ -527,7 +528,8 @@ fn give_back_from_tools(app: &tauri::AppHandle, last_good: &mut isize) {
         return;
     }
     let in_app = app.state::<crate::AppState>().launcher.current().is_some_and(|s| s.game_id.starts_with("app:"));
-    if in_app || crate::overlay::is_open() {
+    // The user picked that window in the task switcher.
+    if in_app || crate::overlay::is_open() || crate::switcher::picked(crate::window::foreground_raw()) {
         return;
     }
     if *last_good != 0 && crate::window::window_alive(*last_good) {

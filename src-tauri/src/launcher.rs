@@ -178,6 +178,11 @@ impl Launcher {
         (ids, pids)
     }
 
+    /// Every game GameMode follows with its processes, frozen ones included.
+    pub fn followed(&self) -> Vec<(SessionState, Vec<u32>)> {
+        self.sessions.lock().unwrap().iter().map(|a| (a.state.clone(), a.pids.clone())).collect()
+    }
+
     /// The game in the foreground (starting or running), if any.
     pub fn current(&self) -> Option<SessionState> {
         self.sessions.lock().unwrap().iter().find(|a| a.state.phase != Phase::Suspended).map(|a| a.state.clone())
@@ -1102,7 +1107,7 @@ pub fn close_suspended(app: &AppHandle, game_id: &str) -> Result<()> {
 }
 
 /// Terminates `pids`; true when every one that still exists went down.
-fn kill(pids: &[u32]) -> bool {
+pub(crate) fn kill(pids: &[u32]) -> bool {
     let mut sys = System::new();
     let targets: Vec<Pid> = pids.iter().map(|p| Pid::from_u32(*p)).collect();
     sys.refresh_processes(ProcessesToUpdate::Some(&targets), true);

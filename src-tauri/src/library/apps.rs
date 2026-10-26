@@ -35,6 +35,11 @@ impl LibraryProvider for AppsProvider {
     }
 }
 
+/// Saves the icon of a file or packaged app as a PNG (the task switcher's
+/// windows). Blocking.
+#[cfg(windows)]
+pub use imp::save_item_icon;
+
 /// The icon cache, inside the artwork folder the asset protocol may serve.
 pub fn icon_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("artwork").join(ICON_FOLDER)
@@ -280,7 +285,8 @@ mod imp {
     use windows::Win32::Storage::EnhancedStorage::{PKEY_AppUserModel_ID, PKEY_AppUserModel_IsDestListSeparator, PKEY_Link_Arguments, PKEY_Link_TargetParsingPath};
     use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_APARTMENTTHREADED};
     use windows::Win32::UI::Shell::{
-        IEnumShellItems, IShellItem, IShellItem2, IShellItemImageFactory, SHGetKnownFolderItem, BHID_EnumItems, FOLDERID_AppsFolder,
+        IEnumShellItems, IShellItem, IShellItem2, IShellItemImageFactory, SHCreateItemFromParsingName, SHGetKnownFolderItem,
+        BHID_EnumItems, FOLDERID_AppsFolder,
         KF_FLAG_DEFAULT, SIGDN_NORMALDISPLAY, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
     };
 
@@ -396,6 +402,21 @@ mod imp {
     }
 
     /// Renders the item's icon through the shell and caches it as PNG.
+    /// Saves the icon of the shell item `parsing_name` names (a file path,
+    /// or `shell:AppsFolder\<AUMID>` for a packaged app) as a PNG. Blocking.
+    pub fn save_item_icon(parsing_name: &str, path: &Path) -> Result<()> {
+        let init = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+        let item: Result<IShellItem> = unsafe {
+            SHCreateItemFromParsingName(&HSTRING::from(parsing_name), None::<&windows::Win32::System::Com::IBindCtx>)
+        }
+        .context("shell item");
+        let result = item.and_then(|item| save_icon(&item, path));
+        if init.is_ok() {
+            unsafe { CoUninitialize() };
+        }
+        result
+    }
+
     fn save_icon(item: &IShellItem, path: &Path) -> Result<()> {
         unsafe {
             let factory: IShellItemImageFactory = item.cast()?;

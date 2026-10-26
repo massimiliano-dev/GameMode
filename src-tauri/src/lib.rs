@@ -40,6 +40,7 @@ mod status;
 mod steam_web;
 mod storage;
 mod storefront;
+mod switcher;
 mod system;
 mod tray;
 mod uia;
@@ -425,6 +426,31 @@ fn resume_game(app: AppHandle, state: State<AppState>) -> bool {
 #[tauri::command]
 fn close_game(app: AppHandle) -> bool {
     launcher::close_running(&app)
+}
+
+/// The task switcher's list: every open window, front to back.
+#[tauri::command]
+async fn open_windows(app: AppHandle, thumbnails: bool) -> CmdResult<Vec<switcher::OpenWindow>> {
+    let handle = app.clone();
+    blocking(move || Ok(switcher::list(&handle, thumbnails))).await
+}
+
+#[tauri::command]
+async fn switch_to_window(app: AppHandle, hwnd: i64, game_id: Option<String>) -> CmdResult<()> {
+    let handle = app.clone();
+    blocking(move || switcher::switch_to(&handle, hwnd as isize, game_id.as_deref())).await
+}
+
+#[tauri::command]
+async fn close_window(app: AppHandle, hwnd: i64, game_id: Option<String>, force: bool) -> CmdResult<()> {
+    let handle = app.clone();
+    blocking(move || switcher::close(&handle, hwnd as isize, game_id.as_deref(), force)).await
+}
+
+#[tauri::command]
+async fn close_all_windows(app: AppHandle) -> CmdResult<usize> {
+    let handle = app.clone();
+    blocking(move || Ok(switcher::close_all(&handle))).await
 }
 
 #[tauri::command]
@@ -1437,6 +1463,10 @@ pub fn run() {
             cheats_unfreeze,
             cheats_reset,
             close_game,
+            open_windows,
+            switch_to_window,
+            close_window,
+            close_all_windows,
             power,
             get_volume,
             set_volume,

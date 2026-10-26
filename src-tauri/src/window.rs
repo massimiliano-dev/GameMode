@@ -182,6 +182,13 @@ pub fn other_windows() -> Vec<(isize, Option<String>)> {
 
 #[cfg(windows)]
 fn process_name(pid: u32) -> Option<String> {
+    let path = process_path(pid)?;
+    Some(path.file_name()?.to_string_lossy().to_lowercase())
+}
+
+/// Full path of a process's executable, when Windows lets GameMode read it.
+#[cfg(windows)]
+pub fn process_path(pid: u32) -> Option<std::path::PathBuf> {
     use windows::core::PWSTR;
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
@@ -193,10 +200,7 @@ fn process_name(pid: u32) -> Option<String> {
         let mut len = buf.len() as u32;
         let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
         let _ = CloseHandle(handle);
-        ok.then(|| {
-            let path = String::from_utf16_lossy(&buf[..len as usize]);
-            path.rsplit(['\\', '/']).next().unwrap_or_default().to_lowercase()
-        })
+        ok.then(|| std::path::PathBuf::from(String::from_utf16_lossy(&buf[..len as usize])))
     }
 }
 

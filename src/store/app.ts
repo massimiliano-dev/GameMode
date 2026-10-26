@@ -57,6 +57,8 @@ interface AppState {
   settings: Settings | null;
   stack: Entry[];
   quickMenu: boolean;
+  /** The task switcher (open windows) is up. */
+  switcher: boolean;
   session: SessionState | null;
   /** Games frozen by Quick Resume, oldest first. */
   suspended: SessionState[];
@@ -94,6 +96,7 @@ interface AppState {
   open: (screen: Screen) => void;
   back: () => boolean;
   setQuickMenu: (open: boolean) => void;
+  setSwitcher: (open: boolean) => void;
   setBackdrop: (id: string | null) => void;
   setBackdropArt: (art: BackdropArt | null) => void;
   setHints: (hints: Hint[]) => void;
@@ -150,6 +153,7 @@ export const useApp = create<AppState>((set, get) => ({
   settings: null,
   stack: [{ screen: { name: "home" } }],
   quickMenu: false,
+  switcher: false,
   session: null,
   suspended: [],
   backdropId: null,
@@ -311,6 +315,7 @@ export const useApp = create<AppState>((set, get) => ({
     if (quickMenu && !get().quickMenu) rumble("tick");
     set({ quickMenu });
   },
+  setSwitcher: (switcher) => set({ switcher }),
   setBackdrop: (backdropId) => set({ backdropId, backdropArt: null }),
   setBackdropArt: (backdropArt) => set({ backdropArt, backdropId: null }),
   setHints: (hints) => set({ hints }),

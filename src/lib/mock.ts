@@ -1,7 +1,7 @@
 // In-browser stand-in for the Rust backend, so the UI can be developed and
 // tested with `npm run dev` in any browser.
 
-import type { AppVolume, Capture, Cleanup, Collection, Game, GameMeta, LegendaryJob, ManualGame, NowPlaying, PadKind, PowerSchedule, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
+import type { AppVolume, Capture, Cleanup, Collection, Game, GameMeta, LegendaryJob, ManualGame, NowPlaying, OpenWindow, PadKind, PowerSchedule, Profile, SessionState, Settings, Store, SystemInfo, Volume } from "./types";
 
 const CDN = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps";
 
@@ -116,6 +116,19 @@ games = [
 let settings: Settings = { steamgriddbKey: null, disabledStores: [], startFullscreen: true, preloadSteam: true, steamApiKey: null, uiSounds: true, tvMode: null, tvAudio: null, performanceMode: false, closeApps: [], overlayEnabled: true, overlayPause: true, backupDir: null, keyboardAssist: true, steamBigPicture: true, steamGuide: false, wandBacktick: false, wandCombo: false, wandPause: true, haptics: 1, musicControls: true, osdVolume: true, idleScreensaverMin: 10, idleDisplayOffMin: 30, idleSleepMin: 60, idleAction: "sleep", idleWaitDownloads: true, keyboardAuto: true, backupOnExit: true, igdbClientId: null, igdbClientSecret: null, captureCombo: true, companionEnabled: false, hidPads: true, epicLegendary: false, gogDirect: true, guideToGamemode: true, gogInstallDir: null, msstoreDirect: true };
 let manual: ManualGame[] = [];
 let session: SessionState | null = null;
+/** The task switcher's windows; `null` until first asked, so the games' art is in. */
+let openWindows: OpenWindow[] | null = null;
+
+function mockWindows(): OpenWindow[] {
+  openWindows ??= [
+    { hwnd: 101, name: games[0].name, detail: "Eldenring", gameId: games[0].id, state: "open", art: games[0].artwork.hero, hung: false, canForce: true },
+    { hwnd: 102, name: "Google Chrome", detail: "GameMode · GitHub", state: "open", hung: false, canForce: true },
+    { hwnd: 103, name: "Spotify", detail: "Spotify Premium", state: "open", hung: true, canForce: true },
+    { hwnd: 104, name: "Esplora file", detail: "Download", state: "open", hung: false, canForce: false },
+    { hwnd: 0, name: games[2].name, gameId: games[2].id, state: "paused", art: games[2].artwork.hero, hung: false, canForce: false },
+  ];
+  return openWindows;
+}
 let suspended: SessionState[] = [];
 let volume: Volume = { level: 0.6, muted: false };
 let autostart = false;
@@ -799,6 +812,23 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         return;
       case "capture_notice":
         return null;
+      case "open_windows":
+        await wait(args.thumbnails ? 500 : 80);
+        return mockWindows();
+      case "switch_to_window":
+        console.info("[mock] switch_to_window", args);
+        return;
+      case "close_window": {
+        // Spotify "doesn't respond": it only goes when forced.
+        const target = mockWindows().find((w) => w.hwnd === args.hwnd && (w.gameId ?? null) === (args.gameId ?? null));
+        if (target && (!target.hung || args.force)) openWindows = mockWindows().filter((w) => w !== target);
+        return;
+      }
+      case "close_all_windows": {
+        const n = mockWindows().length;
+        openWindows = mockWindows().filter((w) => w.hung);
+        return n;
+      }
       case "open_store":
         console.info("[mock] open_store", args);
         return ["steam", "xbox", "epic"].includes(args.store) ? "client" : "browser";

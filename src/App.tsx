@@ -6,6 +6,7 @@ import { HintBar, Toasts, TopBar } from "./components/Chrome";
 import { LaunchOverlay } from "./components/LaunchOverlay";
 import { PowerCountdown } from "./components/PowerCountdown";
 import { Screensaver } from "./components/Screensaver";
+import { TaskSwitcher } from "./components/TaskSwitcher";
 import { VirtualKeyboard } from "./components/VirtualKeyboard";
 import { Priority, setKeyboardOpener, useAction } from "./input/dispatcher";
 import { play } from "./input/sfx";
@@ -32,6 +33,7 @@ export default function App() {
   const entry = useApp(currentScreen);
   const depth = useApp((s) => s.stack.length);
   const quickMenu = useApp((s) => s.quickMenu);
+  const switcher = useApp((s) => s.switcher);
   const session = useApp((s) => s.session);
   const keyboardField = useApp((s) => s.keyboardField);
   const settingsLoaded = useApp((s) => s.settings !== null);
@@ -62,6 +64,8 @@ export default function App() {
   }, [quickMenu]);
 
   const restoreAfterMenu = () => {
+    // The quick menu handed over to the task switcher, which has the focus now.
+    if (useApp.getState().switcher || useApp.getState().quickMenu) return;
     const el = focusBeforeMenu.current;
     if (el?.isConnected) focusElement(el);
     else ensureFocus();
@@ -124,6 +128,9 @@ export default function App() {
       </main>
       <HintBar />
       <AnimatePresence onExitComplete={restoreAfterMenu}>{quickMenu && <QuickMenu key="qm" />}</AnimatePresence>
+      <AnimatePresence onExitComplete={restoreAfterMenu}>
+        {switcher && <TaskSwitcher key="switcher" onClose={() => useApp.getState().setSwitcher(false)} />}
+      </AnimatePresence>
       <AnimatePresence onExitComplete={ensureFocus}>
         {showLaunch && <LaunchOverlay key="launch" onDismiss={() => setDismissedLaunch(launchKey)} />}
       </AnimatePresence>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CheatsPanel } from "../components/CheatsPanel";
 import { Toasts } from "../components/Chrome";
 import { PowerCountdown } from "../components/PowerCountdown";
+import { TaskSwitcher } from "../components/TaskSwitcher";
 import { Cover } from "../components/GameCard";
 import { Glyph, useClock } from "../components/common";
 import { MusicPanel } from "../components/NowPlaying";
@@ -33,8 +34,8 @@ export function OverlayApp() {
   const [suspending, setSuspending] = useState(false);
   const [openedAt, setOpenedAt] = useState(0);
   const [wand, setWand] = useState(false);
-  const [view, setView] = useState<"menu" | "cheats">("menu");
-  const show = (next: "menu" | "cheats") => {
+  const [view, setView] = useState<"menu" | "cheats" | "switcher">("menu");
+  const show = (next: "menu" | "cheats" | "switcher") => {
     setView(next);
     requestAnimationFrame(() => focusInitial());
   };
@@ -96,6 +97,16 @@ export function OverlayApp() {
   }, Priority.MODAL);
 
   const elapsed = session ? Math.max(0, Math.floor(Date.now() / 1000) - session.startedAt) : 0;
+
+  if (view === "switcher") {
+    return (
+      <div className="overlay-root" data-nav-layer="overlay">
+        <TaskSwitcher onClose={() => show("menu")} onGuide={resume} />
+        <Toasts />
+        <PowerCountdown />
+      </div>
+    );
+  }
 
   return (
     <div className="overlay-root" data-nav-layer="overlay">
@@ -171,6 +182,7 @@ export function OverlayApp() {
               </>
             )}
             {session?.phase === "running" && !isApp && <QmButton onClick={() => show("cheats")}>Trucchi</QmButton>}
+            <QmButton onClick={() => show("switcher")}>App aperte</QmButton>
             <QmButton onClick={() => void api.overlayKeyboard()}>Tastiera</QmButton>
             <QmButton onClick={() => void api.overlayToLauncher()}>Vai a GameMode</QmButton>
             {session?.phase === "running" && !isApp && (

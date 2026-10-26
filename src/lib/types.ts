@@ -359,6 +359,28 @@ export type Action =
 
 export type Direction = "up" | "down" | "left" | "right";
 
+/** A window in the task switcher, as Alt+Tab would list it. */
+export interface OpenWindow {
+  /** Handed back to switch or close; 0 for a frozen game no window shows. */
+  hwnd: number;
+  name: string;
+  /** The window's title under a library name, or the program's name. */
+  detail?: string | null;
+  gameId?: string | null;
+  /** "playing": the game or app GameMode follows; "paused": frozen by Quick Resume. */
+  state: "playing" | "paused" | "open";
+  icon?: string | null;
+  /** A game's own picture (hero, else cover). */
+  art?: string | null;
+  artVersion?: number | null;
+  thumbnail?: string | null;
+  thumbnailAt?: number | null;
+  /** Windows says it doesn't respond. */
+  hung: boolean;
+  /** Its process may be ended when it doesn't close by itself. */
+  canForce: boolean;
+}
+
 export interface Storefront {
   store: Store;
   opensIn: "client" | "browser";
