@@ -46,6 +46,29 @@ jobs:
             console.log("Beta version", conf.version);
           '
 
+      # tauri-action reads only the first 50 assets of the release when it
+      # writes latest.json: past that it misses the new installer and leaves
+      # latest.json on the old version, so installed betas stop updating.
+      # Every build adds an installer and its signature: keep the last few.
+      - name: Prune old beta builds
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/beta" --jq .id 2>/dev/null) || exit 0
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${release}/assets?per_page=100" --jq '.[] | "\(.id) \(.name)"' > assets.txt
+          version() { sed -nE 's/^GameMode\.Beta_([0-9]+\.[0-9]+\.[0-9]+)_.*/\1/p' <<<"$1"; }
+          keep=$(while read -r _ name; do version "$name"; done < assets.txt | sort -uV | tail -n 5)
+          echo "Keeping: $(echo $keep)"
+          while read -r id name; do
+            v=$(version "$name")
+            if [ -n "$v" ] && ! grep -qxF "$v" <<<"$keep"; then
+              echo "Deleting $name"
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${id}"
+            fi
+          done < assets.txt
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
