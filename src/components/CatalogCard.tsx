@@ -1,6 +1,7 @@
 import { memo, useState } from "react";
 
-import type { CatalogItem } from "../lib/types";
+import { formatBytes } from "../lib/format";
+import type { CatalogItem, GameUpdate } from "../lib/types";
 import { StoreBadge } from "./common";
 
 const ACTION_LABEL: Record<CatalogItem["source"], string> = {
@@ -18,8 +19,10 @@ export const CatalogCard = memo(function CatalogCard(props: {
   autofocus: boolean;
   onFocus: (item: CatalogItem) => void;
   onSelect: (item: CatalogItem) => void;
+  /** GameMode is downloading/installing it right now. */
+  download?: GameUpdate;
 }) {
-  const { item } = props;
+  const { item, download } = props;
   const [failed, setFailed] = useState(false);
   return (
     <button
@@ -44,10 +47,18 @@ export const CatalogCard = memo(function CatalogCard(props: {
         {item.source === "gamepass" && <span className="pass-pill">Game Pass</span>}
         {item.source === "cloud" && <span className="pass-pill">Cloud</span>}
         {item.discount ? <span className="discount-pill">−{item.discount}%</span> : null}
+        {item.sizeBytes ? <span className="size-pill">{formatBytes(item.sizeBytes)}</span> : null}
       </span>
       <span className="install-pill" aria-hidden>
-        {ACTION_LABEL[item.source]}
+        {download ? downloadLabel(download) : ACTION_LABEL[item.source]}
       </span>
     </button>
   );
 });
+
+function downloadLabel(u: GameUpdate) {
+  const pct = u.progress != null ? ` ${Math.round(u.progress * 100)}%` : "…";
+  if (u.state === "installing") return `Installo${pct}`;
+  if (u.state === "paused") return `In pausa${pct}`;
+  return `↓${pct}`;
+}

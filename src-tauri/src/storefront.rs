@@ -184,6 +184,7 @@ pub fn launch_uri(_uri: &str) -> bool {
 pub fn open_first(app: &AppHandle, uris: &[String]) -> Result<()> {
     let Some((last, apps)) = uris.split_last() else { anyhow::bail!("nessun link") };
     for uri in apps {
+        crate::shell::prepare_for(uri);
         if launch_uri(uri) {
             window::minimize(app);
             return Ok(());
@@ -210,6 +211,7 @@ pub fn open_uri(app: &AppHandle, uri: &str) -> Result<()> {
         STEAM_BIG_PICTURE.store(true, std::sync::atomic::Ordering::SeqCst);
         std::thread::sleep(BIG_PICTURE_DELAY);
     }
+    crate::shell::prepare_for(uri);
     app.opener().open_url(uri, None::<&str>)?;
     window::minimize(app);
     Ok(())

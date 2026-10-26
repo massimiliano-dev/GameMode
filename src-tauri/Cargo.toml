@@ -29,13 +29,23 @@ anyhow = "1.0.104"
 sysinfo = "0.39.6"
 roxmltree = "0.21.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "native-tls", "http2", "charset", "system-proxy"] }
-tokio = { version = "1.54.0", features = ["sync", "time", "macros"] }
+tokio = { version = "1.54.0", features = ["sync", "time", "macros", "net", "rt"] }
 base64 = "0.23.1"
 serde_yaml = "0.9.34"
 glob = "0.3.4"
 dirs = "7.0.0"
 tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "system-proxy", "zip"] }
 tauri-plugin-process = "2"
+png = "0.18"
+log = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "ws"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+getrandom = "0.3"
+# Checks the pinned legendary and WebView2 runtime downloads.
+sha2 = "0.10"
+# GOG publishes MD5 checksums of its installers.
+md-5 = "0.10"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -47,5 +57,14 @@ panic = "abort"
 strip = true
 
 [target."cfg(windows)".dependencies]
-windows = { version = "0.62.2", features = ["Management_Deployment", "ApplicationModel", "Foundation", "Foundation_Collections", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_XboxController", "Win32_System_LibraryLoader", "Win32_System_Power", "Win32_System_Threading", "Win32_System_Com", "Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_UI_Input_KeyboardAndMouse", "Win32_Storage_Packaging_Appx", "Devices_Radios", "Devices_WiFi", "Devices_Bluetooth", "Devices_Enumeration", "Security_Credentials", "Networking_Connectivity", "Win32_Graphics_Gdi", "Win32_Devices_FunctionDiscovery", "Win32_UI_Shell_PropertiesSystem", "System"] }
+windows = { version = "0.62.2", features = ["Management_Deployment", "ApplicationModel", "Foundation", "Foundation_Collections", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_XboxController", "Win32_System_LibraryLoader", "Win32_System_Power", "Win32_System_Threading", "Win32_System_Com", "Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_UI_Input_KeyboardAndMouse", "Win32_Storage_Packaging_Appx", "Devices_Radios", "Devices_WiFi", "Devices_Bluetooth", "Devices_Enumeration", "Security_Credentials", "Networking_Connectivity", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_Memory", "Win32_System_Diagnostics_Debug", "Win32_Devices_FunctionDiscovery", "Win32_UI_Shell_PropertiesSystem", "System", "System_Power", "Media_Control", "Storage_Streams", "Win32_System_SystemInformation", "Win32_UI_Accessibility", "Win32_System_Shutdown", "Win32_Security", "Win32_UI_Shell", "Win32_Storage_EnhancedStorage", "Win32_System_RemoteDesktop", "Win32_System_SystemServices", "Win32_System_UpdateAgent", "Win32_System_ErrorReporting", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT", "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture", "Win32_UI_HiDpi", "Win32_System_Registry", "Win32_Security_WinTrust", "Win32_Security_Cryptography", "Win32_Security_Cryptography_Catalog", "Win32_Security_Cryptography_Sip"] }
 winreg = "0.56.0"
+# The tray icon exists only when GameMode sits behind the Windows desktop.
+tauri = { version = "2", features = ["tray-icon"] }
+# Direct dependency so `#[implement]` (COM callbacks in audio_events.rs) resolves `::windows_core`.
+windows-core = "0.62.2"
+# Pure-Rust backend: no C toolchain, so `cargo check` for Windows works from macOS too.
+hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
+# Direct dependencies so the generated Store install bindings (msstore/bindings.rs) resolve.
+windows-future = "0.3.2"
+windows-collections = "0.3.2"

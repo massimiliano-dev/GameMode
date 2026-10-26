@@ -1,8 +1,10 @@
 // Input sources feeding the dispatcher.
 
-import { api, isTauri, onWindow } from "../lib/api";
-import type { Action } from "../lib/types";
+import { api, isTauri, on, onWindow } from "../lib/api";
+import type { Action, Controller } from "../lib/types";
 import { dispatch } from "./dispatcher";
+import { setNativeHaptics } from "./haptics";
+import { remoteText } from "./remote";
 
 const KEYS: Record<string, Action> = {
   ArrowUp: "up",
@@ -77,7 +79,67 @@ function controllerActive() {
   document.body.classList.add("no-cursor");
 }
 
-function browserGamepad() {
+/**
+ * True while the native backend reports any controller. A supported
+ * Sony/Nintendo pad is then read natively: straight over HID, or through
+ * the virtual Xbox pad Steam Input or DS4Windows make of it (the HID copy
+ * is hidden then, or the HID backend is off).
+ */
+let nativePads = false;
+
+/** Pads the Rust HID backend reads, as Chromium's "vendor product" ids (see `Model::from_ids`). */
+const HID_MODELS = new Set(["054c 0ce6", "054c 0df2", "054c 05c4", "054c 09cc", "057e 2009"]);
+
+/**
+ * Pads the native backend already reads, so the browser must skip them:
+ * XInput ones always, the supported Sony/Nintendo ones while it reports
+ * any controller. Others (Joy-Con, generic HID pads) stay with the browser.
+ * Chromium's ids look like "Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)".
+ */
+export function nativelyHandled(id: string, native: boolean, pads: boolean) {
+  if (!native) return false;
+  const lower = id.toLowerCase();
+  if (lower.includes("xinput") || lower.includes("vendor: 045e")) return true;
+  const ids = /vendor: ([0-9a-f]{4}) product: ([0-9a-f]{4})/.exec(lower);
+  return pads && !!ids && HID_MODELS.has(`${ids[1]} ${ids[2]}`);
+}
+
+/**
+ * The same physical pad can reach GameMode twice: through the native backend
+ * (XInput, HID) and through the browser's Gamepad API, whose ids don't always
+ * give it away (third-party Xbox pads, Steam Input's virtual pad). A press
+ * that arrives from the other path within ECHO_MS is that echo and is
+ * dropped; a browser pad caught echoing ECHO_STRIKES times is skipped for good.
+ */
+const ECHO_MS = 120;
+const ECHO_STRIKES = 2;
+/** Browser repeats pause while the native path is still sending this action. */
+const NATIVE_QUIET = REPEAT_DELAY + 200;
+/** Browser pads ("index:id") found to mirror a native one. */
+const twins = new Set<string>();
+const strikes = new Map<string, number>();
+/** Last fresh press per action: which browser pad sent it, or null for native. */
+const lastPress = new Map<Action, { t: number; from: string | null }>();
+/** Last native event (press or repeat) per action. */
+const lastNative = new Map<Action, number>();
+
+/** Whether a fresh press is the other path's echo of one just dispatched. */
+export function isEcho(action: Action, from: string | null, t: number) {
+  const prev = lastPress.get(action);
+  if (prev && (prev.from === null) !== (from === null) && t - prev.t < ECHO_MS) {
+    const pad = from ?? prev.from;
+    if (pad) {
+      const n = (strikes.get(pad) ?? 0) + 1;
+      strikes.set(pad, n);
+      if (n >= ECHO_STRIKES) twins.add(pad);
+    }
+    return true;
+  }
+  lastPress.set(action, { t, from });
+  return false;
+}
+
+function browserGamepad(native: boolean) {
   const held = new Map<Action, { since: number; last: number }>();
 
   const frame = (t: number) => {
@@ -86,24 +148,32 @@ function browserGamepad() {
       held.clear();
       return;
     }
-    const pressed = new Set<Action>();
+    // Each action remembers the first pad pressing it, to blame echoes on.
+    const pressed = new Map<Action, string>();
     for (const pad of navigator.getGamepads()) {
       if (!pad) continue;
-      for (const [i, action] of BUTTONS) if (pad.buttons[i]?.pressed) pressed.add(action);
+      const key = `${pad.index}:${pad.id}`;
+      if (twins.has(key) || nativelyHandled(pad.id, native, nativePads)) continue;
+      const add = (action: Action) => {
+        if (!pressed.has(action)) pressed.set(action, key);
+      };
+      for (const [i, action] of BUTTONS) if (pad.buttons[i]?.pressed) add(action);
       const [x = 0, y = 0] = pad.axes;
-      if (x < -STICK) pressed.add("left");
-      if (x > STICK) pressed.add("right");
-      if (y < -STICK) pressed.add("up");
-      if (y > STICK) pressed.add("down");
+      if (x < -STICK) add("left");
+      if (x > STICK) add("right");
+      if (y < -STICK) add("up");
+      if (y > STICK) add("down");
     }
-    for (const action of pressed) {
+    for (const [action, key] of pressed) {
       const state = held.get(action);
       if (!state) {
         held.set(action, { since: t, last: t });
+        if (isEcho(action, key, t)) continue;
         controllerActive();
         dispatch(action, false, "pad");
       } else if (REPEATABLE.has(action) && t - state.since >= REPEAT_DELAY && t - state.last >= REPEAT_RATE) {
         state.last = t;
+        if (t - (lastNative.get(action) ?? -Infinity) < NATIVE_QUIET) continue;
         dispatch(action, true, "pad");
       }
     }
@@ -129,7 +199,8 @@ let setup: Promise<boolean> | null = null;
 
 /**
  * Wires every source. Returns whether the native XInput backend is active;
- * when it is, the browser Gamepad API stays off so presses don't double up.
+ * when it is, the browser Gamepad API only covers pads the backend doesn't
+ * read (generic HID pads, while GameMode has focus) so presses don't double up.
  */
 export function setupInput(): Promise<boolean> {
   setup ??= start();
@@ -139,14 +210,22 @@ export function setupInput(): Promise<boolean> {
 async function start(): Promise<boolean> {
   keyboard();
   pointer();
+  remoteText();
   const native = isTauri ? await api.nativeGamepad().catch(() => false) : false;
-  if (native) {
+  setNativeHaptics(native);
+  // Also without XInput: the phone companion's presses arrive here too.
+  if (isTauri) {
     onWindow<{ action: Action; repeat: boolean }>("gamepad://nav", (e) => {
+      const t = performance.now();
+      lastNative.set(e.action, t);
+      if (!e.repeat && isEcho(e.action, null, t)) return;
       controllerActive();
       dispatch(e.action, e.repeat, "pad");
     });
-  } else {
-    browserGamepad();
+    const track = (list: Controller[]) => (nativePads = list.length > 0);
+    on<Controller[]>("gamepad://controllers", track);
+    void api.getControllers().then(track).catch(() => {});
   }
+  browserGamepad(native);
   return native;
 }

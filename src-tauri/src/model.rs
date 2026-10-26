@@ -14,6 +14,8 @@ pub enum Store {
     Manual,
     Emulator,
     Mock,
+    /// Installed applications (packaged and desktop), not games.
+    App,
 }
 
 impl Store {
@@ -28,6 +30,7 @@ impl Store {
             Store::Manual => "manual",
             Store::Emulator => "emulator",
             Store::Mock => "mock",
+            Store::App => "app",
         }
     }
 
@@ -103,6 +106,54 @@ pub struct Game {
     pub last_played: Option<i64>,
     #[serde(default)]
     pub playtime_secs: u64,
+    /// Space the install takes, from the store's manifest or a folder walk.
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
+    /// Unix seconds of the last folder walk; `None` when `size_bytes` comes
+    /// from the store's manifest (refreshed by every scan) or is unknown.
+    #[serde(default)]
+    pub size_checked_at: Option<i64>,
+    /// The walk could not read everything (e.g. WindowsApps ACLs): an estimate.
+    #[serde(default)]
+    pub size_partial: bool,
+    /// Store page facts (description, genres, score, time to beat).
+    #[serde(default)]
+    pub meta: Option<GameMeta>,
+    /// Unix seconds of the last metadata lookup that found nothing.
+    #[serde(default)]
+    pub meta_checked_at: Option<i64>,
+}
+
+/// How long a game takes, in seconds, as reported by IGDB.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TimeToBeat {
+    /// Main story only.
+    pub main: Option<u64>,
+    /// Main story plus side content.
+    pub extra: Option<u64>,
+    /// Everything.
+    pub complete: Option<u64>,
+}
+
+/// What the store pages know about a game, cached in the library.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GameMeta {
+    pub summary: Option<String>,
+    pub genres: Vec<String>,
+    pub developer: Option<String>,
+    /// Release date as the source prints it ("25 feb 2022", "2021-11-09").
+    pub release_date: Option<String>,
+    /// 0-100.
+    pub critic_score: Option<u8>,
+    /// "metacritic" or "igdb"; tells the UI what to call the score.
+    pub score_source: Option<String>,
+    /// Local files under the artwork folder.
+    pub screenshots: Vec<String>,
+    pub time_to_beat: Option<TimeToBeat>,
+    /// IGDB was asked about this game, so the gaps that remain are real.
+    pub igdb_checked: bool,
 }
 
 impl Game {
@@ -122,6 +173,11 @@ impl Game {
             added_at: 0,
             last_played: None,
             playtime_secs: 0,
+            size_bytes: None,
+            size_checked_at: None,
+            size_partial: false,
+            meta: None,
+            meta_checked_at: None,
         }
     }
 
@@ -133,13 +189,25 @@ impl Game {
     /// Copies everything the user (or the artwork fetcher) set on a previous
     /// scan onto a freshly scanned entry.
     pub fn inherit_user_state(&mut self, old: &Game) {
-        self.artwork = old.artwork.clone();
-        self.artwork_checked_at = old.artwork_checked_at;
+        // A provider that brings its own artwork (app icons) keeps it.
+        if self.artwork == Artwork::default() {
+            self.artwork = old.artwork.clone();
+            self.artwork_checked_at = old.artwork_checked_at;
+        }
         self.favorite = old.favorite;
         self.hidden = old.hidden;
         self.added_at = old.added_at;
         self.last_played = old.last_played;
         self.playtime_secs = old.playtime_secs;
+        // A size measured by walking the folder survives rescans; one the
+        // store manifest provides is fresh in `self` already.
+        if self.size_bytes.is_none() {
+            self.size_bytes = old.size_bytes;
+            self.size_checked_at = old.size_checked_at;
+            self.size_partial = old.size_partial;
+        }
+        self.meta = old.meta.clone();
+        self.meta_checked_at = old.meta_checked_at;
     }
 }
 
@@ -218,12 +286,70 @@ pub struct Settings {
     pub close_apps: Vec<String>,
     /// Guide during a game opens the overlay instead of the launcher.
     pub overlay_enabled: bool,
+    /// The game is frozen while the overlay is open, so it ignores the pad.
+    pub overlay_pause: bool,
     /// Where save backups go; the app data folder when unset.
     pub backup_dir: Option<PathBuf>,
     /// The controller types Enter/Esc/arrows in store windows GameMode opens.
     pub keyboard_assist: bool,
     /// Open Steam's store/install/uninstall in Big Picture (controller UI).
     pub steam_big_picture: bool,
+    /// In Steam games Guide is left to Steam (its overlay); Back+Start
+    /// still opens GameMode's.
+    pub steam_guide: bool,
+    /// Wand's overlay shortcut is Alt+` instead of Alt+W.
+    pub wand_backtick: bool,
+    /// LB+RB held during a game opens Wand's overlay.
+    pub wand_combo: bool,
+    /// Freeze the game while Wand has the screen.
+    pub wand_pause: bool,
+    /// Controller vibration for the interface: 0 off, 1 light, 2 normal.
+    pub haptics: u8,
+    /// Now playing and the per-app mixer in the overlay and quick menu.
+    pub music_controls: bool,
+    /// Volume keys and View + D-pad show the volume over the game (OSD).
+    pub osd_volume: bool,
+    /// Minutes of inactivity before the ambient screensaver; 0 = never.
+    pub idle_screensaver_min: u32,
+    /// Minutes of inactivity before the display is turned off; 0 = never.
+    pub idle_display_off_min: u32,
+    /// Minutes of inactivity before `idle_action`; 0 = never.
+    pub idle_sleep_min: u32,
+    /// Sleep or shut down after `idle_sleep_min`.
+    pub idle_action: crate::system::PowerAction,
+    /// Inactivity never sleeps the PC while a game is downloading or updating.
+    pub idle_wait_downloads: bool,
+    /// The on-screen keyboard opens by itself when a text field takes the
+    /// focus in a store window during a hand-off.
+    pub keyboard_auto: bool,
+    /// When Windows shuts down with a game open, back up its saves once it
+    /// has closed.
+    pub backup_on_exit: bool,
+    /// Twitch app credentials for IGDB (descriptions of non-store games,
+    /// critic score, time to beat).
+    pub igdb_client_id: Option<String>,
+    pub igdb_client_secret: Option<String>,
+    /// View+RB held during a game takes a screenshot.
+    pub capture_combo: bool,
+    /// Phone companion: the LAN remote server (`companion.rs`).
+    pub companion_enabled: bool,
+    /// Read DualSense, DualShock 4 and Switch Pro directly over HID; off
+    /// when Steam Input or DS4Windows already turn them into XInput pads.
+    pub hid_pads: bool,
+    /// Epic games are installed, updated and launched through legendary
+    /// instead of the Epic Games Launcher (`legendary`).
+    pub epic_legendary: bool,
+    /// GOG games start from their own folder (`goggame-<id>.info`) instead
+    /// of through Galaxy.
+    pub gog_direct: bool,
+    /// In console mode the Xbox button opens GameMode: Game Bar's hold on it
+    /// is switched off (and given back) by `gamebar.rs`.
+    pub guide_to_gamemode: bool,
+    /// Where GameMode installs GOG games; `C:\GOG Games` when unset.
+    pub gog_install_dir: Option<PathBuf>,
+    /// Install and update Microsoft Store / Game Pass games through the
+    /// Store's install service, without opening the Xbox app.
+    pub msstore_direct: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -250,9 +376,34 @@ impl Default for Settings {
             performance_mode: false,
             close_apps: Vec::new(),
             overlay_enabled: true,
+            overlay_pause: true,
             backup_dir: None,
             keyboard_assist: true,
             steam_big_picture: true,
+            steam_guide: false,
+            wand_backtick: false,
+            wand_combo: false,
+            wand_pause: true,
+            haptics: 1,
+            music_controls: true,
+            osd_volume: true,
+            idle_screensaver_min: 10,
+            idle_display_off_min: 30,
+            idle_sleep_min: 60,
+            idle_action: crate::system::PowerAction::Sleep,
+            idle_wait_downloads: true,
+            keyboard_auto: true,
+            backup_on_exit: true,
+            igdb_client_id: None,
+            igdb_client_secret: None,
+            capture_combo: true,
+            companion_enabled: false,
+            hid_pads: true,
+            epic_legendary: false,
+            gog_direct: true,
+            guide_to_gamemode: true,
+            gog_install_dir: None,
+            msstore_direct: true,
         }
     }
 }

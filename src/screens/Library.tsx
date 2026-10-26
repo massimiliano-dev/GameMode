@@ -6,20 +6,42 @@ import { useAction } from "../input/dispatcher";
 import { ensureFocus, forgetGroup } from "../input/focus";
 import { STORE_LABEL, STORES } from "../lib/format";
 import type { Game, Store } from "../lib/types";
-import { useApp, visibleGames } from "../store/app";
+import { libraryGames, useApp, visibleGames } from "../store/app";
 
-type Sort = "name" | "recent" | "playtime";
+type Sort = "name" | "recent" | "playtime" | "size";
 const SORTS: { key: Sort; label: string }[] = [
   { key: "name", label: "A–Z" },
   { key: "recent", label: "Giocati di recente" },
   { key: "playtime", label: "Più giocati" },
+  { key: "size", label: "Più pesanti" },
 ];
 
 const SORTERS: Record<Sort, (a: Game, b: Game) => number> = {
   name: (a, b) => a.name.localeCompare(b.name, "it"),
   recent: (a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0) || a.name.localeCompare(b.name, "it"),
   playtime: (a, b) => b.playtimeSecs - a.playtimeSecs || a.name.localeCompare(b.name, "it"),
+  size: (a, b) => (b.sizeBytes ?? -1) - (a.sizeBytes ?? -1) || a.name.localeCompare(b.name, "it"),
 };
+
+const MAX_GENRE_FILTERS = 6;
+
+/** Genres shared by at least two games, most common first. */
+function topGenres(games: Game[]): string[] {
+  const counts = new Map<string, number>();
+  for (const g of games) for (const genre of g.meta?.genres ?? []) counts.set(genre, (counts.get(genre) ?? 0) + 1);
+  return [...counts]
+    .filter(([, n]) => n >= 2)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "it"))
+    .slice(0, MAX_GENRE_FILTERS)
+    .map(([genre]) => genre);
+}
+
+/** The top genres, plus the selected one if new cards pushed it out of the top. */
+function genreFilters(games: Game[], filter: string): string[] {
+  const genres = topGenres(games);
+  const selected = filter.startsWith("g:") ? filter.slice(2) : null;
+  return selected && !genres.includes(selected) ? [...genres, selected] : genres;
+}
 
 export function Library({ focusId }: { focusId?: string }) {
   const all = useApp((s) => s.games);
@@ -27,26 +49,33 @@ export function Library({ focusId }: { focusId?: string }) {
   const launch = useApp((s) => s.launch);
   const setBackdrop = useApp((s) => s.setBackdrop);
   const sessionGame = useApp((s) => s.session?.gameId);
+  const suspended = useApp((s) => s.suspended);
   const collections = useApp((s) => s.collections);
-  // "all", a store, or `c:<collection id>`.
+  // "all", a store, `c:<collection id>` or `g:<genre>`.
   const [filter, setFilter] = useState<string>("all");
   const [sort, setSort] = useState<Sort>("name");
   const focused = useRef<Game | null>(null);
 
-  const games = useMemo(() => visibleGames(all), [all]);
+  const games = useMemo(() => libraryGames(visibleGames(all)), [all]);
   const filters = useMemo(
     () => [
       { key: "all", label: "Tutti" },
       ...STORES.filter((s) => games.some((g) => g.store === s)).map((s) => ({ key: s as string, label: STORE_LABEL[s] })),
       ...collections.filter((c) => c.gameIds.length).map((c) => ({ key: `c:${c.id}`, label: c.name })),
+      ...genreFilters(games, filter).map((genre) => ({ key: `g:${genre}`, label: genre })),
     ],
-    [games, collections],
+    [games, collections, filter],
   );
   const shown = useMemo(() => {
     const collection = filter.startsWith("c:") ? collections.find((c) => `c:${c.id}` === filter) : null;
-    return games
-      .filter((g) => filter === "all" || (collection ? collection.gameIds.includes(g.id) : g.store === (filter as Store)))
-      .sort(SORTERS[sort]);
+    const genre = filter.startsWith("g:") ? filter.slice(2) : null;
+    const matches = (g: Game) => {
+      if (filter === "all") return true;
+      if (collection) return collection.gameIds.includes(g.id);
+      if (genre) return (g.meta?.genres ?? []).includes(genre);
+      return g.store === (filter as Store);
+    };
+    return games.filter(matches).sort(SORTERS[sort]);
   }, [games, collections, filter, sort]);
 
   useScreenFocus(focusId, shown.length > 0);
@@ -128,6 +157,7 @@ export function Library({ focusId }: { focusId?: string }) {
               onFocus={onFocus}
               onSelect={onSelect}
               playing={sessionGame === g.id}
+              paused={suspended.some((p) => p.gameId === g.id)}
                   autofocus={i === 0}
             />
           ))}

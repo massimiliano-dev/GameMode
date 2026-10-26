@@ -2,15 +2,18 @@ import { AnimatePresence } from "motion/react";
 import { useEffect, useState } from "react";
 
 import { ActionSheet, type SheetAction } from "../components/ActionSheet";
+import { CaptureGallery } from "../components/CaptureGallery";
 import { CollectionsDialog } from "../components/CollectionsDialog";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { SavesDialog } from "../components/SavesDialog";
 import { Cover } from "../components/GameCard";
+import { GameInfo } from "../components/GameInfo";
 import { SteamExtras } from "../components/SteamExtras";
 import { StoreBadge, useHints, useScreenFocus } from "../components/common";
 import { useAction } from "../input/dispatcher";
 import { api, artUrl } from "../lib/api";
-import { formatLastPlayed, formatPlaytime, SHOP_LABEL } from "../lib/format";
+import { formatGameSize, formatLastPlayed, formatPlaytime, SHOP_LABEL, UPDATE_LABEL, updateProgress } from "../lib/format";
+import { isLegendary } from "../lib/legendary";
 import type { Game } from "../lib/types";
 import { useApp } from "../store/app";
 
@@ -19,6 +22,9 @@ type Dialog = "options" | "collections" | "saves" | "uninstall" | null;
 export function GameDetail({ gameId }: { gameId: string }) {
   const game = useApp((s) => s.games.find((g) => g.id === gameId));
   const session = useApp((s) => s.session);
+  const pausedSession = useApp((s) => s.suspended.find((p) => p.gameId === gameId));
+  const resumeSuspended = useApp((s) => s.resumeSuspended);
+  const closeSuspended = useApp((s) => s.closeSuspended);
   const collections = useApp((s) => s.collections);
   const launch = useApp((s) => s.launch);
   const toggleFavorite = useApp((s) => s.toggleFavorite);
@@ -27,15 +33,25 @@ export function GameDetail({ gameId }: { gameId: string }) {
   const uninstall = useApp((s) => s.uninstall);
   const setBackdrop = useApp((s) => s.setBackdrop);
   const back = useApp((s) => s.back);
+  const update = useApp((s) => s.gameUpdates[gameId] ?? (s.session?.gameId === gameId ? s.session.update : null));
+  const showGameUpdate = useApp((s) => s.showGameUpdate);
+  const refreshGameUpdates = useApp((s) => s.refreshGameUpdates);
+  const toast = useApp((s) => s.toast);
+  const storeDirect = useApp((s) => !!s.settings?.msstoreDirect);
   const [dialog, setDialog] = useState<Dialog>(null);
 
   useEffect(() => setBackdrop(gameId), [gameId, setBackdrop]);
   useScreenFocus(undefined, !!game);
-  useHints([
-    { button: "A", label: "Seleziona" },
-    { button: "menu", label: "Opzioni" },
-    { button: "B", label: "Indietro" },
-  ]);
+  const [shots, setShots] = useState(0);
+  useHints(
+    [
+      { button: "A", label: "Seleziona" },
+      ...(shots > 1 ? [{ button: "LT", alt: "RT", label: "Screenshot" } as const] : []),
+      { button: "menu", label: "Opzioni" },
+      { button: "B", label: "Indietro" },
+    ],
+    [shots > 1],
+  );
   useAction((action, repeat) => {
     if (action === "menu" && !repeat && game && !dialog) {
       setDialog("options");
@@ -57,13 +73,31 @@ export function GameDetail({ gameId }: { gameId: string }) {
   const logo = artUrl(game.artwork.logo, game.artworkCheckedAt);
   const mine = session?.gameId === game.id ? session : null;
   const inCollections = collections.filter((c) => c.gameIds.includes(game.id));
+  // Applications: opened, not played; no saves or uninstaller to offer.
+  const isApp = game.store === "app";
+  // Epic games GameMode installed or imported through legendary.
+  const legendary = isLegendary(game);
+  const runLegendary = (action: "update" | "repair") =>
+    void api
+      .legendaryGameAction(game.id, action)
+      .then(() => {
+        toast(action === "update" ? `Aggiornamento di ${game.name} avviato` : `Verifica dei file di ${game.name} avviata`);
+        void refreshGameUpdates();
+      })
+      .catch((e) => toast(String(e), "error"));
 
   const options: SheetAction[] = [
     ...(SHOP_LABEL[game.store]
       ? [{ label: "Pagina nello store", hint: "DLC, espansioni e aggiornamenti", onSelect: () => void openStore(game.store, game.id) }]
       : []),
-    ...(game.store !== "mock"
+    ...(game.store === "xbox" && storeDirect && !update
+      ? [{ label: "Cerca aggiornamenti", hint: "Dal Microsoft Store, senza aprire l'app Xbox", onSelect: () => void showGameUpdate(game) }]
+      : []),
+    ...(game.store !== "mock" && !isApp
       ? [{ label: "Salvataggi", hint: "Backup e ripristino", onSelect: () => setDialog("saves") }]
+      : []),
+    ...(legendary
+      ? [{ label: "Verifica e ripara", hint: "Controlla i file del gioco e scarica di nuovo quelli danneggiati", onSelect: () => runLegendary("repair") }]
       : []),
     {
       label: game.hidden ? "Mostra nella libreria" : "Nascondi",
@@ -73,7 +107,7 @@ export function GameDetail({ gameId }: { gameId: string }) {
         if (!game.hidden) back();
       },
     },
-    ...(game.store !== "mock"
+    ...(game.store !== "mock" && !isApp
       ? [{ label: game.store === "manual" ? "Rimuovi dalla libreria" : "Disinstalla", danger: true, onSelect: () => setDialog("uninstall") }]
       : []),
   ];
@@ -93,28 +127,58 @@ export function GameDetail({ gameId }: { gameId: string }) {
                 </span>
               ))}
             </div>
-    
+            {update && (
+              <p className="detail-update">
+                <strong>{UPDATE_LABEL[update.state]}</strong>
+                {updateProgress(update) && <span> · {updateProgress(update)}</span>}
+                {update.state === "available" && game.store === "steam" && (
+                  <span className="detail-update-hint"> Steam lo scarica quando avvii il gioco.</span>
+                )}
+              </p>
+            )}
+
             <div className="button-row detail-actions" data-nav-group="actions">
               {mine ? (
                 <>
                   <button type="button" className="btn btn-primary btn-play" data-nav data-nav-autofocus onClick={() => void api.resumeGame()}>
-                    {mine.phase === "launching" ? "Avvio in corso…" : "Torna al gioco"}
+                    {mine.phase === "launching" ? "Avvio in corso…" : isApp ? "Torna all'app" : "Torna al gioco"}
                   </button>
                   <button type="button" className="btn" data-nav onClick={() => void api.closeGame()}>
+                    {isApp ? "Chiudi app" : "Chiudi gioco"}
+                  </button>
+                </>
+              ) : pausedSession ? (
+                <>
+                  <button type="button" className="btn btn-primary btn-play" data-nav data-nav-autofocus onClick={() => void resumeSuspended(game.id)}>
+                    <span className="play-icon" aria-hidden>▶</span> Riprendi
+                  </button>
+                  <button type="button" className="btn" data-nav onClick={() => void closeSuspended(game.id)}>
                     Chiudi gioco
                   </button>
                 </>
               ) : (
                 <button type="button" className="btn btn-primary btn-play" data-nav data-nav-autofocus onClick={() => void launch(game.id)}>
-                  <span className="play-icon" aria-hidden>▶</span> Gioca
+                  <span className="play-icon" aria-hidden>▶</span> {isApp ? "Apri" : "Gioca"}
+                </button>
+              )}
+              {update && (game.store === "steam" || game.store === "xbox") && (
+                <button type="button" className="btn" data-nav onClick={() => void showGameUpdate(game)}>
+                  {game.store === "steam" ? "Download di Steam" : storeDirect ? "Aggiorna" : "Apri nell'app Xbox"}
+                </button>
+              )}
+              {update?.state === "available" && legendary && (
+                <button type="button" className="btn" data-nav onClick={() => runLegendary("update")}>
+                  Aggiorna
                 </button>
               )}
               <button type="button" className="btn" data-nav onClick={() => void toggleFavorite(game)}>
                 {game.favorite ? "★ Preferito" : "☆ Preferito"}
               </button>
-              <button type="button" className="btn" data-nav onClick={() => setDialog("collections")}>
-                Raccolte
-              </button>
+              {!isApp && (
+                <button type="button" className="btn" data-nav onClick={() => setDialog("collections")}>
+                  Raccolte
+                </button>
+              )}
               <button type="button" className="btn" data-nav aria-label="Altre opzioni" onClick={() => setDialog("options")}>
                 ··· Opzioni
               </button>
@@ -122,13 +186,19 @@ export function GameDetail({ gameId }: { gameId: string }) {
     
             <dl className="stats">
               <div className="stat">
-                <dt>Tempo di gioco</dt>
+                <dt>{isApp ? "Tempo di utilizzo" : "Tempo di gioco"}</dt>
                 <dd>{formatPlaytime(game.playtimeSecs)}</dd>
               </div>
               <div className="stat">
-                <dt>Ultima partita</dt>
+                <dt>{isApp ? "Ultimo utilizzo" : "Ultima partita"}</dt>
                 <dd>{formatLastPlayed(game.lastPlayed)}</dd>
               </div>
+              {formatGameSize(game) && (
+                <div className="stat">
+                  <dt>Spazio occupato</dt>
+                  <dd>{formatGameSize(game)}</dd>
+                </div>
+              )}
               {game.installDir && (
                 <div className="stat stat-wide">
                   <dt>Installato in</dt>
@@ -141,7 +211,9 @@ export function GameDetail({ gameId }: { gameId: string }) {
             <Cover game={game} />
           </div>
         </div>
+        {!isApp && <GameInfo game={game} onShots={setShots} />}
         {game.steamAppid && game.store === "steam" && <SteamExtras appid={game.steamAppid} />}
+        <CaptureGallery game={game} />
       </div>
       <AnimatePresence>
         {dialog === "options" && <ActionSheet key="options" title={game.name} actions={options} onClose={() => setDialog(null)} />}
@@ -168,5 +240,7 @@ export function GameDetail({ gameId }: { gameId: string }) {
 function uninstallText(game: Game) {
   if (game.store === "manual") return "Il gioco sparisce da GameMode, i suoi file restano dove sono.";
   if (game.store === "xbox") return "Il gioco viene rimosso dal PC. I salvataggi nel cloud restano sul tuo account Xbox.";
+  if (isLegendary(game)) return "I file del gioco vengono eliminati dal PC.";
+  if (game.store === "gog") return "Il gioco viene rimosso dal PC senza altre finestre. Windows potrebbe chiederti il permesso.";
   return "Si apre la disinstallazione dello store, che potrebbe chiederti un'ulteriore conferma.";
 }

@@ -1,16 +1,20 @@
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 
+import { CheatsPanel } from "../components/CheatsPanel";
 import { Toasts } from "../components/Chrome";
+import { PowerCountdown } from "../components/PowerCountdown";
 import { Cover } from "../components/GameCard";
 import { Glyph, useClock } from "../components/common";
+import { MusicPanel } from "../components/NowPlaying";
 import { Priority, useAction } from "../input/dispatcher";
 import { focusInitial } from "../input/focus";
 import { setupInput } from "../input/sources";
 import { api, on } from "../lib/api";
 import { formatClock, formatDate, formatPlaytime } from "../lib/format";
-import type { Volume } from "../lib/types";
+import type { Volume, VolumeEvent } from "../lib/types";
 import { useApp } from "../store/app";
+import { useIdle } from "../store/idle";
 import { QmButton, VolumeRow } from "./QuickMenu";
 
 const VOLUME_STEP = 0.05;
@@ -19,28 +23,68 @@ const VOLUME_STEP = 0.05;
 export function OverlayApp() {
   const session = useApp((s) => s.session);
   const game = useApp((s) => s.games.find((g) => g.id === s.session?.gameId));
+  const isApp = game?.store === "app";
   const controllers = useApp((s) => s.controllers);
   const toast = useApp((s) => s.toast);
   const now = useClock(1000);
   const [volume, setVolume] = useState<Volume | null>(null);
   const [armed, setArmed] = useState(false);
+  const [suspendArmed, setSuspendArmed] = useState(false);
+  const [suspending, setSuspending] = useState(false);
   const [openedAt, setOpenedAt] = useState(0);
+  const [wand, setWand] = useState(false);
+  const [view, setView] = useState<"menu" | "cheats">("menu");
+  const show = (next: "menu" | "cheats") => {
+    setView(next);
+    requestAnimationFrame(() => focusInitial());
+  };
+  // The window stays mounted when hidden: the mixer polls only while it shows.
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     void useApp.getState().init();
+    useIdle.getState().init();
     void setupInput();
     const refresh = () => {
       void api.getVolume().then(setVolume).catch(() => setVolume(null));
       void api.getSession().then((s) => useApp.setState({ session: s }));
+      void api.wandInstalled().then(setWand).catch(() => setWand(false));
+      // Settings are saved in the main window: re-read them at every opening.
+      void api.getSettings().then((settings) => useApp.setState({ settings })).catch(() => {});
       setArmed(false);
+      setSuspendArmed(false);
+      setSuspending(false);
+      setView("menu");
       setOpenedAt(Date.now());
       requestAnimationFrame(() => focusInitial());
     };
     refresh();
-    return on("overlay://open", refresh);
+    const unlisten = on("overlay://open", () => {
+      setOpen(true);
+      refresh();
+    });
+    const unlistenClose = on("overlay://close", () => setOpen(false));
+    const offVolume = on<VolumeEvent>("audio://volume", ({ level, muted }) => setVolume({ level, muted }));
+    return () => {
+      unlisten();
+      unlistenClose();
+      offVolume();
+    };
   }, []);
 
   const resume = () => void api.overlayHide(true);
+  const suspend = () => {
+    if (suspending) return;
+    // Online games kick a frozen player: ask first when an anti-cheat is around.
+    if (session?.antiCheat && !suspendArmed) return setSuspendArmed(true);
+    setSuspending(true);
+    // On success the backend hides the overlay itself; on failure it stays
+    // up, so the toast saying why can be read.
+    void useApp.getState().suspendGame().then((ok) => {
+      setSuspending(false);
+      if (!ok) setSuspendArmed(false);
+    });
+  };
 
   useAction((action, repeat) => {
     if (repeat) return true;
@@ -73,65 +117,92 @@ export function OverlayApp() {
               <Cover game={game} />
             </div>
             <div className="qm-game-info">
-              <span className="qm-label">In gioco</span>
+              <span className="qm-label">{isApp ? "In uso" : "In gioco"}</span>
               <span className="qm-game-name">{game.name}</span>
               <span className="qm-sub">{formatPlaytime(elapsed)}</span>
             </div>
           </div>
         )}
 
-        {controllers.length > 0 && (
-          <div className="overlay-pads">
-            {controllers.map((c) => (
-              <span key={c.slot} className="qm-sub">
-                Controller {c.slot + 1}: {c.wired ? "cablato" : ["scarico", "batteria bassa", "batteria media", "batteria piena"][c.level]}
-              </span>
-            ))}
+        {view === "cheats" ? (
+          <CheatsPanel onClose={() => show("menu")} />
+        ) : (
+          <>
+          {controllers.length > 0 && (
+            <div className="overlay-pads">
+              {controllers.map((c) => (
+                <span key={c.slot} className="qm-sub">
+                  {c.name}: {c.wired ? "cablato" : ["scarico", "batteria bassa", "batteria media", "batteria piena"][c.level]}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {volume && (
+            <VolumeRow
+              volume={volume}
+              onAdjust={(dir) => {
+                const level = Math.min(1, Math.max(0, Math.round((volume.level + dir * VOLUME_STEP) * 20) / 20));
+                setVolume({ ...volume, level });
+                void api.setVolume(level);
+              }}
+              onToggleMute={() => {
+                setVolume({ ...volume, muted: !volume.muted });
+                void api.setMuted(!volume.muted);
+              }}
+            />
+          )}
+
+          <MusicPanel active={open} showOpen />
+
+          <div className="qm-list">
+            <QmButton autofocus onClick={resume}>
+              {isApp ? "Torna all'app" : "Torna al gioco"}
+            </QmButton>
+            {session?.phase === "running" && !isApp && (
+              <QmButton onClick={() => void api.takeScreenshot().catch((e) => toast(String(e), "error"))}>
+                Scatta una schermata
+              </QmButton>
+            )}
+            {wand && game && !isApp && (
+              <>
+                <QmButton onClick={() => void api.openWandApp()}>App Wand: scegli le mod e premi Play</QmButton>
+                <QmButton onClick={() => void api.openWand()}>Overlay di Wand</QmButton>
+              </>
+            )}
+            {session?.phase === "running" && !isApp && <QmButton onClick={() => show("cheats")}>Trucchi</QmButton>}
+            <QmButton onClick={() => void api.overlayKeyboard()}>Tastiera</QmButton>
+            <QmButton onClick={() => void api.overlayToLauncher()}>Vai a GameMode</QmButton>
+            {session?.phase === "running" && !isApp && (
+              <QmButton armed={suspendArmed} confirmText="Non consigliato per i giochi online · premi di nuovo" onClick={suspend}>
+                Sospendi partita
+              </QmButton>
+            )}
+            <QmButton
+              danger
+              armed={armed}
+              onClick={() => {
+                if (!armed) return setArmed(true);
+                void api.closeGame().then((closed) => {
+                  if (!closed) toast(isApp ? "Nessuna app da chiudere" : "Nessun gioco da chiudere");
+                  void api.overlayHide(false);
+                });
+              }}
+            >
+              {isApp ? "Chiudi app" : "Chiudi gioco"}
+            </QmButton>
           </div>
+
+          <div className="qm-hints">
+            <span className="hint"><Glyph button="A" /> Seleziona</span>
+            <span className="hint"><Glyph button="B" /> {isApp ? "Torna all'app" : "Torna al gioco"}</span>
+            <span className="hint"><Glyph button="view" /><Glyph button="menu" /> Apri/chiudi</span>
+          </div>
+          </>
         )}
-
-        {volume && (
-          <VolumeRow
-            volume={volume}
-            onAdjust={(dir) => {
-              const level = Math.min(1, Math.max(0, Math.round((volume.level + dir * VOLUME_STEP) * 20) / 20));
-              setVolume({ ...volume, level });
-              void api.setVolume(level);
-            }}
-            onToggleMute={() => {
-              setVolume({ ...volume, muted: !volume.muted });
-              void api.setMuted(!volume.muted);
-            }}
-          />
-        )}
-
-        <div className="qm-list">
-          <QmButton autofocus onClick={resume}>
-            Torna al gioco
-          </QmButton>
-          <QmButton onClick={() => void api.overlayToLauncher()}>Vai a GameMode</QmButton>
-          <QmButton
-            danger
-            armed={armed}
-            onClick={() => {
-              if (!armed) return setArmed(true);
-              void api.closeGame().then((closed) => {
-                if (!closed) toast("Nessun gioco da chiudere");
-                void api.overlayHide(false);
-              });
-            }}
-          >
-            Chiudi gioco
-          </QmButton>
-        </div>
-
-        <div className="qm-hints">
-          <span className="hint"><Glyph button="A" /> Seleziona</span>
-          <span className="hint"><Glyph button="B" /> Torna al gioco</span>
-          <span className="hint"><Glyph button="view" /><Glyph button="menu" /> Apri/chiudi</span>
-        </div>
       </motion.aside>
       <Toasts />
+      <PowerCountdown />
     </div>
   );
 }

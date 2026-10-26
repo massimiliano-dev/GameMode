@@ -9,24 +9,59 @@ mod artwork;
 mod assist;
 mod autostart;
 mod catalog;
+mod cheats;
 mod db;
 mod devices;
+mod diag;
 mod display;
+mod freeze;
 mod gamepad;
+mod haptics;
+mod hidpad;
+mod keyboard;
 mod launcher;
 mod library;
+mod live;
+mod media;
+mod metadata;
+mod mixer;
 mod model;
 mod overlay;
+mod overlay_pause;
 mod performance;
 mod procinfo;
 mod saves;
+mod shell;
+mod shutdown;
+mod splash;
 #[cfg(windows)]
 mod sqlite;
+mod status;
 mod steam_web;
+mod storage;
 mod storefront;
 mod system;
+mod tray;
+mod uia;
 mod uninstall;
+mod updates;
+mod wand;
 mod window;
+mod audio_events;
+mod osd;
+mod idle;
+mod lifecycle;
+mod winupdate;
+mod capture;
+mod capture_osd;
+mod companion;
+mod legendary;
+mod steam_direct;
+mod gamebar;
+mod webview2;
+mod direct;
+mod gog_store;
+mod msstore;
 
 use db::Db;
 use launcher::{Launcher, SessionState};
@@ -44,6 +79,10 @@ pub struct AppState {
     pub steam: steam_web::SteamCache,
     scanning: AtomicBool,
 }
+
+/// The main window's X goes to the tray (desktop-once session) instead of
+/// quitting GameMode.
+static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
 
 type CmdResult<T> = Result<T, String>;
 
@@ -66,7 +105,10 @@ fn scan(app: &AppHandle) -> LibraryUpdate {
         let data = state.db.lock();
         (data.manual_games.clone(), data.settings.clone())
     };
-    let result = library::scan_all(library::providers(manual, &settings), &settings.disabled_stores);
+    let mut providers = library::providers(manual, &settings);
+    providers.push(Box::new(library::apps::AppsProvider { icon_dir: library::apps::icon_dir(&state.data_dir) }));
+    let mut result = library::scan_all(providers, &settings.disabled_stores);
+    library::apps::separate_from_games(&mut result.games);
     let games = state
         .db
         .update(|d| {
@@ -74,18 +116,74 @@ fn scan(app: &AppHandle) -> LibraryUpdate {
             d.view()
         })
         .unwrap_or_else(|e| {
-            eprintln!("saving library failed: {e:#}");
+            log::error!("saving library failed: {e:#}");
             state.db.lock().view()
         });
     let update = LibraryUpdate { games, errors: result.errors };
     let _ = app.emit("library://updated", &update);
     artwork::refresh(app, false);
+    storage::measure(app);
+    metadata::refresh(app, false);
     update
 }
 
 #[tauri::command]
 fn get_library(state: State<AppState>) -> Vec<Game> {
     state.db.lock().view()
+}
+
+#[tauri::command]
+fn wand_installed() -> bool {
+    wand::installed()
+}
+
+#[tauri::command]
+fn open_wand(app: AppHandle) {
+    wand::open(&app);
+}
+
+#[tauri::command]
+fn open_wand_app(app: AppHandle) {
+    wand::open_app(&app);
+}
+
+#[tauri::command]
+async fn cheats_status(app: AppHandle) -> cheats::CheatsStatus {
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || cheats::status(&handle))
+        .await
+        .unwrap_or_else(|_| cheats::CheatsStatus { available: false, reason: None, scan: None, frozen: Vec::new() })
+}
+
+#[tauri::command]
+async fn cheats_search(app: AppHandle, value: String, kind: cheats::Kind, fresh: bool) -> CmdResult<cheats::ScanView> {
+    blocking(move || cheats::search(&app, &value, kind, fresh)).await
+}
+
+#[tauri::command]
+fn cheats_set(app: AppHandle, address: u64, value: String) -> CmdResult<()> {
+    cheats::set(&app, address, &value).map_err(err)
+}
+
+#[tauri::command]
+fn cheats_freeze(app: AppHandle, address: u64, value: Option<String>) -> CmdResult<()> {
+    cheats::freeze(&app, address, value.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+fn cheats_unfreeze(address: u64) {
+    cheats::unfreeze(address);
+}
+
+#[tauri::command]
+fn cheats_reset() {
+    cheats::reset();
+}
+
+#[tauri::command]
+async fn get_game_updates(app: AppHandle) -> Vec<updates::GameUpdate> {
+    let games = app.state::<AppState>().db.lock().view();
+    tauri::async_runtime::spawn_blocking(move || updates::all(&games)).await.unwrap_or_default()
 }
 
 #[tauri::command]
@@ -100,10 +198,17 @@ async fn rescan_library(app: AppHandle) -> CmdResult<LibraryUpdate> {
     result
 }
 
+/// Off the main thread: freezing the game an app makes room for, or
+/// starting Explorer, takes seconds.
 #[tauri::command]
-fn launch_game(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<()> {
-    let game = state.db.lock().game(&id).cloned().ok_or("Gioco non trovato")?;
-    launcher::launch(&app, &game).map_err(|e| format!("{e:#}"))
+async fn launch_game(app: AppHandle, id: String) -> CmdResult<()> {
+    let game = app.state::<AppState>().db.lock().game(&id).cloned().ok_or("Gioco non trovato")?;
+    log::info!("launching {} ({})", game.name, game.id);
+    let handle = app.clone();
+    blocking(move || {
+        launcher::launch(&handle, &game).inspect_err(|e| log::warn!("launching {} failed: {e:#}", game.name))
+    })
+    .await
 }
 
 /// Changes the active profile's state about one game and returns its new view.
@@ -241,11 +346,24 @@ fn get_settings(state: State<AppState>) -> Settings {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> CmdResult<Settings> {
-    let key_changed = state.db.lock().settings.steamgriddb_key != settings.steamgriddb_key;
+    let (key_changed, igdb_changed) = {
+        let old = &state.db.lock().settings;
+        (
+            old.steamgriddb_key != settings.steamgriddb_key,
+            old.igdb_client_id != settings.igdb_client_id || old.igdb_client_secret != settings.igdb_client_secret,
+        )
+    };
     state.db.update(|d| d.settings = settings.clone()).map_err(err)?;
     if key_changed {
         artwork::refresh(&app, true);
     }
+    if igdb_changed && metadata::igdb_credentials(&settings).is_some() {
+        metadata::refresh(&app, true);
+    }
+    companion::sync(&app);
+    hidpad::set_enabled(settings.hid_pads);
+    legendary::set_enabled(settings.epic_legendary);
+    gamebar::apply(&state.data_dir, gamebar::wanted(shell::status().enabled, settings.guide_to_gamemode));
     Ok(settings)
 }
 
@@ -274,9 +392,34 @@ fn get_session(state: State<AppState>) -> Option<SessionState> {
     state.launcher.current()
 }
 
+/// The games frozen by Quick Resume.
 #[tauri::command]
-fn resume_game(state: State<AppState>) -> bool {
-    window::focus_process(&state.launcher.running_pids())
+fn get_suspended(state: State<AppState>) -> Vec<SessionState> {
+    state.launcher.suspended()
+}
+
+/// Quick Resume: freezes the running game and comes back to GameMode.
+#[tauri::command]
+async fn suspend_game(app: AppHandle) -> CmdResult<()> {
+    let handle = app.clone();
+    blocking(move || launcher::suspend_current(&handle)).await
+}
+
+#[tauri::command]
+async fn resume_suspended(app: AppHandle, game_id: String) -> CmdResult<()> {
+    let handle = app.clone();
+    blocking(move || launcher::resume_suspended(&handle, &game_id)).await
+}
+
+#[tauri::command]
+async fn close_suspended(app: AppHandle, game_id: String) -> CmdResult<()> {
+    let handle = app.clone();
+    blocking(move || launcher::close_suspended(&handle, &game_id)).await
+}
+
+#[tauri::command]
+fn resume_game(app: AppHandle, state: State<AppState>) -> bool {
+    window::resume_game(&app, &state.launcher.running_pids())
 }
 
 #[tauri::command]
@@ -285,8 +428,33 @@ fn close_game(app: AppHandle) -> bool {
 }
 
 #[tauri::command]
-fn power(action: system::PowerAction) -> CmdResult<()> {
-    system::power(action).map_err(err)
+async fn power(app: AppHandle, action: system::PowerAction) -> CmdResult<()> {
+    tauri::async_runtime::spawn_blocking(move || power_now(&app, action)).await.map_err(err)?.map_err(err)
+}
+
+/// Runs a power action, the session-ending ones after the teardown. Blocks
+/// for seconds: call it off the main thread (the `power` command, the tray,
+/// the inactivity thread).
+pub(crate) fn power_now(app: &AppHandle, action: system::PowerAction) -> anyhow::Result<()> {
+    // Games are closed and saved here, off the main thread and before
+    // Windows asks: inside WM_QUERYENDSESSION a slow teardown counts as hung
+    // and EWX_FORCEIFHUNG would kill GameMode halfway. Windows' later ask
+    // finds the teardown done and gets its answer at once.
+    let ends_session = cfg!(windows) && action.ends_session();
+    if ends_session {
+        shutdown::teardown(app, shutdown::Reason::Session);
+    }
+    let result = system::power(action);
+    if result.is_err() && ends_session {
+        shutdown::cancelled();
+    }
+    result
+}
+
+/// Which power actions this PC supports (sleep and hibernation can be off).
+#[tauri::command]
+fn power_options() -> system::PowerOptions {
+    system::power_options()
 }
 
 #[tauri::command]
@@ -304,12 +472,52 @@ fn set_muted(muted: bool) -> CmdResult<()> {
     system::set_muted(muted).map_err(err)
 }
 
+/// What the system's media session plays (Spotify, a browser…), if anything.
+#[tauri::command]
+fn media_now_playing() -> Option<media::NowPlaying> {
+    media::now_playing()
+}
+
+#[tauri::command]
+async fn media_control(action: media::MediaAction) -> CmdResult<()> {
+    blocking(move || media::control(action)).await
+}
+
+/// Opens Spotify; with a game running it goes right back behind the game.
+#[tauri::command]
+async fn open_music(app: AppHandle) -> CmdResult<()> {
+    let pids = app.state::<AppState>().launcher.running_pids();
+    let handle = app.clone();
+    blocking(move || media::open_music(&handle, pids)).await
+}
+
+/// Per-app volumes on the default output, game first.
+#[tauri::command]
+async fn app_volumes(state: State<'_, AppState>) -> CmdResult<Vec<mixer::AppVolume>> {
+    let pids = state.launcher.running_pids();
+    blocking(move || mixer::app_volumes(&pids)).await
+}
+
+#[tauri::command]
+async fn set_app_volume(state: State<'_, AppState>, key: String, level: f32) -> CmdResult<()> {
+    let pids = state.launcher.running_pids();
+    blocking(move || mixer::set_level(&key, level, &pids)).await
+}
+
+#[tauri::command]
+async fn set_app_muted(state: State<'_, AppState>, key: String, muted: bool) -> CmdResult<()> {
+    let pids = state.launcher.running_pids();
+    blocking(move || mixer::set_muted(&key, muted, &pids)).await
+}
+
 /// Closes the overlay; `resume` hands the screen back to the game.
 #[tauri::command]
 fn overlay_hide(app: AppHandle, state: State<AppState>, resume: bool) {
     overlay::hide(&app);
     if resume {
-        window::focus_process(&state.launcher.running_pids());
+        let pids = state.launcher.running_pids();
+        window::resume_game(&app, &pids);
+        overlay::after_resume(&app, pids);
     }
 }
 
@@ -320,9 +528,53 @@ fn overlay_to_launcher(app: AppHandle) {
     window::bring_to_front(&app);
 }
 
+/// From the overlay: the system keyboard over the game.
+#[tauri::command]
+fn overlay_keyboard(app: AppHandle, state: State<AppState>) {
+    let pids = state.launcher.running_pids();
+    keyboard::open_over_game(&app, pids);
+}
+
+#[tauri::command]
+fn keyboard_hide(app: AppHandle) {
+    keyboard::dismiss(&app);
+}
+
+/// The system keyboard types into the focused window.
+#[tauri::command]
+fn type_text(text: String) {
+    keyboard::type_text(&text);
+}
+
+/// `key`: enter, backspace, escape, tab or space.
+#[tauri::command]
+fn type_key(key: String) -> CmdResult<()> {
+    let key = keyboard::key_named(&key).ok_or_else(|| format!("unknown key: {key}"))?;
+    assist::press(key);
+    Ok(())
+}
+
 #[tauri::command]
 fn exit_to_desktop(app: AppHandle) {
+    log::info!("exit to desktop");
+    // Nothing stays frozen behind GameMode's back.
+    launcher::thaw_all(&app);
+    // In console mode there is no desktop until Explorer runs.
+    shell::start_explorer();
     window::exit_to_desktop(&app);
+}
+
+#[tauri::command]
+fn get_console_mode() -> shell::ShellStatus {
+    shell::status()
+}
+
+#[tauri::command]
+fn set_console_mode(state: State<AppState>, enabled: bool) -> CmdResult<shell::ShellStatus> {
+    let status = shell::set_enabled(enabled).map_err(|e| format!("{e:#}"))?;
+    let setting = state.db.lock().settings.guide_to_gamemode;
+    gamebar::apply(&state.data_dir, gamebar::wanted(status.enabled, setting));
+    Ok(status)
 }
 
 #[tauri::command]
@@ -332,7 +584,8 @@ fn toggle_fullscreen(app: AppHandle) {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
-    display::reset_mode();
+    log::info!("quit");
+    shutdown::teardown(&app, shutdown::Reason::Quit);
     app.exit(0);
 }
 
@@ -414,6 +667,27 @@ fn get_controllers() -> Vec<gamepad::Controller> {
     gamepad::controllers()
 }
 
+/// Interface vibration. During a game only `tick` goes through: the game
+/// drives the motors and the last writer wins.
+#[tauri::command]
+fn rumble(state: State<AppState>, pattern: String) {
+    if !state.native_gamepad.load(Ordering::SeqCst) {
+        return;
+    }
+    let Some(pattern) = haptics::Pattern::parse(&pattern) else { return };
+    let playing = state.launcher.current().is_some_and(|s| s.phase == launcher::Phase::Running);
+    if playing && pattern != haptics::Pattern::Tick {
+        return;
+    }
+    let level = state.db.lock().settings.haptics;
+    haptics::rumble(pattern, level);
+}
+
+#[tauri::command]
+async fn get_system_status() -> status::SystemInfo {
+    tauri::async_runtime::spawn_blocking(status::snapshot).await.unwrap_or_default()
+}
+
 #[tauri::command]
 fn get_autostart(app: AppHandle) -> bool {
     autostart::is_enabled(&app).unwrap_or(false)
@@ -468,11 +742,22 @@ fn start_assist(app: &AppHandle, needs_keys: bool) {
 
 #[tauri::command]
 async fn install_catalog_item(app: AppHandle, id: String) -> CmdResult<()> {
+    install_catalog(&app, id).await
+}
+
+/// Opens a catalog item's install dialog in its store, with the controller
+/// hand-off; shared with the phone companion.
+pub(crate) async fn install_catalog(app: &AppHandle, id: String) -> CmdResult<()> {
+    // GameMode installs it by itself when it can (GOG account, Microsoft Store).
+    let name = app.state::<AppState>().catalog.name_of(&id).unwrap_or_else(|| id.clone());
+    if let Some(result) = direct::start(app, &id, &name).await {
+        return result;
+    }
     // Cloud games run in Edge, which handles the controller itself and needs
     // View for the game; the Xbox app and Store handle the controller too.
     if !id.starts_with("cloud:") {
-        let native_controller = id.starts_with("gamepass:") || (id.starts_with("steam:") && storefront::uses_big_picture(&app));
-        start_assist(&app, !native_controller);
+        let native_controller = id.starts_with("gamepass:") || (id.starts_with("steam:") && storefront::uses_big_picture(app));
+        start_assist(app, !native_controller);
     }
     if let Some(appid) = id.strip_prefix("steam:") {
         catalog::watch_steam_install(app.clone(), appid.to_string());
@@ -480,6 +765,46 @@ async fn install_catalog_item(app: AppHandle, id: String) -> CmdResult<()> {
     // Launching may wait on Windows (WinRT launcher): keep it off the main thread.
     let handle = app.clone();
     blocking(move || catalog::install(&handle, &id)).await
+}
+
+/// Whether GameMode downloads and installs this catalog item itself
+/// (no store window to hand off to).
+#[tauri::command]
+fn direct_install_available(app: AppHandle, id: String) -> bool {
+    direct::available(&app, &id)
+}
+
+#[tauri::command]
+fn cancel_direct_install(id: String) -> bool {
+    direct::cancel(&id)
+}
+
+#[tauri::command]
+fn gog_status(app: AppHandle) -> gog_store::GogStatus {
+    gog_store::status(&app)
+}
+
+/// Opens GOG's login page; false when the user closed it.
+#[tauri::command]
+async fn gog_login(app: AppHandle) -> CmdResult<bool> {
+    gog_store::login(&app).await.map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn gog_logout(app: AppHandle) {
+    gog_store::logout(&app).await;
+}
+
+/// Starts a Store game's update through the Store's install service; false
+/// when there is none (or it isn't available).
+#[tauri::command]
+async fn update_store_game(app: AppHandle, id: String) -> CmdResult<bool> {
+    let game = app.state::<AppState>().db.lock().game(&id).cloned().ok_or("Gioco non trovato")?;
+    if !app.state::<AppState>().db.lock().settings.msstore_direct {
+        return Ok(false);
+    }
+    let handle = app.clone();
+    blocking(move || msstore::update(&handle, &game)).await
 }
 
 #[tauri::command]
@@ -586,7 +911,8 @@ async fn backup_all(app: AppHandle) -> CmdResult<BackupAll> {
     let (data_dir, root) = (state.data_dir.clone(), backup_root(&state));
     blocking(move || {
         let mut out = BackupAll { saved: 0, skipped: 0 };
-        for game in &games {
+        // Applications have no saves.
+        for game in games.iter().filter(|g| g.store != model::Store::App) {
             match saves::backup(&data_dir, &root, game, false) {
                 Ok(_) => out.saved += 1,
                 Err(_) => out.skipped += 1,
@@ -619,14 +945,42 @@ async fn install_update(app: AppHandle) -> CmdResult<()> {
     let Some(update) = app.updater().map_err(err)?.check().await.map_err(err)? else {
         return Err("Nessun aggiornamento disponibile".into());
     };
+    log::info!("installing update {}", update.version);
+    // The console-mode watchdog must not open the desktop during the restart.
+    shell::mark_updating();
     update.download_and_install(|_, _| {}, || {}).await.map_err(err)?;
     display::reset_mode();
     app.restart();
 }
 
+/// Windows Update's view: pending updates and whether a restart installs them.
+/// `force` asks Microsoft's servers (slow); otherwise the cached answer.
+#[tauri::command]
+async fn system_updates(app: AppHandle, force: bool) -> winupdate::SystemUpdates {
+    if !force {
+        if let Some(cached) = winupdate::cached() {
+            return cached;
+        }
+    }
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || winupdate::refresh(&handle, force))
+        .await
+        .unwrap_or_else(|e| winupdate::SystemUpdates { state: winupdate::SystemUpdateState::Unknown, items: Vec::new(), checked_at: None, error: Some(e.to_string()) })
+}
+
 #[tauri::command]
 fn refresh_artwork(app: AppHandle) {
     artwork::refresh(&app, true);
+}
+
+#[tauri::command]
+fn refresh_metadata(app: AppHandle) {
+    metadata::refresh(&app, true);
+}
+
+#[tauri::command]
+fn metadata_running() -> bool {
+    metadata::is_running()
 }
 
 #[tauri::command]
@@ -643,10 +997,270 @@ async fn open_store(app: AppHandle, store: model::Store, game_id: Option<String>
     blocking(move || storefront::open(&handle, store, game.as_ref())).await
 }
 
+/// "Shut down in…": a power action after `mode`, with a one-minute warning.
+#[tauri::command]
+fn schedule_power(app: AppHandle, action: system::PowerAction, mode: idle::PowerMode) -> idle::PowerSchedule {
+    idle::schedule(&app, action, mode)
+}
+
+#[tauri::command]
+fn cancel_power(app: AppHandle) {
+    idle::cancel(&app);
+}
+
+#[tauri::command]
+fn get_power_schedule() -> Option<idle::PowerSchedule> {
+    idle::current_schedule()
+}
+
+/// Rest mode: screen off now, downloads go on, any input brings it back.
+#[tauri::command]
+fn rest_mode(app: AppHandle) {
+    idle::rest(&app);
+}
+
+/// Leaves the screensaver or turns the display back on.
+#[tauri::command]
+fn idle_wake() {
+    idle::wake();
+}
+
+/// The frontend saw input (Gamepad API fallback, dev machines).
+#[tauri::command]
+fn touch_input() {
+    idle::touch_input();
+}
+
+/// Drives, their free space and what the library takes on each. With
+/// `measure`, sizes still unknown get measured in the background meanwhile.
+#[tauri::command]
+async fn storage_overview(app: AppHandle, measure: Option<bool>) -> CmdResult<storage::Overview> {
+    if measure == Some(true) {
+        storage::measure(&app);
+    }
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || storage::overview(&handle)).await.map_err(err)
+}
+
+/// What the cleanup would free; with `apply`, frees it.
+#[tauri::command]
+async fn storage_cleanup(app: AppHandle, apply: bool) -> CmdResult<storage::Cleanup> {
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || storage::cleanup(&handle, apply)).await.map_err(err)
+}
+
+/// Measures again every game folder walked before (not the sizes a store
+/// manifest declares).
+#[tauri::command]
+fn storage_remeasure(app: AppHandle) {
+    storage::remeasure(&app);
+}
+
+/// How this GameMode came up: a normal start, a restart by the watchdog
+/// after a crash, or safe mode after crashes in a row.
+#[tauri::command]
+fn startup_info() -> diag::StartupInfo {
+    // The main window's script got this far: its WebView2 runtime works.
+    webview2::confirm();
+    diag::startup_info(shell::recovered_count(), shell::safe_mode())
+}
+
+/// The last `lines` lines of the log.
+#[tauri::command]
+fn read_log(lines: usize) -> String {
+    diag::read_log(lines.clamp(1, 2000))
+}
+
+/// Saves the log where the user picks; `None` when the dialog is dismissed.
+#[tauri::command]
+async fn export_log(app: AppHandle) -> CmdResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog().file().set_file_name("gamemode-log.txt").add_filter("Testo", &["txt"]).blocking_save_file()
+    })
+    .await
+    .map_err(err)?;
+    let Some(path) = picked else { return Ok(None) };
+    let path = path.into_path().map_err(err)?;
+    diag::export_to(&path).map_err(err)?;
+    Ok(Some(path.display().to_string()))
+}
+
+#[tauri::command]
+fn clear_crashes() {
+    diag::clear_crashes();
+}
+
+/// A screenshot of the running game, from the overlay. `None`: it failed and
+/// the in-game card already says why.
+#[tauri::command]
+async fn take_screenshot(app: AppHandle) -> CmdResult<Option<capture::Capture>> {
+    let handle = app.clone();
+    blocking(move || capture::take(&handle)).await
+}
+
+/// Screenshots, newest first; of one game when `game_id` is given.
+#[tauri::command]
+async fn list_captures(app: AppHandle, game_id: Option<String>) -> Vec<capture::Capture> {
+    let root = capture::root(&app.state::<AppState>().data_dir);
+    tauri::async_runtime::spawn_blocking(move || capture::list(&root, game_id.as_deref())).await.unwrap_or_default()
+}
+
+#[tauri::command]
+fn delete_capture(state: State<AppState>, path: PathBuf) -> CmdResult<()> {
+    capture::delete(&capture::root(&state.data_dir), &path).map_err(|e| format!("{e:#}"))
+}
+
+/// Opens the screenshots folder (of one game, or all) in Explorer.
+#[tauri::command]
+fn open_captures_folder(app: AppHandle, state: State<AppState>, game_id: Option<String>) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = capture::folder_of(&capture::root(&state.data_dir), game_id.as_deref());
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(err)
+}
+
+/// What the in-game card is showing, for its page when it loads.
+#[tauri::command]
+fn capture_notice() -> Option<capture_osd::Notice> {
+    capture_osd::current()
+}
+
+/// The phone companion's address, QR code, pairing code and firewall state.
+#[tauri::command]
+async fn companion_status(app: AppHandle) -> CmdResult<companion::Status> {
+    blocking(move || Ok(companion::status(&app))).await
+}
+
+/// Adds the firewall rule for the companion (one UAC prompt). False when refused.
+#[tauri::command]
+async fn companion_firewall() -> CmdResult<bool> {
+    blocking(companion::firewall_allow).await
+}
+
+/// Reads legendary's and the Epic Games Launcher's files: off the main thread.
+#[tauri::command]
+async fn legendary_status() -> CmdResult<legendary::Status> {
+    blocking(|| Ok(legendary::status())).await
+}
+
+/// Switches Epic games over to legendary (downloading it the first time) or back.
+#[tauri::command]
+async fn legendary_enable(app: AppHandle, on: bool) -> CmdResult<Settings> {
+    if on {
+        legendary::ensure_ready(&app).await.map_err(|e| format!("{e:#}"))?;
+    }
+    let settings = app
+        .state::<AppState>()
+        .db
+        .update(|d| {
+            d.settings.epic_legendary = on;
+            d.settings.clone()
+        })
+        .map_err(err)?;
+    legendary::set_enabled(on);
+    catalog::invalidate(&app);
+    legendary::changed(&app);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        scan(&handle);
+    });
+    Ok(settings)
+}
+
+/// Async: a window built from a synchronous command deadlocks on Windows.
+#[tauri::command]
+async fn legendary_login(app: AppHandle) -> CmdResult<()> {
+    legendary::login(&app).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn legendary_import_auth(app: AppHandle) -> CmdResult<String> {
+    blocking(move || legendary::import_auth(&app)).await
+}
+
+#[tauri::command]
+async fn legendary_logout(app: AppHandle) -> CmdResult<()> {
+    blocking(move || legendary::logout(&app)).await
+}
+
+#[tauri::command]
+async fn legendary_import_games(app: AppHandle) -> CmdResult<()> {
+    blocking(move || legendary::import_games(&app)).await
+}
+
+#[tauri::command]
+fn legendary_jobs() -> Vec<legendary::jobs::Job> {
+    legendary::jobs::list()
+}
+
+#[tauri::command]
+async fn legendary_install(app: AppHandle, app_name: String, base_path: Option<PathBuf>) -> CmdResult<()> {
+    blocking(move || legendary::install(&app, &app_name, base_path)).await
+}
+
+/// `action`: "update" or "repair".
+#[tauri::command]
+async fn legendary_game_action(app: AppHandle, id: String, action: String) -> CmdResult<()> {
+    let kind = match action.as_str() {
+        "update" => legendary::jobs::Kind::Update,
+        "repair" => legendary::jobs::Kind::Repair,
+        _ => return Err("Operazione non valida".into()),
+    };
+    let game = app.state::<AppState>().db.lock().game(&id).cloned().ok_or("Gioco non trovato")?;
+    blocking(move || legendary::game_action(&app, &game, kind)).await
+}
+
+#[tauri::command]
+async fn legendary_cancel(app: AppHandle, job_id: u64) -> CmdResult<()> {
+    blocking(move || {
+        legendary::jobs::cancel(&app, job_id);
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn legendary_install_targets() -> Vec<legendary::InstallTarget> {
+    tauri::async_runtime::spawn_blocking(legendary::install_targets).await.unwrap_or_default()
+}
+
+/// The launcher painted its first screen: show it, drop the splash.
+#[tauri::command]
+fn app_ready(app: AppHandle, window: tauri::WebviewWindow) {
+    if window.label() == "main" {
+        splash::ready(&app);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // The console-mode watchdog is this same executable with `--watchdog`.
+    if let Some(pid) = shell::watchdog_pid() {
+        diag::init("watchdog");
+        shell::run_watchdog(pid);
+        return;
+    }
+    diag::init("app");
+    diag::install_panic_hook();
+    diag::quiet_crash_dialogs();
+    log::info!(
+        "GameMode {} starting, args {:?}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::args().skip(1).collect::<Vec<_>>()
+    );
+    let context = tauri::generate_context!();
+    // Before anything slow: the screen must not stay black at sign-in.
+    splash::begin(&context.config().identifier);
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| window::bring_to_front(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // On the desktop for once, Explorer runs the `Run` entries itself,
+            // GameMode's included: that copy must not pull us out of the tray.
+            if shell::status().desktop_once && args.iter().any(|a| a == autostart::ARG) {
+                return;
+            }
+            window::bring_to_front(app)
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -654,8 +1268,13 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![autostart::ARG])))
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
+            live::init(&data_dir);
+            overlay_pause::recover();
+            let live_file = live::file_in(&data_dir);
             let db = Db::open(&data_dir)?;
+            legendary::init(&data_dir, db.lock().settings.epic_legendary);
             db.update(|d| d.upgrade_artwork(artwork::PIPELINE_VERSION))?;
+            db.update(|d| d.upgrade_meta(metadata::PIPELINE_VERSION))?;
             app.manage(AppState {
                 db,
                 launcher: Launcher::default(),
@@ -668,12 +1287,69 @@ pub fn run() {
             });
 
             let handle = app.handle().clone();
+            let console = shell::status().active;
+            let safe = shell::safe_mode();
+            log::info!(
+                "console mode {}, recovered {}, safe mode {}, after update {}",
+                if console { "on" } else { "off" },
+                shell::recovered_count(),
+                safe,
+                shell::restarted_for_update()
+            );
+            // In console mode the Xbox button opens GameMode, not Game Bar
+            // (given back if console mode went off meanwhile).
+            {
+                let state = app.state::<AppState>();
+                let setting = state.db.lock().settings.guide_to_gamemode;
+                gamebar::apply(&state.data_dir, gamebar::wanted(shell::status().enabled, setting));
+            }
+            if console {
+                // GameMode is the shell: do Explorer's sign-in chores.
+                shell::spawn_watchdog(&live_file);
+                shell::keep_desktop_hidden(handle.clone());
+                // After an update or a crash the startup apps are already running.
+                if !shell::restarted_for_update() && shell::recovered_count() == 0 {
+                    std::thread::spawn(shell::run_startup_apps);
+                }
+                if let Some(w) = window::main_window(&handle) {
+                    let _ = w.set_fullscreen(true);
+                }
+            } else if shell::status().desktop_once {
+                // Signed in on the Windows desktop for once: GameMode waits
+                // in the tray until asked for.
+                tray::create(&handle);
+                shell::guard_desktop_once(handle.clone());
+                if let Some(w) = window::main_window(&handle) {
+                    // After an update the user was looking at GameMode.
+                    if !shell::restarted_for_update() {
+                        let _ = w.hide();
+                        splash::stay_hidden();
+                    }
+                    // The X goes back to the tray, like any tray app: a
+                    // destroyed main window would leave the tray's "Apri
+                    // GameMode" with nothing to show. The process stays
+                    // alive, so the TV mode must go now, not at exit.
+                    let hidden = w.clone();
+                    CLOSE_TO_TRAY.store(true, Ordering::SeqCst);
+                    w.on_window_event(move |e| {
+                        if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+                            api.prevent_close();
+                            display::reset_mode();
+                            let _ = hidden.set_fullscreen(false);
+                            let _ = hidden.hide();
+                        }
+                    });
+                }
+            }
             autostart::repair(&handle);
+            webview2::spawn_install();
             if autostart::launched_at_login() {
                 // Explorer is still settling at login and tends to take the
                 // foreground back: claim it again once things calm down.
                 let h = handle.clone();
                 std::thread::spawn(move || {
+                    // The window only shows once the first screen is up.
+                    splash::wait_settled();
                     for delay in [3, 8] {
                         std::thread::sleep(std::time::Duration::from_secs(delay));
                         if !window::is_foreground(&h) {
@@ -682,21 +1358,49 @@ pub fn run() {
                     }
                 });
             }
-            if window::wants_fullscreen(&handle) {
+            // Safe mode stays a window over the desktop, with no TV mode.
+            if !safe && window::wants_fullscreen(&handle) && (!shell::status().desktop_once || shell::restarted_for_update()) {
                 window::apply_tv(&handle);
                 if let Some(w) = window::main_window(&handle) {
                     let _ = w.set_fullscreen(true);
                 }
             }
-            if app.state::<AppState>().db.lock().settings.preload_steam {
-                std::thread::spawn(launcher::preload_steam);
+            // Safe mode starts as little as possible besides GameMode itself.
+            if !safe && app.state::<AppState>().db.lock().settings.preload_steam {
+                splash::after_startup(launcher::preload_steam);
             }
             overlay::create(&handle);
+            media::init(&handle);
+            osd::create(&handle);
+            audio_events::start(handle.clone());
+            keyboard::create(&handle);
+            keyboard::watch(handle.clone());
+            shutdown::install(&handle);
+            lifecycle::start(&handle);
+            capture::init(&handle);
+            companion::sync(&handle);
+            splash::after_startup(updates::watch_packages);
+            {
+                // Its first refresh waits a minute anyway: counting starts
+                // once the first screen is up.
+                let h = handle.clone();
+                splash::after_startup(move || legendary::start(&h));
+            }
+            status::start(handle.clone());
+            winupdate::watch(handle.clone());
+            hidpad::set_enabled(app.state::<AppState>().db.lock().settings.hid_pads);
             let native = gamepad::start(handle.clone());
             app.state::<AppState>().native_gamepad.store(native, Ordering::SeqCst);
+            idle::start(handle.clone());
 
-            // The saved library shows instantly; the fresh scan replaces it.
+            // Games left running by a crash or an update come first; then the
+            // saved library shows instantly and the fresh scan replaces it.
+            splash::watch(&handle);
             std::thread::spawn(move || {
+                launcher::reattach(&handle);
+                // The scan (and the artwork and metadata after it) waits for
+                // the first screen: the saved library is enough until then.
+                splash::wait_settled();
                 let state = handle.state::<AppState>();
                 if !state.scanning.swap(true, Ordering::SeqCst) {
                     scan(&handle);
@@ -717,13 +1421,29 @@ pub fn run() {
             add_manual_game,
             remove_manual_game,
             get_session,
+            get_suspended,
+            suspend_game,
+            resume_suspended,
+            close_suspended,
             resume_game,
+            get_game_updates,
+            wand_installed,
+            open_wand,
+            open_wand_app,
+            cheats_status,
+            cheats_search,
+            cheats_set,
+            cheats_freeze,
+            cheats_unfreeze,
+            cheats_reset,
             close_game,
             power,
             get_volume,
             set_volume,
             set_muted,
             exit_to_desktop,
+            get_console_mode,
+            set_console_mode,
             overlay_hide,
             overlay_to_launcher,
             toggle_fullscreen,
@@ -773,7 +1493,88 @@ pub fn run() {
             add_collection,
             remove_collection,
             set_in_collection,
+            rumble,
+            get_system_status,
+            media_now_playing,
+            media_control,
+            open_music,
+            app_volumes,
+            set_app_volume,
+            set_app_muted,
+            schedule_power,
+            cancel_power,
+            get_power_schedule,
+            rest_mode,
+            idle_wake,
+            touch_input,
+            overlay_keyboard,
+            keyboard_hide,
+            type_text,
+            type_key,
+            storage_overview,
+            storage_cleanup,
+            storage_remeasure,
+            power_options,
+            system_updates,
+            startup_info,
+            read_log,
+            export_log,
+            clear_crashes,
+            refresh_metadata,
+            metadata_running,
+            take_screenshot,
+            list_captures,
+            delete_capture,
+            open_captures_folder,
+            capture_notice,
+            companion_status,
+            companion_firewall,
+            legendary_status,
+            legendary_enable,
+            legendary_login,
+            legendary_import_auth,
+            legendary_logout,
+            legendary_import_games,
+            legendary_jobs,
+            legendary_install,
+            legendary_game_action,
+            legendary_cancel,
+            legendary_install_targets,
+            app_ready,
+            direct_install_available,
+            cancel_direct_install,
+            gog_status,
+            gog_login,
+            gog_logout,
+            update_store_game,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .on_window_event(|window, event| {
+            // Alt+F4 on the launcher: the hidden overlay window would keep
+            // the process alive with no window, so this quits for real.
+            // With the tray (desktop once) the X hides the window instead.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" && !CLOSE_TO_TRAY.load(Ordering::SeqCst) {
+                    api.prevent_close();
+                    shutdown::teardown(window.app_handle(), shutdown::Reason::Quit);
+                    window.app_handle().exit(0);
+                }
+            }
+        })
+        .build(webview2::prepare(context))
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // Whatever ends GameMode (its own quit, a closed window, an
+            // update restart): put things back. Windows' own shutdown went
+            // through `shutdown` already.
+            let code = match event {
+                tauri::RunEvent::ExitRequested { code, .. } => code,
+                tauri::RunEvent::Exit => {
+                    log::info!("exit");
+                    None
+                }
+                _ => return,
+            };
+            let reason = if code == Some(tauri::RESTART_EXIT_CODE) { shutdown::Reason::Restart } else { shutdown::Reason::Quit };
+            shutdown::teardown(app, reason);
+        });
 }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useHints, useScreenFocus } from "../components/common";
 import { api } from "../lib/api";
-import { formatPlaytime } from "../lib/format";
+import { completionPct, formatPlaytime } from "../lib/format";
 import type { Game, Session } from "../lib/types";
 import { activeProfileOf, useApp } from "../store/app";
 
@@ -96,13 +96,17 @@ export function Stats() {
     void api.getSessions().then(setSessions).catch(() => setSessions([]));
   }, [setBackdrop, profile?.id]);
 
-  const stats = useStats(sessions ?? []);
   const gameById = useMemo(() => new Map(games.map((g) => [g.id, g])), [games]);
+  // Time in apps (Netflix, Spotify…) isn't play time, even once the app is
+  // gone from the library: the id's store prefix tells.
+  const played = useMemo(() => (sessions ?? []).filter((s) => !s.gameId.startsWith("app:")), [sessions]);
+  const stats = useStats(played);
+  const completion = useMemo(() => estimatedCompletion(games), [games]);
   useScreenFocus(undefined, sessions !== null);
   useHints([{ button: "A", label: "Apri gioco" }]);
 
   if (sessions === null) return <div className="screen empty"><div className="spinner" /></div>;
-  if (sessions.length === 0) {
+  if (played.length === 0) {
     return (
       <div className="screen empty">
         <p className="empty-title">Ancora nessuna partita</p>
@@ -132,6 +136,13 @@ export function Stats() {
           <StatTile label="Tempo totale" value={formatPlaytime(stats.total)} />
           <StatTile label="Giochi giocati" value={String(stats.played)} />
           <StatTile label="Giorni di fila" value={String(stats.streak)} note={stats.streak > 0 ? "serie in corso" : "riparti oggi"} />
+          {completion && (
+            <StatTile
+              label="Completamento stimato"
+              value={`${completion.pct}%`}
+              note={`su ${completion.games} ${completion.games === 1 ? "gioco" : "giochi"} con durata nota`}
+            />
+          )}
         </div>
 
         <section className="stats-section">
@@ -166,6 +177,16 @@ export function Stats() {
       </div>
     </div>
   );
+}
+
+/** Average of playtime over "story and extras" for the games played that have one. */
+function estimatedCompletion(games: Game[]): { pct: number; games: number } | null {
+  const pcts = games
+    .filter((g) => g.playtimeSecs > 0)
+    .map((g) => completionPct(g.playtimeSecs, g.meta?.timeToBeat?.extra ?? g.meta?.timeToBeat?.main))
+    .filter((p): p is number => p !== null);
+  if (pcts.length === 0) return null;
+  return { pct: Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length), games: pcts.length };
 }
 
 function StatTile({ label, value, note }: { label: string; value: string; note?: string }) {

@@ -2,6 +2,7 @@ import { memo, useState } from "react";
 
 import { artUrl } from "../lib/api";
 import type { Game } from "../lib/types";
+import { useApp } from "../store/app";
 import { StoreBadge } from "./common";
 
 interface Props {
@@ -10,10 +11,13 @@ interface Props {
   onFocus?: (game: Game) => void;
   onSelect: (game: Game) => void;
   playing?: boolean;
+  /** Frozen by Quick Resume. */
+  paused?: boolean;
   autofocus?: boolean;
 }
 
-export const GameCard = memo(function GameCard({ game, navId, onFocus, onSelect, playing, autofocus }: Props) {
+export const GameCard = memo(function GameCard({ game, navId, onFocus, onSelect, playing, paused, autofocus }: Props) {
+  const update = useApp((s) => s.gameUpdates[game.id]);
   return (
     <button
       type="button"
@@ -30,6 +34,16 @@ export const GameCard = memo(function GameCard({ game, navId, onFocus, onSelect,
         <StoreBadge store={game.store} compact />
         {game.favorite && <span className="fav-star" aria-label="Preferito">★</span>}
         {playing && <span className="playing-pill">In gioco</span>}
+        {!playing && paused && <span className="playing-pill is-paused">In pausa</span>}
+        {!playing && !paused && update && (
+          <span className={`update-pill ${update.state === "available" ? "" : "is-active"}`}>
+            {update.state === "available"
+              ? "Aggiornamento"
+              : update.progress != null
+                ? `↓ ${Math.round(update.progress * 100)}%`
+                : "In aggiornamento"}
+          </span>
+        )}
       </span>
     </button>
   );
@@ -46,7 +60,9 @@ export function Cover({ game }: { game: Game }) {
       </span>
     );
   }
+  // App icons are square: shown whole, never cropped to the poster shape.
+  const icon = game.store === "app" ? " cover-icon" : "";
   return (
-    <img className="cover" src={src} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} />
+    <img className={`cover${icon}`} src={src} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} />
   );
 }

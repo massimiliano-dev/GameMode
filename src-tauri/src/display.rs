@@ -182,7 +182,7 @@ mod imp {
     }
 
     pub fn apply_mode(mode: DisplayMode) -> Result<()> {
-        eprintln!("display mode {mode:?} ignored outside Windows");
+        log::warn!("display mode {mode:?} ignored outside Windows");
         Ok(())
     }
 
@@ -210,7 +210,7 @@ pub fn apply_tv(mode: Option<DisplayMode>, audio: Option<&str>) {
     if let Some(mode) = mode {
         if current_mode() != Some(mode) {
             if let Err(err) = apply_mode(mode) {
-                eprintln!("TV mode: {err:#}");
+                log::warn!("TV mode: {err:#}");
             }
         }
     }
@@ -218,7 +218,7 @@ pub fn apply_tv(mode: Option<DisplayMode>, audio: Option<&str>) {
         let already = audio_outputs().map(|list| list.iter().any(|o| o.default && o.id == id)).unwrap_or(false);
         if !already {
             if let Err(err) = set_audio_output(id) {
-                eprintln!("TV audio: {err:#}");
+                log::warn!("TV audio: {err:#}");
             }
         }
     }

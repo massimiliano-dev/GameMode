@@ -4,11 +4,13 @@ import { formatClock } from "../lib/format";
 import { activeProfileOf, type Tab, useApp } from "../store/app";
 import { Logo } from "./Logo";
 import { Avatar } from "./ProfileSettings";
+import { StatusCluster } from "./StatusBar";
 import { Glyph, useClock } from "./common";
 
 const TABS: { tab: Tab; label: string }[] = [
   { tab: "home", label: "Home" },
   { tab: "library", label: "Libreria" },
+  { tab: "apps", label: "App" },
   { tab: "downloads", label: "Scarica" },
   { tab: "stores", label: "Negozi" },
   { tab: "stats", label: "Statistiche" },
@@ -21,6 +23,7 @@ export function TopBar() {
   const setTab = useApp((s) => s.setTab);
   const session = useApp((s) => s.session);
   const playing = useApp((s) => s.games.find((g) => g.id === s.session?.gameId));
+  const paused = useApp((s) => s.suspended.length);
 
   return (
     <header className="topbar">
@@ -57,10 +60,16 @@ export function TopBar() {
       <div className="topbar-right">
         <ProfileBadge />
         <Batteries />
+        <StatusCluster />
         {session && playing && (
           <span className="session-pill">
             <span className="pulse" />
-            {session.phase === "launching" ? "Avvio" : "In gioco"}: {playing.name}
+            {session.update ? "Aggiornamento" : session.phase === "launching" ? "Avvio" : "In gioco"}: {playing.name}
+          </span>
+        )}
+        {paused > 0 && (
+          <span className="session-pill is-paused">
+            {paused === 1 ? "1 gioco in pausa" : `${paused} giochi in pausa`}
           </span>
         )}
         <span className="clock">{formatClock(now)}</span>
@@ -89,7 +98,7 @@ function Batteries() {
         <span
           key={c.slot}
           className={`battery ${c.wired ? "is-wired" : ""} ${!c.wired && c.level <= 1 ? "is-low" : ""}`}
-          title={c.wired ? `Controller ${c.slot + 1}: cablato` : `Controller ${c.slot + 1}: batteria`}
+          title={c.wired ? `${c.name}: cablato` : `${c.name}: batteria`}
         >
           <svg className="battery-pad" viewBox="0 0 24 16" aria-hidden>
             <path

@@ -130,6 +130,8 @@ pub fn parse_manifest(src: &str, steamapps: &Path) -> Option<Game> {
     if let Some(dir) = state.get_str("installdir") {
         game.install_dir = Some(steamapps.join("common").join(dir));
     }
+    // Steam keeps the installed size in the manifest; 0 means "not yet known".
+    game.size_bytes = state.get_str("SizeOnDisk").and_then(|s| s.parse::<u64>().ok()).filter(|&b| b > 0);
     Some(game)
 }
 
@@ -165,6 +167,14 @@ mod tests {
         assert_eq!(dota.steam_appid, Some(570));
         assert_eq!(dota.launch, LaunchSpec::Uri { uri: "steam://rungameid/570".into() });
         assert!(dota.install_dir.as_ref().unwrap().ends_with("common/dota 2 beta"));
+        assert_eq!(dota.size_bytes, Some(39_182_648_934));
+        assert!(games[1].size_bytes.is_none(), "no SizeOnDisk in the manifest");
+    }
+
+    #[test]
+    fn a_zero_size_counts_as_unknown() {
+        let src = r#""AppState" { "appid" "10" "name" "Counter-Strike" "StateFlags" "4" "SizeOnDisk" "0" }"#;
+        assert_eq!(parse_manifest(src, Path::new("x")).unwrap().size_bytes, None);
     }
 
     #[test]

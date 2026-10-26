@@ -5,10 +5,12 @@ use serde::Serialize;
 
 use crate::model::{Game, ManualGame, Settings, Store};
 
+pub mod apps;
 pub mod ea;
 pub mod emulators;
 pub mod epic;
 pub mod gog;
+pub mod gog_info;
 pub mod manual;
 #[cfg(not(windows))]
 pub mod mock;
@@ -34,7 +36,7 @@ pub fn providers(manual: Vec<ManualGame>, settings: &Settings) -> Vec<Box<dyn Li
         Box::new(steam::SteamProvider),
         Box::new(xbox::XboxProvider),
         Box::new(epic::EpicProvider),
-        Box::new(gog::GogProvider),
+        Box::new(gog::GogProvider { roots: vec![crate::gog_store::install_root(settings)] }),
         Box::new(ea::EaProvider),
         Box::new(ubisoft::UbisoftProvider),
         Box::new(manual::ManualProvider(manual)),

@@ -15,9 +15,17 @@ impl LibraryProvider for EpicProvider {
     }
 
     fn scan(&self) -> Result<Vec<Game>> {
-        let Some(program_data) = std::env::var_os("ProgramData") else { return Ok(Vec::new()) };
+        // Games legendary manages come first; the launcher's own installs
+        // it hasn't taken over keep launching through the launcher.
+        let mut games = crate::legendary::installed_games();
+        let Some(program_data) = std::env::var_os("ProgramData") else { return Ok(games) };
         let dir = PathBuf::from(program_data).join(r"Epic\EpicGamesLauncher\Data\Manifests");
-        scan_manifests(&dir)
+        for game in scan_manifests(&dir)? {
+            if !games.iter().any(|g| g.id.eq_ignore_ascii_case(&game.id)) {
+                games.push(game);
+            }
+        }
+        Ok(games)
     }
 }
 
@@ -35,6 +43,9 @@ struct Manifest {
     app_categories: Vec<String>,
     #[serde(default, rename = "bIsIncompleteInstall")]
     is_incomplete_install: bool,
+    /// Bytes on disk, written by the launcher after the install.
+    #[serde(default)]
+    install_size: Option<u64>,
 }
 
 pub fn scan_manifests(dir: &Path) -> Result<Vec<Game>> {
@@ -62,10 +73,10 @@ pub fn parse_manifest(src: &str) -> Option<Game> {
         "com.epicgames.launcher://apps/{}%3A{}%3A{}?action=launch&silent=true",
         m.catalog_namespace, m.catalog_item_id, m.app_name
     );
-    Some(
-        Game::new(Store::Epic, &m.app_name, m.display_name.trim(), LaunchSpec::Uri { uri })
-            .with_install_dir(m.install_location),
-    )
+    let mut game = Game::new(Store::Epic, &m.app_name, m.display_name.trim(), LaunchSpec::Uri { uri })
+        .with_install_dir(m.install_location);
+    game.size_bytes = m.install_size.filter(|&b| b > 0);
+    Some(game)
 }
 
 #[cfg(test)]
@@ -80,6 +91,7 @@ mod tests {
         let g = &games[0];
         assert_eq!(g.id, "epic:Fortnite");
         assert_eq!(g.name, "Fortnite");
+        assert_eq!(g.size_bytes, Some(42_949_672_960));
         assert_eq!(
             g.launch,
             LaunchSpec::Uri {

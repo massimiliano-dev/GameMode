@@ -1,4 +1,4 @@
-import type { Store } from "./types";
+import type { Game, GameUpdate, Store, UpdateState } from "./types";
 
 export const STORE_LABEL: Record<Store, string> = {
   steam: "Steam",
@@ -10,6 +10,7 @@ export const STORE_LABEL: Record<Store, string> = {
   manual: "Aggiunti a mano",
   emulator: "Emulatori",
   mock: "Demo",
+  app: "App",
 };
 
 /** Names of the shops, which differ from the library names for Xbox. */
@@ -24,6 +25,28 @@ export const SHOP_LABEL: Partial<Record<Store, string>> = {
 
 /** Stores the user can toggle in settings, in display order. */
 export const STORES: Store[] = ["steam", "xbox", "epic", "gog", "ea", "ubisoft", "emulator", "manual"];
+
+export function formatBytes(bytes: number): string {
+  const gb = bytes / 1024 ** 3;
+  if (gb >= 1) return `${gb.toFixed(1).replace(".", ",")} GB`;
+  return `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`;
+}
+
+export const UPDATE_LABEL: Record<UpdateState, string> = {
+  available: "Aggiornamento disponibile",
+  downloading: "Download dell'aggiornamento",
+  installing: "Installazione dell'aggiornamento",
+  paused: "Aggiornamento in pausa",
+};
+
+/** "45% · 1,2 GB di 4,5 GB", or null when the store gives no numbers. */
+export function updateProgress(u: GameUpdate): string | null {
+  const parts = [
+    u.progress != null && u.state !== "available" ? `${Math.round(u.progress * 100)}%` : null,
+    u.total > 0 ? `${formatBytes(u.done)} di ${formatBytes(u.total)}` : null,
+  ];
+  return parts.filter(Boolean).join(" · ") || null;
+}
 
 export function formatPlaytime(secs: number): string {
   if (secs < 60) return secs > 0 ? "meno di un minuto" : "mai giocato";
@@ -51,10 +74,44 @@ function startOfDay(ms: number) {
   return d.getTime();
 }
 
+/** Drive letter of a Windows path ("D:"), or the volume name of a macOS one. */
+export function driveOf(path: string | null | undefined): string | null {
+  if (!path) return null;
+  const letter = /^([a-zA-Z]):[\\/]/.exec(path);
+  if (letter) return `${letter[1].toUpperCase()}:`;
+  const volume = /^\/Volumes\/([^/]+)/.exec(path);
+  return volume ? volume[1] : null;
+}
+
+/** "48,2 GB su D:", "circa 48,2 GB" for a partial walk, null when unknown. */
+export function formatGameSize(game: Pick<Game, "sizeBytes" | "sizePartial" | "installDir">): string | null {
+  if (game.sizeBytes == null) return null;
+  const drive = driveOf(game.installDir);
+  return `${game.sizePartial ? "circa " : ""}${formatBytes(game.sizeBytes)}${drive ? ` su ${drive}` : ""}`;
+}
+
 export function formatClock(d: Date): string {
   return d.toLocaleTimeString("it", { hour: "2-digit", minute: "2-digit" });
 }
 
 export function formatDate(d: Date): string {
   return d.toLocaleDateString("it", { weekday: "long", day: "numeric", month: "long" });
+}
+
+/** Hours for a "time to beat": "45 min", "12,5 h", "30 h". */
+export function formatHours(secs: number): string {
+  if (secs < 3600) return `${Math.max(1, Math.round(secs / 60))} min`;
+  const hours = Math.round(secs / 1800) / 2;
+  return `${hours.toString().replace(".", ",")} h`;
+}
+
+/** How far `played` seconds get through a `target` of that many seconds, 0-100. */
+export function completionPct(played: number, target: number | null | undefined): number | null {
+  if (!target || target <= 0) return null;
+  return Math.min(100, Math.round((played / target) * 100));
+}
+
+/** Year in a release date as the stores print it ("25 feb 2022", "2021-11-09"). */
+export function releaseYear(date: string | null | undefined): string | null {
+  return date?.match(/\b(19|20)\d{2}\b/)?.[0] ?? null;
 }

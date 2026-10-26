@@ -95,8 +95,10 @@ pub fn refresh(app: &AppHandle, force: bool) {
         let state = app.state::<AppState>();
         let (games, key) = {
             let data = state.db.lock();
+            // Apps bring their own icon: nothing to look up for them.
             let due = |g: &&Game| {
-                !g.artwork.is_complete()
+                g.store != Store::App
+                    && !g.artwork.is_complete()
                     && (force || g.artwork_checked_at.is_none_or(|t| now() - t > RETRY_AFTER_SECS))
             };
             let games: Vec<Game> = data.games.iter().filter(due).cloned().collect();
@@ -329,7 +331,7 @@ pub(crate) fn pick_ms_image(images: &[MsImage], kind: Kind) -> Option<String> {
 }
 
 /// Store titles carry marks and edition suffixes that spoil name searches.
-fn search_name(name: &str) -> String {
+pub(crate) fn search_name(name: &str) -> String {
     let mut s: String = name.chars().filter(|c| !matches!(c, '™' | '®' | '©')).collect();
     for suffix in [" for Windows 10", " for Windows", " (PC)", " - Windows Edition", " Windows Edition", " PC"] {
         if let Some(stripped) = s.strip_suffix(suffix) {
@@ -355,11 +357,11 @@ struct SgdbImage {
     url: String,
 }
 
-fn safe_name(id: &str) -> String {
+pub(crate) fn safe_name(id: &str) -> String {
     id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect()
 }
 
-fn urlencode(s: &str) -> String {
+pub(crate) fn urlencode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),

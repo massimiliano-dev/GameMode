@@ -1,0 +1,95 @@
+name: WebView2 check
+
+# GameMode runs on a pinned WebView2 "Fixed Version" runtime, which gets no
+# security patches from Windows (see src-tauri/src/webview2.rs). Every week
+# this checks that the pinned cab is still downloadable with its SHA-256 and
+# whether Microsoft has a newer Fixed Version; either way it opens an issue.
+#
+# Updating the pin: copy the version, URL and SHA-256 from the issue into
+# VERSION, URL and SHA256 in src-tauri/src/webview2.rs, run the Rust tests,
+# release. Installed copies download the new runtime in the background and
+# switch to it at the next start.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the pinned runtime
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          src=src-tauri/src/webview2.rs
+          pinned=$(sed -n 's/^pub const VERSION: &str = "\(.*\)";$/\1/p' "$src")
+          pinned_url=$(sed -n 's/^const URL: &str = "\(.*\)";$/\1/p' "$src")
+          pinned_sha=$(sed -n 's/^const SHA256: &str = "\(.*\)";$/\1/p' "$src")
+          if [ -z "$pinned" ] || [ -z "$pinned_url" ] || [ -z "$pinned_sha" ]; then
+            echo "::error::VERSION, URL or SHA256 not found in $src"
+            exit 1
+          fi
+          echo "Pinned: $pinned"
+
+          # Opens an issue unless an open one has the same title.
+          open_issue() {
+            local title=$1 body=$2
+            if gh issue list --state open --search "in:title \"$title\"" --json title --jq '.[].title' | grep -Fxq "$title"; then
+              echo "Issue already open: $title"
+            else
+              gh issue create --title "$title" --body "$body"
+            fi
+          }
+
+          # The list behind the official download page
+          # (https://developer.microsoft.com/microsoft-edge/webview2#download).
+          curl -fsSL --retry 3 https://developer.microsoft.com/microsoft-edge/api/webview2 -o list.json
+          latest=$(jq -r '[.[] | select(any(.builds[]; .architecture == "x64")) | .version] | sort_by(split(".") | map(tonumber)) | last' list.json)
+          latest_url=$(jq -r --arg v "$latest" '.[] | select(.version == $v) | .builds[] | select(.architecture == "x64") | .url' list.json)
+          if [ -z "$latest" ] || [ "$latest" = "null" ] || [ -z "$latest_url" ]; then
+            echo "::error::The WebView2 list has no x64 Fixed Version: has its format changed?"
+            exit 1
+          fi
+          echo "Latest: $latest"
+
+          # 1. The pinned cab must still be there, unchanged.
+          if curl -fsSL --retry 3 -o pinned.cab "$pinned_url"; then
+            got=$(sha256sum pinned.cab | cut -d' ' -f1)
+            if [ "$got" != "$pinned_sha" ]; then
+              open_issue "WebView2 fisso $pinned: SHA-256 diverso" "Il cab fissato ($pinned_url) ora ha SHA-256 \`$got\` invece di \`$pinned_sha\`. Le copie installate rifiutano il download e restano sul WebView2 di sistema. Fissa una versione nuova (vedi .github/workflows/webview2-check.yml)."
+            fi
+          else
+            open_issue "WebView2 fisso $pinned: download non disponibile" "Il cab fissato ($pinned_url) non si scarica più. Le copie installate che non l'hanno ancora restano sul WebView2 di sistema. Fissa la versione più recente (vedi .github/workflows/webview2-check.yml)."
+          fi
+          rm -f pinned.cab
+
+          # 2. A newer Fixed Version: hand over everything the pin needs.
+          if [ "$latest" != "$pinned" ] && [ "$(printf '%s\n%s\n' "$pinned" "$latest" | sort -V | tail -n1)" = "$latest" ]; then
+            curl -fsSL --retry 3 -o latest.cab "$latest_url"
+            latest_sha=$(sha256sum latest.cab | cut -d' ' -f1)
+            rm -f latest.cab
+            body=$(printf '%s\n' \
+              "Microsoft ha pubblicato WebView2 Fixed Version **$latest** (fissata: $pinned). Il runtime fisso non riceve patch da Windows: aggiorna il pin." \
+              "" \
+              "In \`src-tauri/src/webview2.rs\`:" \
+              "" \
+              '```rust' \
+              "pub const VERSION: &str = \"$latest\";" \
+              "const URL: &str = \"$latest_url\";" \
+              "const SHA256: &str = \"$latest_sha\";" \
+              '```' \
+              "" \
+              "SHA-256 calcolato da questo workflow sul file scaricato dal CDN Microsoft. Poi \`cargo test\` e una release: le copie installate scaricano il nuovo runtime in background e lo usano dal riavvio successivo.")
+            open_issue "Aggiorna WebView2 fisso a $latest" "$body"
+          else
+            echo "Pinned runtime is the latest."
+          fi

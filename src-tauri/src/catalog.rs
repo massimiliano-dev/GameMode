@@ -2,7 +2,8 @@
 //! (Steam Web API, which needs the user's free API key), owned Epic and GOG
 //! games (read from their launchers' local caches), the PC Game Pass catalog
 //! and Xbox Cloud Gaming (public Xbox endpoints). Installing hands off to the
-//! store client.
+//! store client, unless GameMode can do it itself (`direct`: GOG with an
+//! account, Microsoft Store).
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -51,6 +52,8 @@ pub struct CatalogItem {
     pub cover: Option<String>,
     pub hero: Option<String>,
     pub playtime_secs: u64,
+    /// Download size, when the catalog says (Game Pass only).
+    pub size_bytes: Option<u64>,
 }
 
 #[derive(Serialize, Clone, Copy, PartialEq, Debug, Default)]
@@ -78,6 +81,19 @@ pub struct CatalogCache {
     cloud: Mutex<Option<(Instant, Vec<CatalogItem>)>>,
 }
 
+impl CatalogCache {
+    /// Forgets the installable list (an account was added or removed).
+    pub fn invalidate(&self) {
+        *self.catalog.lock().unwrap() = None;
+    }
+
+    /// Title of a catalog item, from the last list.
+    pub fn name_of(&self, id: &str) -> Option<String> {
+        let cached = self.catalog.lock().unwrap();
+        cached.as_ref()?.1.items.iter().find(|i| i.id == id).map(|i| i.name.clone())
+    }
+}
+
 pub async fn load(app: &AppHandle, force: bool) -> Catalog {
     let state = app.state::<AppState>();
     if !force {
@@ -94,7 +110,16 @@ pub async fn load(app: &AppHandle, force: bool) -> Catalog {
     };
     let client = reqwest::Client::builder().timeout(Duration::from_secs(20)).build().unwrap_or_default();
 
-    let (steam, gamepass) = tokio::join!(steam_owned(&client, key, &installed), gamepass(&client, &installed));
+    // legendary's owned list, when it manages Epic games (a slow process: in parallel).
+    let legendary = {
+        let installed = installed.clone();
+        tauri::async_runtime::spawn_blocking(move || crate::legendary::catalog_items(&installed))
+    };
+    let (steam, gamepass, gog_api) = tokio::join!(
+        steam_owned(&client, key, &installed),
+        gamepass(&client, &installed),
+        crate::gog_store::owned_items(&client, &installed)
+    );
     let mut catalog = Catalog::default();
     match steam {
         Ok(items) => catalog.items.extend(items),
@@ -105,13 +130,26 @@ pub async fn load(app: &AppHandle, force: bool) -> Catalog {
             catalog.gamepass_ok = true;
             catalog.items.extend(items);
         }
-        Err(err) => eprintln!("Game Pass catalog failed: {err:#}"),
+        Err(err) => log::warn!("Game Pass catalog failed: {err:#}"),
     }
-    catalog.items.extend(epic_owned(&installed));
-    catalog.items.extend(gog_owned(&installed));
+    catalog.items.extend(legendary.await.ok().flatten().unwrap_or_else(|| epic_owned(&installed)));
+    // Owned through the GOG account first (GameMode installs those itself),
+    // then whatever only GOG Galaxy knows about.
+    let mut gog = gog_api;
+    for item in gog_owned(&installed) {
+        if !gog.iter().any(|g| g.id == item.id) {
+            gog.push(item);
+        }
+    }
+    catalog.items.extend(gog);
     catalog.items.sort_by_key(|i| i.name.to_lowercase());
     *state.catalog.catalog.lock().unwrap() = Some((Instant::now(), catalog.clone()));
     catalog
+}
+
+/// Forgets the cached catalog (Epic sign-in or legendary switched).
+pub fn invalidate(app: &AppHandle) {
+    *app.state::<AppState>().catalog.catalog.lock().unwrap() = None;
 }
 
 /// Xbox Cloud Gaming titles. Kept apart from `load` because the list is long
@@ -129,7 +167,7 @@ pub async fn cloud(app: &AppHandle, force: bool) -> Vec<CatalogItem> {
     let items = match cloud_titles(&client).await {
         Ok(items) => items,
         Err(err) => {
-            eprintln!("cloud catalog failed: {err:#}");
+            log::warn!("cloud catalog failed: {err:#}");
             return Vec::new();
         }
     };
@@ -245,6 +283,7 @@ pub fn parse_epic_catcache(text: &str, installed: &HashSet<String>) -> Vec<Catal
                 cover: image(i, &["DieselGameBoxTall", "OfferImageTall", "Thumbnail"]),
                 hero: image(i, &["DieselGameBox", "OfferImageWide", "DieselStoreFrontWide"]),
                 playtime_secs: 0,
+                size_bytes: None,
             })
         })
         .collect()
@@ -266,7 +305,7 @@ fn gog_owned(installed: &HashSet<String>) -> Vec<CatalogItem> {
     match crate::sqlite::query(&db, sql, 3) {
         Ok(rows) => gog_items(&rows, installed),
         Err(err) => {
-            eprintln!("GOG Galaxy database: {err:#}");
+            log::warn!("GOG Galaxy database: {err:#}");
             Vec::new()
         }
     }
@@ -318,6 +357,7 @@ pub fn gog_items(rows: &[Vec<String>], installed: &HashSet<String>) -> Vec<Catal
                 cover: p.cover,
                 hero: p.hero,
                 playtime_secs: 0,
+                size_bytes: None,
             })
         })
         .collect()
@@ -343,6 +383,9 @@ pub fn install(app: &AppHandle, id: &str) -> Result<()> {
         "epic" => {
             let parts: Vec<&str> = native.splitn(3, ':').collect();
             let [ns, item, app_name] = parts[..] else { bail!("Gioco non valido") };
+            if crate::legendary::active() {
+                return crate::legendary::install(app, app_name, None);
+            }
             format!("com.epicgames.launcher://apps/{ns}%3A{item}%3A{app_name}?action=install")
         }
         "gog" if storefront::scheme_registered("goggalaxy") => format!("goggalaxy://openGameView/{native}"),
@@ -422,7 +465,7 @@ async fn steam_owned(
     );
     let resp = client.get(url).send().await.map_err(|_| SteamStatus::Failed)?;
     if !resp.status().is_success() {
-        eprintln!("Steam GetOwnedGames: {}", resp.status());
+        log::warn!("Steam GetOwnedGames: {}", resp.status());
         return Err(SteamStatus::Failed);
     }
     let body = resp.bytes().await.map_err(|_| SteamStatus::Failed)?;
@@ -476,6 +519,7 @@ fn parse_owned(body: &[u8], installed: &HashSet<String>) -> Vec<CatalogItem> {
             cover: Some(format!("{STEAM_CDN}/{}/library_600x900_2x.jpg", g.appid)),
             hero: Some(format!("{STEAM_CDN}/{}/library_hero.jpg", g.appid)),
             playtime_secs: g.playtime_forever * 60,
+            size_bytes: None,
         })
         .collect()
 }
@@ -543,6 +587,7 @@ struct SkuProperties {
 #[serde(rename_all = "PascalCase", default)]
 struct Package {
     package_family_name: Option<String>,
+    max_download_size_in_bytes: Option<u64>,
 }
 
 fn parse_products(body: &[u8], installed: &HashSet<String>) -> Vec<CatalogItem> {
@@ -560,6 +605,18 @@ fn parse_products(body: &[u8], installed: &HashSet<String>) -> Vec<CatalogItem> 
             if families.iter().any(|f| installed.contains(&format!("xbox:{f}"))) {
                 return None;
             }
+            // Several packages per product: the PC build is the one with a
+            // package family name, console builds have none.
+            let packages: Vec<&Package> = p.display_sku_availabilities.iter().flat_map(|s| s.sku.properties.packages.iter()).collect();
+            let size_of = |pc_only: bool| {
+                packages
+                    .iter()
+                    .filter(|pk| !pc_only || pk.package_family_name.is_some())
+                    .filter_map(|pk| pk.max_download_size_in_bytes)
+                    .filter(|&b| b > 0)
+                    .max()
+            };
+            let size_bytes = size_of(true).or_else(|| size_of(false));
             let local = p.localized_properties.into_iter().next()?;
             Some(CatalogItem {
                 id: format!("gamepass:{}", p.product_id),
@@ -569,6 +626,7 @@ fn parse_products(body: &[u8], installed: &HashSet<String>) -> Vec<CatalogItem> 
                 cover: pick_ms_image(&local.images, Kind::Cover),
                 hero: pick_ms_image(&local.images, Kind::Hero),
                 playtime_secs: 0,
+                size_bytes,
             })
         })
         .filter(|i| !i.name.is_empty() && !i.id.ends_with(':'))
@@ -591,7 +649,10 @@ mod tests {
         let client = reqwest::Client::new();
         let items = tauri::async_runtime::block_on(gamepass(&client, &HashSet::new())).unwrap();
         println!("{} Game Pass titles, e.g. {:?}", items.len(), items.first().map(|i| &i.name));
+        let sized = items.iter().filter(|i| i.size_bytes.is_some()).count();
+        println!("{sized} with a download size, e.g. {:?}", items.iter().find(|i| i.size_bytes.is_some()).map(|i| (&i.name, i.size_bytes)));
         assert!(items.len() > 100);
+        assert!(sized * 2 > items.len(), "MaxDownloadSizeInBytes missing from most products");
         assert!(items.iter().filter(|i| i.cover.is_some()).count() * 10 > items.len() * 9);
     }
 
@@ -672,6 +733,8 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, "gamepass:9NPDN9R45JX4");
         assert!(items[0].cover.as_deref().unwrap().ends_with("?w=600"));
+        assert_eq!(items[0].size_bytes, Some(8_001_105_920), "the PC package, not the bigger console one");
+        assert_eq!(items[1].size_bytes, None);
 
         let installed: HashSet<String> = ["xbox:surpriseattackptyltd.1000xresist_8k24hnfn3vvj0".to_string()].into();
         let items = parse_products(&fixture("products.json"), &installed);

@@ -1,11 +1,13 @@
 name: Beta
 
-# Every push to a beta branch publishes "GameMode Beta": a separate app
-# (own name, data and shortcuts) that installs next to the stable one and
-# updates itself from the "beta" release.
+# Every push to main or to a beta branch publishes "GameMode Beta": a
+# separate app (own name, data and shortcuts) that installs next to the
+# stable one and updates itself from the "beta" release. Main is included so
+# installed betas keep updating after a feature branch is merged, without a
+# reinstall.
 on:
   push:
-    branches: ["console-mode", "beta/**"]
+    branches: ["main", "beta/**"]
   workflow_dispatch:
 
 permissions:

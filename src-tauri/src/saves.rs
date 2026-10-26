@@ -13,6 +13,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{now, Game, Store};
+use crate::storage::dir_size;
 
 const MANIFEST_URL: &str = "https://raw.githubusercontent.com/mtkennerly/ludusavi-manifest/master/data/manifest.yaml";
 const INDEX_FILE: &str = "saves-index.json";
@@ -190,6 +191,18 @@ pub fn index(data_dir: &Path) -> Result<std::sync::Arc<Index>> {
     Ok(index)
 }
 
+/// The index already at hand, in memory or on disk however old, never
+/// downloaded: for exit paths, where the network may be going away.
+pub fn cached_index(data_dir: &Path) -> Option<std::sync::Arc<Index>> {
+    if let Some(index) = INDEX.lock().unwrap().clone() {
+        return Some(index);
+    }
+    let entries: Vec<Entry> = serde_json::from_slice(&fs::read(data_dir.join(INDEX_FILE)).ok()?).ok()?;
+    let index = std::sync::Arc::new(Index::new(entries));
+    *INDEX.lock().unwrap() = Some(index.clone());
+    Some(index)
+}
+
 fn download_index() -> Result<Vec<Entry>> {
     let yaml = tauri::async_runtime::block_on(async {
         let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build()?;
@@ -332,13 +345,6 @@ fn game_dir(root: &Path, game_id: &str) -> PathBuf {
     root.join(safe)
 }
 
-fn dir_size(path: &Path) -> u64 {
-    if path.is_file() {
-        return fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    }
-    fs::read_dir(path).map(|it| it.flatten().map(|e| dir_size(&e.path())).sum()).unwrap_or(0)
-}
-
 fn copy_recursive(from: &Path, to: &Path) -> Result<()> {
     if from.is_file() {
         if let Some(parent) = to.parent() {
@@ -382,7 +388,11 @@ pub fn info(data_dir: &Path, root: &Path, game: &Game) -> Result<SaveInfo> {
 }
 
 pub fn backup(data_dir: &Path, root: &Path, game: &Game, automatic: bool) -> Result<BackupInfo> {
-    let index = index(data_dir)?;
+    backup_with(&*index(data_dir)?, root, game, automatic)
+}
+
+/// `backup` with an index already loaded (see `cached_index`).
+pub fn backup_with(index: &Index, root: &Path, game: &Game, automatic: bool) -> Result<BackupInfo> {
     let Some(entry) = index.find(game) else { bail!("Non so dove questo gioco tiene i salvataggi") };
     let locations = existing(&patterns(entry, game, &Places::detect()));
     if locations.is_empty() {

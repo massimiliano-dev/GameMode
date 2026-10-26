@@ -21,6 +21,23 @@ const FOCUS_FIGHT: std::time::Duration = std::time::Duration::from_secs(3);
 /// them for as long as it is open.
 const GUIDE_GRABBERS: &[&str] = &["steam.exe", "steamwebhelper.exe", "gamebar.exe", "gamebarftserver.exe"];
 
+/// Steam's windows: these are minimized out of the way rather than fought
+/// over, since Steam keeps reclaiming the foreground after Guide.
+const STEAM: &[&str] = &["steam.exe", "steamwebhelper.exe"];
+
+/// Gets Steam out of the way if Guide brought it in front of the game.
+fn dismiss_steam() -> bool {
+    #[cfg(windows)]
+    {
+        crate::window::minimize_foreground_of(STEAM)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = STEAM;
+        false
+    }
+}
+
 /// The foreground window belongs to an app that grabs Guide.
 fn guide_grabber_in_front() -> bool {
     #[cfg(windows)]
@@ -62,7 +79,7 @@ pub fn create(app: &AppHandle) {
             .visible(false)
             .build();
         if let Err(err) = built {
-            eprintln!("overlay window: {err}");
+            log::warn!("overlay window: {err}");
         }
     }
     #[cfg(not(windows))]
@@ -81,6 +98,32 @@ pub fn is_foreground(app: &AppHandle) -> bool {
     }
 }
 
+/// After the overlay closes back to the game: Steam answers Guide too, so
+/// if it jumped in front, it goes back down and the game gets the screen.
+pub fn after_resume(app: &AppHandle, pids: Vec<u32>) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        for _ in 0..8 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if dismiss_steam() {
+                crate::window::resume_game(&app, &pids);
+            }
+        }
+    });
+}
+
+/// Opens the overlay after Guide: Steam and Game Bar react to the same
+/// press, so wait for them to make their move, then clear Steam away and
+/// come up on top.
+pub fn show_after_guide(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        dismiss_steam();
+        show(&app);
+    });
+}
+
 /// Shows the overlay over the screen the game is on.
 pub fn show(app: &AppHandle) {
     let Some(w) = window(app) else { return };
@@ -92,6 +135,7 @@ pub fn show(app: &AppHandle) {
     let _ = w.show();
     let _ = w.set_always_on_top(true);
     claim_focus(&w);
+    crate::overlay_pause::begin(app);
     let _ = app.emit_to(LABEL, "overlay://open", ());
     // Guide also wakes Steam and Xbox Game Bar, which jump on top right
     // after us. While open, keep the overlay above them (input reaches it
@@ -111,6 +155,7 @@ pub fn show(app: &AppHandle) {
                 crate::window::raise_topmost_raw(hwnd.0 as isize);
             }
             if started.elapsed() < FOCUS_FIGHT || guide_grabber_in_front() {
+                dismiss_steam();
                 claim_focus(&w);
             }
         }
@@ -125,9 +170,22 @@ fn claim_focus(w: &WebviewWindow) {
     }
 }
 
+/// The screen changed (resolution, a TV coming back): the open overlay
+/// covers the new screen.
+pub fn fit_screen(app: &AppHandle) {
+    let Some(w) = window(app) else { return };
+    if let Ok(Some(monitor)) = w.primary_monitor() {
+        let _ = w.set_position(*monitor.position());
+        let _ = w.set_size(*monitor.size());
+    }
+}
+
 pub fn hide(app: &AppHandle) {
     VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
+    crate::overlay_pause::end();
     if let Some(w) = window(app) {
         let _ = w.hide();
     }
+    // The mixer stops polling while the overlay is away.
+    let _ = app.emit_to(LABEL, "overlay://close", ());
 }

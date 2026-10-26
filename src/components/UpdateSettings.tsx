@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { useApp } from "../store/app";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Row, Section } from "./SettingsRows";
+import { SystemUpdateSettings } from "./SystemUpdateSettings";
 
 export function UpdateSettings() {
   const update = useApp((s) => s.update);
@@ -42,36 +43,39 @@ export function UpdateSettings() {
   };
 
   return (
-    <Section title="Aggiornamenti">
-      {update ? (
-        <Row
-          label={state === "installing" ? "Scarico e installo…" : `Installa GameMode ${update.version}`}
-          hint={update.notes ?? `Versione attuale ${version}`}
-          onClick={() => state === "idle" && setConfirm(true)}
-          control={<span className="setting-action">Nuova versione</span>}
-        />
-      ) : (
-        <Row
-          label={state === "checking" ? "Controllo in corso…" : "Cerca aggiornamenti"}
-          hint={`Versione attuale ${version}. GameMode controlla da solo a ogni avvio.`}
-          onClick={() => state === "idle" && void check()}
-        />
-      )}
-      <AnimatePresence>
-        {confirm && update && (
-          <ConfirmDialog
-            key="update"
-            title={`Installare GameMode ${update.version}?`}
-            text="GameMode si chiude, si aggiorna e si riapre da solo. Libreria e impostazioni restano."
-            confirmLabel="Aggiorna"
-            onCancel={() => setConfirm(false)}
-            onConfirm={() => {
-              setConfirm(false);
-              void install();
-            }}
+    <>
+      <Section title="Aggiornamenti">
+        {update ? (
+          <Row
+            label={state === "installing" ? "Scarico e installo…" : `Installa GameMode ${update.version}`}
+            hint={update.notes ?? `Versione attuale ${version}`}
+            onClick={() => state === "idle" && setConfirm(true)}
+            control={<span className="setting-action">Nuova versione</span>}
+          />
+        ) : (
+          <Row
+            label={state === "checking" ? "Controllo in corso…" : "Cerca aggiornamenti"}
+            hint={`Versione attuale ${version}. GameMode controlla da solo a ogni avvio.`}
+            onClick={() => state === "idle" && void check()}
           />
         )}
-      </AnimatePresence>
-    </Section>
+        <AnimatePresence>
+          {confirm && update && (
+            <ConfirmDialog
+              key="update"
+              title={`Installare GameMode ${update.version}?`}
+              text="GameMode si chiude, si aggiorna e si riapre da solo. Libreria e impostazioni restano."
+              confirmLabel="Aggiorna"
+              onCancel={() => setConfirm(false)}
+              onConfirm={() => {
+                setConfirm(false);
+                void install();
+              }}
+            />
+          )}
+        </AnimatePresence>
+      </Section>
+      <SystemUpdateSettings />
+    </>
   );
 }

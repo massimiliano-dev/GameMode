@@ -4,7 +4,10 @@
   "description": "Capability for the main window",
   "windows": [
     "main",
-    "overlay"
+    "overlay",
+    "osd",
+    "keyboard",
+    "capture-osd"
   ],
   "permissions": [
     "core:default",

@@ -4,24 +4,29 @@ import { useEffect, useRef, useState } from "react";
 import { Backdrop } from "./components/Backdrop";
 import { HintBar, Toasts, TopBar } from "./components/Chrome";
 import { LaunchOverlay } from "./components/LaunchOverlay";
+import { PowerCountdown } from "./components/PowerCountdown";
+import { Screensaver } from "./components/Screensaver";
 import { VirtualKeyboard } from "./components/VirtualKeyboard";
 import { Priority, setKeyboardOpener, useAction } from "./input/dispatcher";
 import { play } from "./input/sfx";
 import { ensureFocus, focusElement } from "./input/focus";
 import { setupInput } from "./input/sources";
+import { signalAppReady } from "./lib/api";
 import { Downloads } from "./screens/Downloads";
 import { Connections } from "./screens/Connections";
 import { GameDetail } from "./screens/GameDetail";
 import { Home } from "./screens/Home";
 import { Library } from "./screens/Library";
+import { Apps } from "./screens/Apps";
 import { QuickMenu } from "./screens/QuickMenu";
 import { Search } from "./screens/Search";
 import { Settings } from "./screens/Settings";
 import { Stats } from "./screens/Stats";
 import { Stores } from "./screens/Stores";
 import { currentScreen, type Tab, useApp } from "./store/app";
+import { useIdle } from "./store/idle";
 
-const TAB_ORDER: Tab[] = ["home", "library", "downloads", "stores", "stats", "settings"];
+const TAB_ORDER: Tab[] = ["home", "library", "apps", "downloads", "stores", "stats", "settings"];
 
 export default function App() {
   const entry = useApp(currentScreen);
@@ -29,11 +34,14 @@ export default function App() {
   const quickMenu = useApp((s) => s.quickMenu);
   const session = useApp((s) => s.session);
   const keyboardField = useApp((s) => s.keyboardField);
+  const settingsLoaded = useApp((s) => s.settings !== null);
   const [dismissedLaunch, setDismissedLaunch] = useState<string | null>(null);
   const focusBeforeMenu = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    void useApp.getState().init();
+    // A failed start still shows the window (the backend would after 15 s).
+    void useApp.getState().init().catch(() => signalAppReady());
+    useIdle.getState().init();
     void setupInput();
     setKeyboardOpener((field) => useApp.getState().setKeyboardField(field));
     const onWindowFocus = () => {
@@ -43,6 +51,11 @@ export default function App() {
     window.addEventListener("focus", onWindowFocus);
     return () => window.removeEventListener("focus", onWindowFocus);
   }, []);
+
+  // The saved library and settings are on screen: time to show the window.
+  useEffect(() => {
+    if (settingsLoaded) signalAppReady();
+  }, [settingsLoaded]);
 
   useEffect(() => {
     if (quickMenu) focusBeforeMenu.current = document.activeElement as HTMLElement | null;
@@ -98,6 +111,7 @@ export default function App() {
           >
             {screen.name === "home" && <Home focusId={entry.focusId} />}
             {screen.name === "library" && <Library focusId={entry.focusId} />}
+            {screen.name === "apps" && <Apps focusId={entry.focusId} />}
             {screen.name === "downloads" && <Downloads />}
             {screen.name === "stores" && <Stores />}
             {screen.name === "stats" && <Stats />}
@@ -115,6 +129,8 @@ export default function App() {
       </AnimatePresence>
       {keyboardField && <VirtualKeyboard field={keyboardField} onClose={() => useApp.getState().setKeyboardField(null)} />}
       <Toasts />
+      <PowerCountdown />
+      <Screensaver />
     </div>
   );
 }

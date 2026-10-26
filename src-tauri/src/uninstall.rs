@@ -35,9 +35,18 @@ pub fn uninstall(app: &AppHandle, game: &Game) -> Result<Outcome> {
             Ok(Outcome::Removed)
         }
         Store::Xbox => xbox(app, native_id(game)),
-        Store::Gog | Store::Ubisoft | Store::Ea | Store::Epic => registered_uninstaller(app, game),
+        Store::Epic if crate::legendary::manages(game) => {
+            crate::legendary::uninstall(app, game)?;
+            Ok(Outcome::Removed)
+        }
+        Store::Gog => match crate::gog_store::uninstall(game)? {
+            Some(outcome) => Ok(outcome),
+            None => registered_uninstaller(app, game),
+        },
+        Store::Ubisoft | Store::Ea | Store::Epic => registered_uninstaller(app, game),
         Store::Emulator => bail!("Per toglierlo, elimina il file della ROM dalla sua cartella"),
         Store::Mock => bail!("Non disponibile per i giochi demo"),
+        Store::App => bail!("Le app si disinstallano dalle Impostazioni di Windows"),
     }
 }
 
@@ -91,7 +100,7 @@ fn xbox(app: &AppHandle, family: &str) -> Result<Outcome> {
             Err(err) => {
                 // Some Game Pass installs are owned by Gaming Services and can
                 // only be removed from the Xbox app / Windows settings.
-                eprintln!("RemovePackageAsync failed: {err}");
+                log::warn!("RemovePackageAsync failed: {err}");
                 storefront::open_uri(app, "ms-settings:appsfeatures")?;
                 return Ok(Outcome::Started);
             }
@@ -117,7 +126,7 @@ fn registered_uninstaller(app: &AppHandle, game: &Game) -> Result<Outcome> {
         bail!("Nessun programma di disinstallazione trovato: disinstallalo dal client dello store");
     };
     let (exe, args) = split_command(&command);
-    std::process::Command::new(exe).raw_arg(args).spawn()?;
+    crate::webview2::scrub(std::process::Command::new(exe).raw_arg(args)).spawn()?;
     crate::window::minimize(app);
     Ok(Outcome::Started)
 }
