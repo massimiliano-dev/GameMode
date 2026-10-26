@@ -163,6 +163,23 @@ pub fn windows_of(names: &[&str]) -> Vec<isize> {
     }
 }
 
+/// Visible, real-sized top-level windows of other processes, each with its
+/// executable name (lowercase) when it can be read.
+pub fn other_windows() -> Vec<(isize, Option<String>)> {
+    #[cfg(windows)]
+    {
+        let me = std::process::id();
+        let mut cache = std::collections::HashMap::new();
+        win::visible_windows()
+            .into_iter()
+            .filter(|(_, pid)| *pid != me)
+            .map(|(hwnd, pid)| (hwnd, cache.entry(pid).or_insert_with(|| process_name(pid)).clone()))
+            .collect()
+    }
+    #[cfg(not(windows))]
+    Vec::new()
+}
+
 #[cfg(windows)]
 fn process_name(pid: u32) -> Option<String> {
     use windows::core::PWSTR;

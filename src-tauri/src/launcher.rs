@@ -48,7 +48,7 @@ const HEARTBEAT: Duration = Duration::from_secs(30);
 pub const MAX_SUSPENDED: usize = 3;
 /// Store clients and helpers whose windows (sign-in, updates, errors, EULAs)
 /// a launch may wait on.
-const LAUNCHERS: &[&str] = &[
+pub(crate) const LAUNCHERS: &[&str] = &[
     "steam.exe",
     "steamwebhelper.exe",
     "xboxpcapp.exe",

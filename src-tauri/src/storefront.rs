@@ -183,10 +183,12 @@ pub fn launch_uri(_uri: &str) -> bool {
 /// page) always opens in the browser.
 pub fn open_first(app: &AppHandle, uris: &[String]) -> Result<()> {
     let Some((last, apps)) = uris.split_last() else { anyhow::bail!("nessun link") };
+    let before = handles(&window::other_windows());
     for uri in apps {
         crate::shell::prepare_for(uri);
         if launch_uri(uri) {
             window::minimize(app);
+            hand_over(app, before);
             return Ok(());
         }
     }
@@ -206,6 +208,7 @@ pub fn uses_big_picture(app: &AppHandle) -> bool {
 /// Steam links go through Big Picture, which the controller can drive.
 /// Blocking (waits for Big Picture): call off the main thread.
 pub fn open_uri(app: &AppHandle, uri: &str) -> Result<()> {
+    let before = handles(&window::other_windows());
     if uri.starts_with("steam://") && uses_big_picture(app) {
         app.opener().open_url("steam://open/bigpicture", None::<&str>)?;
         STEAM_BIG_PICTURE.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -214,7 +217,70 @@ pub fn open_uri(app: &AppHandle, uri: &str) -> Result<()> {
     crate::shell::prepare_for(uri);
     app.opener().open_url(uri, None::<&str>)?;
     window::minimize(app);
+    hand_over(app, before);
     Ok(())
+}
+
+/// Browsers the web shops open in, besides the store clients (`LAUNCHERS`).
+const BROWSERS: &[&str] =
+    &["msedge.exe", "chrome.exe", "firefox.exe", "brave.exe", "opera.exe", "opera_gx.exe", "vivaldi.exe", "librewolf.exe"];
+/// Packaged apps some links open (Microsoft Store, Windows settings).
+const PACKAGED: &[&str] = &["winstore.app.exe", "systemsettings.exe"];
+/// How long to wait for the store's window to show up.
+const HAND_OVER_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+const HAND_OVER_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+/// Attempts at putting the window in front once it's there.
+const HAND_OVER_TRIES: u32 = 6;
+
+fn handles(windows: &[(isize, Option<String>)]) -> Vec<isize> {
+    windows.iter().map(|(h, _)| *h).collect()
+}
+
+fn is_shop_process(name: &str) -> bool {
+    crate::launcher::LAUNCHERS.contains(&name) || BROWSERS.contains(&name) || PACKAGED.contains(&name)
+}
+
+/// The window a shop link opened, among the visible windows of other
+/// processes (`now`) given those up `before` the link: a new window of a
+/// store client or browser first, then any other new window (an unknown
+/// browser), then a client's window that was already up behind GameMode.
+/// Windows' own desktop and pushy background tools never count.
+fn shop_window(before: &[isize], now: &[(isize, Option<String>)]) -> Option<isize> {
+    let known = |(_, name): &(isize, Option<String>)| name.as_deref().is_some_and(is_shop_process);
+    let fresh = |(h, name): &(isize, Option<String>)| {
+        !before.contains(h) && !name.as_deref().is_some_and(|n| n == "explorer.exe" || window::is_pushy_tool(n))
+    };
+    now.iter()
+        .find(|w| fresh(w) && known(w))
+        .or_else(|| now.iter().find(|w| fresh(w)))
+        .or_else(|| now.iter().find(|w| known(w)))
+        .map(|(h, _)| *h)
+}
+
+/// Puts the window a shop link opened in front of GameMode. In console mode
+/// GameMode stays fullscreen (no desktop to step aside to) and a client
+/// that was already running (Steam, Galaxy, the browser…) has no right to
+/// take the foreground from it: left alone, its window would come up behind
+/// GameMode and nothing would seem to happen.
+fn hand_over(app: &AppHandle, before: Vec<isize>) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let start = std::time::Instant::now();
+        let mut tries = 0;
+        while start.elapsed() < HAND_OVER_WAIT {
+            std::thread::sleep(HAND_OVER_POLL);
+            // The user came back (or never left the overlay): nothing to hand over.
+            if crate::overlay::is_open() || (tries == 0 && !window::is_foreground(&app)) {
+                return;
+            }
+            let Some(hwnd) = shop_window(&before, &window::other_windows()) else { continue };
+            if window::is_hwnd_foreground(hwnd) || tries >= HAND_OVER_TRIES {
+                return;
+            }
+            tries += 1;
+            window::force_foreground_raw(hwnd);
+        }
+    });
 }
 
 /// Comes back from a hand-off: closes Big Picture if GameMode opened it (so
@@ -258,6 +324,22 @@ mod tests {
             resolve(shop(Store::Xbox), Some(&forza), true).0,
             "ms-windows-store://pdp/?PFN=Microsoft.624F8B84B80_8wekyb3d8bbwe"
         );
+    }
+
+    #[test]
+    fn picks_the_window_the_shop_opened() {
+        let w = |h: isize, name: &str| (h, Some(name.to_string()));
+        let before = [1, 2];
+        // A new browser window beats an unknown new window and an old client window.
+        let now = [w(1, "rtss.exe"), w(2, "steam.exe"), w(3, "someapp.exe"), w(4, "msedge.exe")];
+        assert_eq!(shop_window(&before, &now), Some(4));
+        // Unknown new window (another browser): still the one to hand over to.
+        assert_eq!(shop_window(&before, &[w(2, "steam.exe"), w(3, "zen.exe")]), Some(3));
+        // Nothing new: the client was already up behind GameMode.
+        assert_eq!(shop_window(&before, &[w(1, "rtss.exe"), w(2, "steam.exe")]), Some(2));
+        // The desktop and pushy tools are never the shop.
+        assert_eq!(shop_window(&before, &[w(5, "explorer.exe"), w(6, "rtss.exe")]), None);
+        assert_eq!(shop_window(&before, &[]), None);
     }
 
     #[test]
