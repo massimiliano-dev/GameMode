@@ -2850,6 +2850,12 @@ html.is-keyboard .osk-done[data-nav-current] {
 
 .app-card:focus .app-tile {
   transform: scale(1.08);
+  box-shadow:
+    0 0 0 0.2rem var(--focus),
+    0 0 2.4rem 0.2rem var(--accent-glow),
+    0 1.2rem 2.4rem rgba(0, 0, 0, 0.6);
+}
+
 /* ---------- Windows update (Home card) ---------- */
 
 .system-card {
@@ -2953,6 +2959,11 @@ html.is-keyboard .osk-done[data-nav-current] {
 .wake-info {
   display: flex;
   flex: 1;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
 .system-card-glyph {
   flex: none;
   display: grid;
