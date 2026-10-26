@@ -222,10 +222,19 @@ pub fn show(app: &AppHandle, payload: OsdPayload) {
     });
 }
 
+/// Hidden the same raw way it was shown: tao never saw the window become
+/// visible (`place_and_show` bypasses it), so its own `hide()` thinks
+/// there's nothing to do and the indicator would stay up for good.
 pub fn hide(app: &AppHandle) {
-    if let Some(w) = window(app) {
-        let _ = w.hide();
+    let Some(w) = window(app) else { return };
+    #[cfg(windows)]
+    if let Ok(raw) = w.hwnd() {
+        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+        unsafe {
+            let _ = ShowWindow(windows::Win32::Foundation::HWND(raw.0 as *mut core::ffi::c_void), SW_HIDE);
+        }
     }
+    let _ = w.hide();
 }
 
 #[cfg(test)]
