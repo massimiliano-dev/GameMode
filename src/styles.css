@@ -3734,3 +3734,61 @@ html.is-overlay .sw-card[data-nav-current] .sw-preview {
     opacity: 1;
   }
 }
+
+/* ---------- Uninstall under way ---------- */
+
+.detail-removing {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-width: 32rem;
+  margin: 0.8rem 0 0;
+  color: var(--text-dim);
+  font-size: 1rem;
+}
+
+.detail-removing strong {
+  color: var(--text);
+}
+
+.detail-removing-bar {
+  position: relative;
+  display: block;
+  height: 0.35rem;
+  border-radius: 999px;
+  background: var(--surface-strong);
+  overflow: hidden;
+}
+
+.detail-removing-bar > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--danger);
+  transition: width 0.4s var(--ease);
+}
+
+/* Windows hasn't said how far it got yet: a sweep instead of a width. */
+.detail-removing-bar.is-waiting > span {
+  width: 30% !important;
+  animation: removing-sweep 1.4s var(--ease) infinite;
+}
+
+@keyframes removing-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+
+.update-pill.is-removing {
+  background: rgba(255, 107, 114, 0.22);
+  color: #ffd0d3;
+}
+
+.btn-play:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

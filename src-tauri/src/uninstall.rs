@@ -34,7 +34,7 @@ pub fn uninstall(app: &AppHandle, game: &Game) -> Result<Outcome> {
             app.state::<AppState>().db.update(|d| d.manual_games.retain(|m| m.id != id))?;
             Ok(Outcome::Removed)
         }
-        Store::Xbox => xbox(app, native_id(game)),
+        Store::Xbox => xbox(app, game),
         Store::Epic if crate::legendary::manages(game) => {
             crate::legendary::uninstall(app, game)?;
             Ok(Outcome::Removed)
@@ -81,21 +81,51 @@ pub fn watch(app: AppHandle, game: Game) {
     });
 }
 
+/// How far a removal GameMode runs itself has got (Xbox packages), for the
+/// game page and the library tile.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct Progress<'a> {
+    game_id: &'a str,
+    /// 0–100.
+    percent: u32,
+}
+
 fn native_id(game: &Game) -> &str {
     game.id.split_once(':').map_or(game.id.as_str(), |(_, id)| id)
 }
 
 #[cfg(windows)]
-fn xbox(app: &AppHandle, family: &str) -> Result<Outcome> {
-    use windows::core::HSTRING;
-    use windows::Management::Deployment::PackageManager;
+fn xbox(app: &AppHandle, game: &Game) -> Result<Outcome> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
 
+    use tauri::Emitter;
+    use windows::core::HSTRING;
+    use windows::Management::Deployment::{DeploymentProgress, DeploymentResult, PackageManager};
+    use windows_future::AsyncOperationProgressHandler;
+
+    let family = native_id(game);
     let manager = PackageManager::new()?;
     let packages = manager.FindPackagesByUserSecurityIdPackageFamilyName(&HSTRING::new(), &HSTRING::from(family))?;
     let mut removed = false;
     for package in packages {
         let full_name = package.Id()?.FullName()?;
-        match manager.RemovePackageAsync(&full_name).and_then(|op| op.join()) {
+        // Removing a big game takes minutes: the page shows how far it got.
+        let last = Arc::new(AtomicU32::new(u32::MAX));
+        let (emitter, game_id) = (app.clone(), game.id.clone());
+        let progress = AsyncOperationProgressHandler::<DeploymentResult, DeploymentProgress>::new(move |_, p| {
+            let percent = p.percentage.min(100);
+            if last.swap(percent, Ordering::SeqCst) != percent {
+                let _ = emitter.emit("uninstall://progress", Progress { game_id: &game_id, percent });
+            }
+            Ok(())
+        });
+        let removal = manager.RemovePackageAsync(&full_name).and_then(|op| {
+            op.SetProgress(&progress)?;
+            op.join()
+        });
+        match removal {
             Ok(_) => removed = true,
             Err(err) => {
                 // Some Game Pass installs are owned by Gaming Services and can
@@ -113,7 +143,7 @@ fn xbox(app: &AppHandle, family: &str) -> Result<Outcome> {
 }
 
 #[cfg(not(windows))]
-fn xbox(_app: &AppHandle, _family: &str) -> Result<Outcome> {
+fn xbox(_app: &AppHandle, _game: &Game) -> Result<Outcome> {
     bail!("Disponibile solo su Windows")
 }
 

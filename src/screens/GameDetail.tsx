@@ -38,6 +38,7 @@ export function GameDetail({ gameId }: { gameId: string }) {
   const refreshGameUpdates = useApp((s) => s.refreshGameUpdates);
   const toast = useApp((s) => s.toast);
   const storeDirect = useApp((s) => !!s.settings?.msstoreDirect);
+  const removing = useApp((s) => (gameId in s.uninstalling ? (s.uninstalling[gameId] ?? -1) : null));
   const [dialog, setDialog] = useState<Dialog>(null);
 
   useEffect(() => setBackdrop(gameId), [gameId, setBackdrop]);
@@ -107,7 +108,7 @@ export function GameDetail({ gameId }: { gameId: string }) {
         if (!game.hidden) back();
       },
     },
-    ...(game.store !== "mock" && !isApp
+    ...(game.store !== "mock" && !isApp && removing === null
       ? [{ label: game.store === "manual" ? "Rimuovi dalla libreria" : "Disinstalla", danger: true, onSelect: () => setDialog("uninstall") }]
       : []),
   ];
@@ -127,7 +128,19 @@ export function GameDetail({ gameId }: { gameId: string }) {
                 </span>
               ))}
             </div>
-            {update && (
+            {removing !== null && (
+              <div className="detail-removing" role="status">
+                <span>
+                  <strong>Disinstallazione in corso</strong>
+                  {removing >= 0 && ` · ${removing}%`}
+                </span>
+                <span className={`detail-removing-bar ${removing < 0 ? "is-waiting" : ""}`}>
+                  <span style={{ width: `${Math.max(removing, 0)}%` }} />
+                </span>
+                <span className="detail-update-hint">Puoi tornare indietro e continuare a usare GameMode: ti avviso quando ha finito.</span>
+              </div>
+            )}
+            {update && removing === null && (
               <p className="detail-update">
                 <strong>{UPDATE_LABEL[update.state]}</strong>
                 {updateProgress(update) && <span> · {updateProgress(update)}</span>}
@@ -156,6 +169,10 @@ export function GameDetail({ gameId }: { gameId: string }) {
                     Chiudi gioco
                   </button>
                 </>
+              ) : removing !== null ? (
+                <button type="button" className="btn btn-primary btn-play" data-nav data-nav-autofocus disabled aria-disabled>
+                  Disinstallazione…
+                </button>
               ) : (
                 <button type="button" className="btn btn-primary btn-play" data-nav data-nav-autofocus onClick={() => void launch(game.id)}>
                   <span className="play-icon" aria-hidden>▶</span> {isApp ? "Apri" : "Gioca"}
@@ -239,7 +256,7 @@ export function GameDetail({ gameId }: { gameId: string }) {
 
 function uninstallText(game: Game) {
   if (game.store === "manual") return "Il gioco sparisce da GameMode, i suoi file restano dove sono.";
-  if (game.store === "xbox") return "Il gioco viene rimosso dal PC. I salvataggi nel cloud restano sul tuo account Xbox.";
+  if (game.store === "xbox") return "Il gioco viene rimosso dal PC: con i giochi grandi ci vuole qualche minuto. I salvataggi nel cloud restano sul tuo account Xbox.";
   if (isLegendary(game)) return "I file del gioco vengono eliminati dal PC.";
   if (game.store === "gog") return "Il gioco viene rimosso dal PC senza altre finestre. Windows potrebbe chiederti il permesso.";
   return "Si apre la disinstallazione dello store, che potrebbe chiederti un'ulteriore conferma.";

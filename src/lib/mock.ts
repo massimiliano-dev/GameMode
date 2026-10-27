@@ -777,6 +777,13 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         return mockEmulators();
       case "uninstall_game": {
         const game = games.find((g) => g.id === args.id);
+        if (game?.store === "xbox") {
+          // Like Windows removing a package: a while, with progress.
+          for (const percent of [0, 15, 40, 65, 90, 100]) {
+            emit("uninstall://progress", { gameId: game.id, percent });
+            await wait(900);
+          }
+        }
         games = games.filter((g) => g.id !== args.id);
         emit("library://updated", { games, errors: [] });
         return game?.store === "steam" ? "started" : "removed";

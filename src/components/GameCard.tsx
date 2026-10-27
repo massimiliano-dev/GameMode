@@ -18,6 +18,7 @@ interface Props {
 
 export const GameCard = memo(function GameCard({ game, navId, onFocus, onSelect, playing, paused, autofocus }: Props) {
   const update = useApp((s) => s.gameUpdates[game.id]);
+  const removing = useApp((s) => (game.id in s.uninstalling ? (s.uninstalling[game.id] ?? -1) : null));
   return (
     <button
       type="button"
@@ -35,7 +36,10 @@ export const GameCard = memo(function GameCard({ game, navId, onFocus, onSelect,
         {game.favorite && <span className="fav-star" aria-label="Preferito">★</span>}
         {playing && <span className="playing-pill">In gioco</span>}
         {!playing && paused && <span className="playing-pill is-paused">In pausa</span>}
-        {!playing && !paused && update && (
+        {removing !== null && (
+          <span className="update-pill is-removing">{removing >= 0 ? `Rimozione ${removing}%` : "Rimozione…"}</span>
+        )}
+        {!playing && !paused && removing === null && update && (
           <span className={`update-pill ${update.state === "available" ? "" : "is-active"}`}>
             {update.state === "available"
               ? "Aggiornamento"

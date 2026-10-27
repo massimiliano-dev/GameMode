@@ -80,6 +80,8 @@ interface AppState {
   collections: Collection[];
   /** Game updates the stores report, by game id. */
   gameUpdates: Record<string, GameUpdate>;
+  /** Games GameMode is removing itself, by id: percent done when the removal says (Xbox), else null. */
+  uninstalling: Record<string, number | null>;
   /** Network, PC battery and Bluetooth for the top bar; null until the backend says. */
   system: SystemInfo | null;
   /** The PC just woke up with a game still running: Home offers to go back to it. */
@@ -168,6 +170,7 @@ export const useApp = create<AppState>((set, get) => ({
   update: null,
   collections: [],
   gameUpdates: {},
+  uninstalling: {},
   system: null,
   wokeAt: null,
   systemUpdate: null,
@@ -184,6 +187,9 @@ export const useApp = create<AppState>((set, get) => ({
       persistStack(get().stack);
     });
     on<Controller[]>("gamepad://controllers", (list) => onControllers(list, set, get));
+    on<{ gameId: string; percent: number }>("uninstall://progress", ({ gameId, percent }) => {
+      if (gameId in get().uninstalling) set((s) => ({ uninstalling: { ...s.uninstalling, [gameId]: percent } }));
+    });
     on<string>("uninstall://done", (name) => {
       set({ rescanOnReturn: false });
       get().toast(`${name} disinstallato`);
@@ -451,24 +457,43 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   uninstall: async (game, stay = false) => {
+    if (game.id in get().uninstalling) return;
+    // Removals GameMode runs itself: the page and the tile say it's under way.
+    const inHouse = game.store === "xbox" || game.store === "gog" || isLegendary(game);
+    const done = () =>
+      set((s) => {
+        const next = { ...s.uninstalling };
+        delete next[game.id];
+        return { uninstalling: next };
+      });
     try {
-      if (isLegendary(game) || game.store === "gog") {
+      if (inHouse) {
+        set((s) => ({ uninstalling: { ...s.uninstalling, [game.id]: null } }));
         // legendary removes the files itself; GOG's uninstaller runs silently
-        // (only Windows' permission prompt shows up).
-        get().toast(`Disinstallo ${game.name}…`);
-      } else if (!["manual", "xbox", "mock"].includes(game.store)) {
+        // (only Windows' permission prompt shows up); Windows removes Xbox
+        // packages, which takes minutes for a big game.
+        get().toast(
+          game.store === "xbox"
+            ? `Disinstallo ${game.name}: con i giochi grandi ci vuole qualche minuto, puoi continuare a usare GameMode`
+            : `Disinstallo ${game.name}…`,
+        );
+      } else if (!["manual", "mock"].includes(game.store)) {
         const what = `Apro la disinstallazione di ${game.name}.`;
         get().toast(game.store === "steam" && get().settings?.steamBigPicture ? nativeHint(what) : assistHint(get().settings, what));
         await sleep(HANDOFF_DELAY);
       }
       const outcome = await api.uninstallGame(game.id);
+      done();
       if (outcome === "removed") {
         get().toast(`${game.name} disinstallato`);
-        if (!stay) get().back();
+        // Only off the game's own page: meanwhile the user may have moved on.
+        const top = get().stack.at(-1)?.screen;
+        if (!stay && top?.name === "detail" && top.gameId === game.id) get().back();
       } else {
         set({ rescanOnReturn: true });
       }
     } catch (e) {
+      done();
       get().toast(String(e), "error");
     }
   },
