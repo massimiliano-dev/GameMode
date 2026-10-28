@@ -183,6 +183,7 @@ pub fn launch_uri(_uri: &str) -> bool {
 /// page) always opens in the browser.
 pub fn open_first(app: &AppHandle, uris: &[String]) -> Result<()> {
     let Some((last, apps)) = uris.split_last() else { anyhow::bail!("nessun link") };
+    mark_hand_off();
     let before = handles(&window::other_windows());
     for uri in apps {
         crate::shell::prepare_for(uri);
@@ -193,6 +194,19 @@ pub fn open_first(app: &AppHandle, uris: &[String]) -> Result<()> {
         }
     }
     open_uri(app, last)
+}
+
+/// When GameMode last opened a store window on purpose.
+static HANDED_OFF: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+fn mark_hand_off() {
+    *HANDED_OFF.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+}
+
+/// GameMode opened a store window on purpose after `since` (the user went
+/// to a shop or Steam's downloads during a game): that window is wanted.
+pub fn handed_off_after(since: std::time::Instant) -> bool {
+    HANDED_OFF.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|at| at > since)
 }
 
 /// Big Picture was opened for the current hand-off and should close on return.
@@ -208,6 +222,7 @@ pub fn uses_big_picture(app: &AppHandle) -> bool {
 /// Steam links go through Big Picture, which the controller can drive.
 /// Blocking (waits for Big Picture): call off the main thread.
 pub fn open_uri(app: &AppHandle, uri: &str) -> Result<()> {
+    mark_hand_off();
     let before = handles(&window::other_windows());
     if uri.starts_with("steam://") && uses_big_picture(app) {
         app.opener().open_url("steam://open/bigpicture", None::<&str>)?;
@@ -281,6 +296,17 @@ fn hand_over(app: &AppHandle, before: Vec<isize>) {
             window::force_foreground_raw(hwnd);
         }
     });
+}
+
+/// Closes Big Picture if GameMode opened it for a hand-off (a game's
+/// downloads, an install). Returns whether it did. Big Picture left open
+/// takes the screen back from the game that starts afterwards.
+pub fn close_our_big_picture(app: &AppHandle) -> bool {
+    if !STEAM_BIG_PICTURE.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return false;
+    }
+    let _ = app.opener().open_url("steam://close/bigpicture", None::<&str>);
+    true
 }
 
 /// Comes back from a hand-off: closes Big Picture if GameMode opened it (so

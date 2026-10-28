@@ -65,6 +65,12 @@ pub(crate) const LAUNCHERS: &[&str] = &[
 const NOT_THE_GAME: &[&str] = &["gamelaunchhelper.exe"];
 /// Games often restart themselves (launcher → game, anti-cheat…).
 const EXIT_GRACE: Duration = Duration::from_secs(10);
+/// Steam's own windows (client, Big Picture, downloads page).
+#[cfg_attr(not(windows), allow(dead_code))]
+const STEAM_WINDOWS: &[&str] = &["steam.exe", "steamwebhelper.exe"];
+/// After GameMode closes Big Picture, Steam's desktop window comes up for a
+/// moment: it's sent away from the game for this long, also on the desktop.
+const AFTER_BIG_PICTURE: Duration = Duration::from_secs(30);
 /// How long an exit path waits for a state change under way.
 const TRANSITION_WAIT: Duration = Duration::from_secs(3);
 
@@ -591,6 +597,8 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
     let mut update: Option<GameUpdate> = None;
     let mut relaunch_at: Option<Instant> = None;
     let mut dialogs = Dialogs::new();
+    // When GameMode closed the Big Picture it had opened for this launch.
+    let mut big_picture_closed: Option<Instant> = None;
     // Windows doesn't count controller input: this thread keeps the PC up
     // while the game is starting or running (not while frozen), and not
     // after an unattended wake until the user shows up, so Windows can put
@@ -712,6 +720,27 @@ fn monitor(app: AppHandle, generation: u64, game: Game, target: Target, timeout:
             if was_launching && (window.is_some() || alive.elapsed() > CONFIRM_WITHOUT_WINDOW) {
                 running_since = Some(last_seen);
                 dialogs.done();
+                // Steam's downloads, opened in Big Picture while the game
+                // was updating, would stay over it: the game has started.
+                if crate::storefront::close_our_big_picture(&app) {
+                    big_picture_closed = Some(Instant::now());
+                }
+            }
+            // Steam took the screen from the running game (its window
+            // coming back after Big Picture, the downloads page): it goes
+            // down and the game gets the screen again.
+            let started = running_since.filter(|_| tries >= HANDOFF_TRIES);
+            if let (Some(hwnd), Some(started)) = (window, started) {
+                let console = crate::shell::status().active && !crate::storefront::handed_off_after(started);
+                let just_closed = big_picture_closed.is_some_and(|at| at.elapsed() < AFTER_BIG_PICTURE);
+                if (console || just_closed) && steam_over_game() {
+                    log::info!("Steam covered {}: giving the game the screen back", game.name);
+                    #[cfg(windows)]
+                    window::minimize_foreground_of(STEAM_WINDOWS);
+                    window::force_foreground_raw(hwnd);
+                    // Keep at it for a few polls, as at the start.
+                    tries = HANDOFF_TRIES.saturating_sub(3);
+                }
             }
             let at = now();
             let live_pids = pids_with_start(&sys, &pids);
@@ -787,6 +816,21 @@ fn heartbeat(launcher: &Launcher, generation: u64) {
     if let Some(Some(record)) = launcher.with(generation, |a| a.live_record(now())) {
         live::update(|l| l.upsert(record));
     }
+}
+
+/// A window of Steam's has the foreground, and nobody asked for it: not the
+/// in-game overlay (GameMode's, open), not a window picked in the task
+/// switcher.
+fn steam_over_game() -> bool {
+    if crate::overlay::is_open() || crate::switcher::picked(window::foreground_raw()) {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        window::foreground_process_name().is_some_and(|n| STEAM_WINDOWS.contains(&n.as_str()))
+    }
+    #[cfg(not(windows))]
+    false
 }
 
 /// Store windows that pop up while a game starts (sign-in, update, EULA,
