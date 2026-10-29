@@ -211,8 +211,39 @@ pub fn handed_off_after(since: std::time::Instant) -> bool {
 
 /// Big Picture was opened for the current hand-off and should close on return.
 static STEAM_BIG_PICTURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// Time Steam needs to switch to Big Picture before it takes the next link.
-const BIG_PICTURE_DELAY: std::time::Duration = std::time::Duration::from_millis(1800);
+/// How long Steam may take to get to Big Picture (it may be starting, or
+/// signing in) before the link goes anyway.
+const BIG_PICTURE_WAIT: std::time::Duration = std::time::Duration::from_secs(25);
+/// Once its window is up, Big Picture needs a moment before it takes links:
+/// earlier, Steam opens them in its desktop window.
+const BIG_PICTURE_SETTLE: std::time::Duration = std::time::Duration::from_millis(900);
+const BIG_PICTURE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Big Picture's window is on screen ("Steam Big Picture Mode", also in
+/// the other languages Steam names it in).
+fn big_picture_up() -> bool {
+    window::titles_of(&["steam.exe", "steamwebhelper.exe"]).iter().any(|t| t.to_lowercase().contains("big picture"))
+}
+
+/// Opens Big Picture and waits until it is really there: a fixed pause was
+/// too short whenever Steam was starting or busy, and the link then opened
+/// in Steam's desktop window. Blocking.
+fn ensure_big_picture(app: &AppHandle) -> Result<()> {
+    if big_picture_up() {
+        return Ok(());
+    }
+    app.opener().open_url("steam://open/bigpicture", None::<&str>)?;
+    let start = std::time::Instant::now();
+    while start.elapsed() < BIG_PICTURE_WAIT {
+        std::thread::sleep(BIG_PICTURE_POLL);
+        if big_picture_up() {
+            std::thread::sleep(BIG_PICTURE_SETTLE);
+            return Ok(());
+        }
+    }
+    log::warn!("Big Picture not up after {} s: opening the link anyway", BIG_PICTURE_WAIT.as_secs());
+    Ok(())
+}
 
 pub fn uses_big_picture(app: &AppHandle) -> bool {
     app.state::<crate::AppState>().db.lock().settings.steam_big_picture
@@ -225,9 +256,11 @@ pub fn open_uri(app: &AppHandle, uri: &str) -> Result<()> {
     mark_hand_off();
     let before = handles(&window::other_windows());
     if uri.starts_with("steam://") && uses_big_picture(app) {
-        app.opener().open_url("steam://open/bigpicture", None::<&str>)?;
-        STEAM_BIG_PICTURE.store(true, std::sync::atomic::Ordering::SeqCst);
-        std::thread::sleep(BIG_PICTURE_DELAY);
+        // Already up: it was the user's own, don't close it on return.
+        if !big_picture_up() {
+            STEAM_BIG_PICTURE.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        ensure_big_picture(app)?;
     }
     crate::shell::prepare_for(uri);
     app.opener().open_url(uri, None::<&str>)?;

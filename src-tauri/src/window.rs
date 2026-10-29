@@ -163,6 +163,20 @@ pub fn windows_of(names: &[&str]) -> Vec<isize> {
     }
 }
 
+/// Titles of the visible windows of the processes named in `names`
+/// (lowercase exe names).
+pub fn titles_of(names: &[&str]) -> Vec<String> {
+    #[cfg(windows)]
+    {
+        windows_of(names).into_iter().map(win::title).collect()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = names;
+        Vec::new()
+    }
+}
+
 /// Visible, real-sized top-level windows of other processes, each with its
 /// executable name (lowercase) when it can be read.
 pub fn other_windows() -> Vec<(isize, Option<String>)> {
@@ -397,10 +411,24 @@ pub(crate) mod win {
     use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_MENU};
     use windows::Win32::UI::WindowsAndMessaging::{
-        BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindow, GetWindowRect,
-        GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, GW_OWNER,
+        BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindow, GetWindowRect, GetWindowTextLengthW,
+        GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, GW_OWNER,
         SW_RESTORE, SW_SHOW,
     };
+
+    /// A window's title.
+    pub fn title(raw: isize) -> String {
+        unsafe {
+            let window = hwnd(raw);
+            let len = GetWindowTextLengthW(window);
+            if len <= 0 {
+                return String::new();
+            }
+            let mut buf = vec![0u16; len as usize + 1];
+            let got = GetWindowTextW(window, &mut buf).max(0) as usize;
+            String::from_utf16_lossy(&buf[..got])
+        }
+    }
 
     pub fn hwnd(raw: isize) -> HWND {
         HWND(raw as *mut core::ffi::c_void)
