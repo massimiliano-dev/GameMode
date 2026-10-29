@@ -3792,3 +3792,45 @@ html.is-overlay .sw-card[data-nav-current] .sw-preview {
   opacity: 0.6;
   cursor: default;
 }
+
+/* ---------- Opening a store window ---------- */
+
+.busy-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 46;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 5, 8, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.busy-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  width: min(34rem, 90vw);
+  padding: 2.2rem 2rem;
+  border: 1px solid var(--line);
+  border-radius: 1.1rem;
+  background: var(--panel);
+  box-shadow: 0 2rem 4rem rgba(0, 0, 0, 0.6);
+  text-align: center;
+}
+
+.busy-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.busy-hint {
+  color: var(--text-dim);
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
+.busy-slow {
+  color: var(--text-faint);
+  font-size: 0.9rem;
+}

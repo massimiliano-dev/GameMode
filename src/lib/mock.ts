@@ -838,6 +838,8 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       }
       case "open_store":
         console.info("[mock] open_store", args);
+        // Like Steam getting Big Picture up first.
+        if (args.store === "steam") await wait(3000);
         return ["steam", "xbox", "epic"].includes(args.store) ? "client" : "browser";
       case "media_now_playing":
         return nowPlaying;

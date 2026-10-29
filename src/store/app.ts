@@ -80,6 +80,8 @@ interface AppState {
   collections: Collection[];
   /** Game updates the stores report, by game id. */
   gameUpdates: Record<string, GameUpdate>;
+  /** A store window GameMode is opening (it can take seconds): what, and how to drive it. */
+  busy: { title: string; hint: string; since: number } | null;
   /** Games GameMode is removing itself, by id: percent done when the removal says (Xbox), else null. */
   uninstalling: Record<string, number | null>;
   /** Network, PC battery and Bluetooth for the top bar; null until the backend says. */
@@ -171,6 +173,7 @@ export const useApp = create<AppState>((set, get) => ({
   collections: [],
   gameUpdates: {},
   uninstalling: {},
+  busy: null,
   system: null,
   wokeAt: null,
   systemUpdate: null,
@@ -399,16 +402,12 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   openStore: async (store, gameId) => {
-    try {
-      const what = "Apro il negozio.";
-      const native = store === "xbox" || (store === "steam" && !!get().settings?.steamBigPicture);
-      get().toast(native ? nativeHint(what) : assistHint(get().settings, what));
-      await sleep(HANDOFF_DELAY);
+    const native = store === "xbox" || (store === "steam" && !!get().settings?.steamBigPicture);
+    const title = store === "steam" && get().settings?.steamBigPicture ? "Apro Steam in Big Picture" : "Apro il negozio";
+    await handOff(set, get, title, native, async () => {
       await api.openStore(store, gameId);
       set({ rescanOnReturn: true });
-    } catch (e) {
-      get().toast(String(e), "error");
-    }
+    });
   },
 
   showGameUpdate: async (game) => {
@@ -423,14 +422,7 @@ export const useApp = create<AppState>((set, get) => ({
       if (started === false) return get().toast(`Nessun aggiornamento per ${game.name}`);
     }
     if (game.store !== "steam") return get().openStore(game.store, game.id);
-    try {
-      const what = "Apro i download di Steam.";
-      get().toast(get().settings?.steamBigPicture ? nativeHint(what) : assistHint(get().settings, what));
-      await sleep(HANDOFF_DELAY);
-      await api.openLink("steam://open/downloads");
-    } catch (e) {
-      get().toast(String(e), "error");
-    }
+    await handOff(set, get, "Apro i download di Steam", !!get().settings?.steamBigPicture, () => api.openLink("steam://open/downloads"));
   },
 
   installFromCatalog: async (id, name) => {
@@ -442,15 +434,16 @@ export const useApp = create<AppState>((set, get) => ({
         void get().refreshGameUpdates();
         return;
       }
-      if (!id.startsWith("cloud:")) {
-        // Shown while GameMode is still on screen: it steps aside next.
-        const what = `Apro l'installazione di ${name}.`;
-        const native = id.startsWith("gamepass:") || (id.startsWith("steam:") && !!get().settings?.steamBigPicture);
-        get().toast(native ? nativeHint(what) : assistHint(get().settings, what));
-        await sleep(HANDOFF_DELAY);
+      if (id.startsWith("cloud:")) {
+        await api.installCatalogItem(id);
+        set({ rescanOnReturn: true });
+        return;
       }
-      await api.installCatalogItem(id);
-      set({ rescanOnReturn: true });
+      const native = id.startsWith("gamepass:") || (id.startsWith("steam:") && !!get().settings?.steamBigPicture);
+      await handOff(set, get, `Apro l'installazione di ${name}`, native, async () => {
+        await api.installCatalogItem(id);
+        set({ rescanOnReturn: true });
+      });
     } catch (e) {
       get().toast(String(e), "error");
     }
@@ -477,12 +470,12 @@ export const useApp = create<AppState>((set, get) => ({
             ? `Disinstallo ${game.name}: con i giochi grandi ci vuole qualche minuto, puoi continuare a usare GameMode`
             : `Disinstallo ${game.name}…`,
         );
-      } else if (!["manual", "mock"].includes(game.store)) {
-        const what = `Apro la disinstallazione di ${game.name}.`;
-        get().toast(game.store === "steam" && get().settings?.steamBigPicture ? nativeHint(what) : assistHint(get().settings, what));
-        await sleep(HANDOFF_DELAY);
       }
-      const outcome = await api.uninstallGame(game.id);
+      const viaStore = !inHouse && !["manual", "mock"].includes(game.store);
+      const native = game.store === "steam" && !!get().settings?.steamBigPicture;
+      const outcome = viaStore
+        ? await handOff(set, get, `Apro la disinstallazione di ${game.name}`, native, () => api.uninstallGame(game.id), true)
+        : await api.uninstallGame(game.id);
       done();
       if (outcome === "removed") {
         get().toast(`${game.name} disinstallato`);
@@ -664,16 +657,40 @@ function isEntry(value: unknown): value is Entry {
   return (TABS as string[]).includes(screen.name) || screen.name === "search" || screen.name === "connections";
 }
 
-/** How to drive a store window GameMode just opened. */
-function assistHint(settings: Settings | null, what: string) {
+/** How to drive the store window GameMode opens: natively (Xbox app, Store, Steam Big Picture), or through the assist keys. */
+function controlsHint(settings: Settings | null, native: boolean) {
+  if (native) return "Usa il controller come al solito; tieni premuto ⧉ per tornare a GameMode";
   return settings?.keyboardAssist
-    ? `${what} Col controller: A conferma, B annulla, croce per muoverti, ⧉ torna a GameMode`
-    : `${what} Tieni premuto ⧉ per tornare qui`;
+    ? "Col controller: A conferma, B annulla, croce per muoverti, ⧉ torna a GameMode"
+    : "Tieni premuto ⧉ per tornare qui";
 }
 
-/** For apps that already work with a controller (Xbox app, Store, Steam Big Picture). */
-function nativeHint(what: string) {
-  return `${what} Usa il controller come al solito; tieni premuto ⧉ per tornare a GameMode`;
+/**
+ * Opens a store window behind a loading panel: it says what's opening and
+ * how to drive it, for at least as long as it takes to read, and until the
+ * backend has the window up (Steam may first have to start Big Picture).
+ * `rethrow`: the caller handles errors itself.
+ */
+async function handOff<T>(
+  set: (partial: Partial<AppState>) => void,
+  get: () => AppState,
+  title: string,
+  native: boolean,
+  run: () => Promise<T>,
+  rethrow = false,
+): Promise<T | undefined> {
+  set({ busy: { title, hint: controlsHint(get().settings, native), since: Date.now() } });
+  try {
+    // Read first, while GameMode is still in front: the store window covers it next.
+    await sleep(HANDOFF_DELAY);
+    return await run();
+  } catch (e) {
+    if (rethrow) throw e;
+    get().toast(String(e), "error");
+    return undefined;
+  } finally {
+    set({ busy: null });
+  }
 }
 
 /** Mentions discounted wishlist games, at most once a day. */

@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
 import { Backdrop } from "./components/Backdrop";
+import { BusyPanel } from "./components/BusyPanel";
 import { HintBar, Toasts, TopBar } from "./components/Chrome";
 import { LaunchOverlay } from "./components/LaunchOverlay";
 import { PowerCountdown } from "./components/PowerCountdown";
@@ -135,6 +136,9 @@ export default function App() {
         {showLaunch && <LaunchOverlay key="launch" onDismiss={() => setDismissedLaunch(launchKey)} />}
       </AnimatePresence>
       {keyboardField && <VirtualKeyboard field={keyboardField} onClose={() => useApp.getState().setKeyboardField(null)} />}
+      <AnimatePresence>
+        <BusyPanel key="busy" />
+      </AnimatePresence>
       <Toasts />
       <PowerCountdown />
       <Screensaver />
