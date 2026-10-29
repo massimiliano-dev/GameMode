@@ -167,13 +167,35 @@ mod imp {
             .and_then(|k| k.get_value::<u32, _>("ActiveUser"))
             .ok()
     }
+
+    /// `RunningAppID` is the game Steam has running; `Apps\<appid>` says
+    /// `Running` and `Updating` for each game.
+    pub fn app_busy(appid: u32) -> Option<bool> {
+        let steam = RegKey::predef(HKEY_CURRENT_USER).open_subkey(r"Software\Valve\Steam").ok()?;
+        if steam.get_value::<u32, _>("RunningAppID").is_ok_and(|id| id == appid) {
+            return Some(true);
+        }
+        let app = steam.open_subkey(format!(r"Apps\{appid}")).ok()?;
+        let flag = |name: &str| app.get_value::<u32, _>(name).is_ok_and(|v| v != 0);
+        Some(flag("Running") || flag("Updating"))
+    }
 }
 
 #[cfg(not(windows))]
 mod imp {
+    pub fn app_busy(_appid: u32) -> Option<bool> {
+        None
+    }
+
     pub fn active_user() -> Option<u32> {
         None
     }
+}
+
+/// Steam says `appid` is running or being updated (its own registry flags).
+/// `None` when that can't be read: then nobody can tell it didn't start.
+pub fn app_busy(appid: u32) -> Option<bool> {
+    imp::app_busy(appid)
 }
 
 /// A Steam GameMode started cold is ready for `-applaunch`: its web helper

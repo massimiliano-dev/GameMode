@@ -397,8 +397,11 @@ fn launch_steam(app: &AppHandle, game: &Game, exe: &Path, appid: u32) -> Result<
     Ok(())
 }
 
-/// Sends `-applaunch` again while nothing of the game has started: not while
-/// Steam updates it (that's the wait), nor once the launch is over.
+/// Sends the game to Steam again while nothing of it has started. Only when
+/// that's certain: GameMode's launch screen still has the screen (the game,
+/// or a Steam dialog, would have taken it), Steam doesn't report the game
+/// running or updating, and none of its processes showed up. A second
+/// launch of a game that did start makes Steam put a dialog over it.
 fn retry_applaunch(app: &AppHandle, generation: u64, game: &Game, exe: &Path, appid: u32) {
     let (app, game, exe) = (app.clone(), game.clone(), exe.to_path_buf());
     std::thread::spawn(move || {
@@ -407,6 +410,11 @@ fn retry_applaunch(app: &AppHandle, generation: u64, game: &Game, exe: &Path, ap
             std::thread::sleep(APPLAUNCH_RETRY * attempt);
             let waiting = launcher.with(generation, |a| a.state.phase == Phase::Launching && a.pids.is_empty() && a.state.update.is_none());
             if waiting != Some(true) {
+                return;
+            }
+            let steam_idle = crate::steam_direct::app_busy(appid) == Some(false);
+            if !steam_idle || !window::is_foreground(&app) || crate::overlay::is_open() {
+                log::info!("{} may be starting (Steam busy: {}, GameMode in front: {}): not sending it again", game.name, !steam_idle, window::is_foreground(&app));
                 return;
             }
             log::info!("{} hasn't started after -applaunch: trying again ({attempt})", game.name);
