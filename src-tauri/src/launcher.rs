@@ -63,6 +63,38 @@ pub(crate) const LAUNCHERS: &[&str] = &[
 ];
 /// Package helpers that run before the game itself and aren't the game.
 const NOT_THE_GAME: &[&str] = &["gamelaunchhelper.exe"];
+/// Folders Steam (and games) keep first-run installers in: Visual C++,
+/// DirectX, .NET, PhysX…
+const PREREQ_FOLDERS: &[&str] = &["/steamworks shared/", "/_commonredist/", "/__installer/", "/redist/", "/redistributables/"];
+/// Those installers by name, wherever they are.
+const PREREQ_EXES: &[&str] = &[
+    "vc_redist.x64.exe",
+    "vc_redist.x86.exe",
+    "vcredist_x64.exe",
+    "vcredist_x86.exe",
+    "dxsetup.exe",
+    "dxwebsetup.exe",
+    "ue4prereqsetup_x64.exe",
+    "ueprereqsetup_x64.exe",
+    "oalinst.exe",
+    "physxsetup.exe",
+    "easyanticheat_setup.exe",
+    "easyanticheat_eos_setup.exe",
+    "msiexec.exe",
+];
+
+/// A first-run installer a store runs before the game (Visual C++, DirectX,
+/// .NET…): not the game, and a window GameMode must not cover, or the game
+/// never starts.
+fn is_prerequisite(exe: &Path) -> bool {
+    let path = normalize(exe);
+    let name = path.rsplit('/').next().unwrap_or_default();
+    PREREQ_FOLDERS.iter().any(|f| path.contains(f))
+        || PREREQ_EXES.contains(&name)
+        || name.starts_with("dotnetfx")
+        || name.starts_with("ndp")
+        || name.starts_with("windowsdesktop-runtime")
+}
 /// Games often restart themselves (launcher → game, anti-cheat…).
 const EXIT_GRACE: Duration = Duration::from_secs(10);
 /// Steam's own windows (client, Big Picture, downloads page).
@@ -334,6 +366,12 @@ fn launch_spec(settings: &Settings, game: &Game) -> LaunchSpec {
 /// (started silently, signed in), then the game goes to it with
 /// `-applaunch`, so neither the library nor the protocol handler shows up.
 /// Cancelling the launch meanwhile starts nothing.
+/// No process of the game this long after `-applaunch`: Steam dropped it
+/// (still loading, or a Steam that ignores it), so GameMode tries again,
+/// first with Steam's own link, the way its shortcuts start games.
+const APPLAUNCH_RETRY: Duration = Duration::from_secs(15);
+const APPLAUNCH_RETRIES: u32 = 2;
+
 fn launch_steam(app: &AppHandle, game: &Game, exe: &Path, appid: u32) -> Result<()> {
     retire_foreground(app);
     let generation = track(app, game, None, None, 0, None);
@@ -353,8 +391,36 @@ fn launch_steam(app: &AppHandle, game: &Game, exe: &Path, appid: u32) -> Result<
             end(app, generation, Phase::Failed, 0);
             return Err(err.context(format!("avvio di {}", game.name)));
         }
+        return Ok(());
     }
+    retry_applaunch(app, generation, game, exe, appid);
     Ok(())
+}
+
+/// Sends `-applaunch` again while nothing of the game has started: not while
+/// Steam updates it (that's the wait), nor once the launch is over.
+fn retry_applaunch(app: &AppHandle, generation: u64, game: &Game, exe: &Path, appid: u32) {
+    let (app, game, exe) = (app.clone(), game.clone(), exe.to_path_buf());
+    std::thread::spawn(move || {
+        let launcher = &app.state::<AppState>().launcher;
+        for attempt in 1..=APPLAUNCH_RETRIES {
+            std::thread::sleep(APPLAUNCH_RETRY * attempt);
+            let waiting = launcher.with(generation, |a| a.state.phase == Phase::Launching && a.pids.is_empty() && a.state.update.is_none());
+            if waiting != Some(true) {
+                return;
+            }
+            log::info!("{} hasn't started after -applaunch: trying again ({attempt})", game.name);
+            let sent = if attempt == 1 {
+                spawn(&app, &game.launch).map(|_| ())
+            } else {
+                crate::steam_direct::applaunch(&exe, appid).map_err(anyhow::Error::from)
+            };
+            if let Err(err) = sent {
+                log::warn!("starting {} again failed: {err:#}", game.name);
+                return;
+            }
+        }
+    });
 }
 
 /// Closes the foreground session a launch replaces without freezing it:
@@ -513,8 +579,9 @@ impl Target {
     }
 
     fn matches(&self, pid: u32, info: &ProcInfo) -> bool {
-        let helper = info.exe.as_deref().and_then(Path::file_name).is_some_and(|name| {
-            NOT_THE_GAME.contains(&name.to_string_lossy().to_lowercase().as_str())
+        let helper = info.exe.as_deref().is_some_and(|exe| {
+            is_prerequisite(exe)
+                || exe.file_name().is_some_and(|name| NOT_THE_GAME.contains(&name.to_string_lossy().to_lowercase().as_str()))
         });
         if helper {
             return false;
@@ -849,11 +916,19 @@ struct Dialogs {
 
 impl Dialogs {
     fn new() -> Self {
-        Dialogs { known: window::windows_of(LAUNCHERS).into_iter().collect(), seen: Default::default(), aside: None, stepped_aside: false }
+        Dialogs { known: Self::windows().into_iter().collect(), seen: Default::default(), aside: None, stepped_aside: false }
+    }
+
+    /// Store clients' windows, and first-run installers' (a fresh install
+    /// runs Visual C++, DirectX… before the game, some asking for a click).
+    fn windows() -> Vec<isize> {
+        let mut all = window::windows_of(LAUNCHERS);
+        all.extend(window::windows_where(is_prerequisite));
+        all
     }
 
     fn poll(&mut self, app: &AppHandle) {
-        let current = window::windows_of(LAUNCHERS);
+        let current = Self::windows();
         let now = Instant::now();
         self.seen.retain(|h, _| current.contains(h));
         for hwnd in current.iter().filter(|h| !self.known.contains(h)) {
@@ -868,6 +943,7 @@ impl Dialogs {
         let covering = window::is_foreground(app) || self.stepped_aside;
         if self.aside.is_none() && covering && !window::fullscreen_app_in_front(app) {
             if let Some((&hwnd, _)) = self.seen.iter().find(|(_, at)| at.elapsed() >= DIALOG_SETTLE) {
+                log::info!("stepping aside for a store or installer window during the launch");
                 self.aside = Some(hwnd);
                 self.stepped_aside = true;
                 let keys = app.state::<AppState>().db.lock().settings.keyboard_assist;
@@ -1177,12 +1253,12 @@ fn activate_packaged(_aumid: &str) -> Result<u32> {
 }
 
 #[cfg(windows)]
-fn steam_exe() -> Option<PathBuf> {
+pub(crate) fn steam_exe() -> Option<PathBuf> {
     crate::library::steam::find_steam_root().map(|root| root.join("steam.exe")).filter(|p| p.is_file())
 }
 
 #[cfg(not(windows))]
-fn steam_exe() -> Option<PathBuf> {
+pub(crate) fn steam_exe() -> Option<PathBuf> {
     None
 }
 
@@ -1263,6 +1339,29 @@ mod tests {
         assert!(target.matches(2, &packaged));
         assert!(!target.matches(3, &other));
         assert!(!target.matches(4, &ProcInfo::default()));
+    }
+
+    #[test]
+    fn first_run_installers_are_not_the_game() {
+        let yes = [
+            r"D:\SteamLibrary\steamapps\common\Steamworks Shared\_CommonRedist\vcredist\2019\VC_redist.x64.exe",
+            r"D:\SteamLibrary\steamapps\common\Hades\_CommonRedist\DirectX\Jun2010\DXSETUP.exe",
+            r"C:\Games\X\Engine\Extras\Redist\en-us\UEPrereqSetup_x64.exe",
+            r"C:\Windows\System32\msiexec.exe",
+            r"C:\Temp\dotNetFx40_Full_setup.exe",
+        ];
+        for exe in yes {
+            assert!(is_prerequisite(Path::new(exe)), "{exe}");
+        }
+        let no = [r"D:\SteamLibrary\steamapps\common\Hades\x64\Hades.exe", r"C:\Games\Redistributor\game.exe"];
+        for exe in no {
+            assert!(!is_prerequisite(Path::new(exe)), "{exe}");
+        }
+        let target = Target { dir: Some(normalize(Path::new(r"D:\Lib\steamapps\common\Hades"))), family: None, child_pid: None };
+        let redist = ProcInfo { exe: Some(r"D:\Lib\steamapps\common\Hades\_CommonRedist\vcredist\VC_redist.x64.exe".into()), family: None };
+        let game = ProcInfo { exe: Some(r"D:\Lib\steamapps\common\Hades\Hades.exe".into()), family: None };
+        assert!(!target.matches(1, &redist));
+        assert!(target.matches(2, &game));
     }
 
     #[test]

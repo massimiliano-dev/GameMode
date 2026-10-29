@@ -232,7 +232,7 @@ fn ensure_big_picture(app: &AppHandle) -> Result<()> {
     if big_picture_up() {
         return Ok(());
     }
-    app.opener().open_url("steam://open/bigpicture", None::<&str>)?;
+    open_link(app, "steam://open/bigpicture")?;
     let start = std::time::Instant::now();
     while start.elapsed() < BIG_PICTURE_WAIT {
         std::thread::sleep(BIG_PICTURE_POLL);
@@ -263,9 +263,23 @@ pub fn open_uri(app: &AppHandle, uri: &str) -> Result<()> {
         ensure_big_picture(app)?;
     }
     crate::shell::prepare_for(uri);
-    app.opener().open_url(uri, None::<&str>)?;
+    open_link(app, uri)?;
     window::minimize(app);
     hand_over(app, before);
+    Ok(())
+}
+
+/// Opens a link. Steam's go straight to `steam.exe` with GameMode's own
+/// environment taken off: a Steam started by the link would pass it on to
+/// every game it launches.
+fn open_link(app: &AppHandle, uri: &str) -> Result<()> {
+    if uri.starts_with("steam://") {
+        if let Some(exe) = crate::launcher::steam_exe() {
+            crate::webview2::scrub(&mut std::process::Command::new(exe).arg(uri)).spawn()?;
+            return Ok(());
+        }
+    }
+    app.opener().open_url(uri, None::<&str>)?;
     Ok(())
 }
 
@@ -338,7 +352,7 @@ pub fn close_our_big_picture(app: &AppHandle) -> bool {
     if !STEAM_BIG_PICTURE.swap(false, std::sync::atomic::Ordering::SeqCst) {
         return false;
     }
-    let _ = app.opener().open_url("steam://close/bigpicture", None::<&str>);
+    let _ = open_link(app, "steam://close/bigpicture");
     true
 }
 
@@ -347,7 +361,7 @@ pub fn close_our_big_picture(app: &AppHandle) -> bool {
 pub fn return_to_gamemode(app: &AppHandle) {
     crate::assist::disable();
     if STEAM_BIG_PICTURE.swap(false, std::sync::atomic::Ordering::SeqCst) {
-        let _ = app.opener().open_url("steam://close/bigpicture", None::<&str>);
+        let _ = open_link(app, "steam://close/bigpicture");
         let app = app.clone();
         // Leaving Big Picture brings the Steam window up: wait for it.
         std::thread::spawn(move || {

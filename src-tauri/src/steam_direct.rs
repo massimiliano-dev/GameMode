@@ -19,6 +19,18 @@ const START_TIMEOUT: Duration = Duration::from_secs(30);
 /// waiting for a login, not still signing in on its own.
 const LOGIN_GRACE: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(500);
+/// Started cold by GameMode, Steam says it's signed in while its client is
+/// still loading, and drops an `-applaunch` sent then: it gets this long
+/// with its web helper up before the game goes.
+const COLD_SETTLE: Duration = Duration::from_secs(6);
+
+/// `steam.exe` with GameMode's own environment taken off: Steam passes it on
+/// to every game it starts (a WebView2 launcher would run on GameMode's runtime).
+fn steam(exe: &Path) -> Command {
+    let mut cmd = Command::new(exe);
+    crate::webview2::scrub(&mut cmd);
+    cmd
+}
 
 /// What the launch is waiting on, for the launch screen.
 pub const STAGE_STARTING: &str = "steamStarting";
@@ -97,12 +109,15 @@ pub fn ensure_ready(exe: &Path, still_wanted: impl Fn() -> bool, mut stage: impl
         }
         if !running && !spawned {
             spawned = true;
-            if let Err(err) = Command::new(exe).arg("-silent").spawn() {
+            if let Err(err) = steam(exe).arg("-silent").spawn() {
                 log::warn!("starting Steam failed: {err}");
                 return true;
             }
         }
-        let state = steam_state(running, imp::active_user(), helper_since.map(|t| t.elapsed()), started.elapsed(), asked_login);
+        let mut state = steam_state(running, imp::active_user(), helper_since.map(|t| t.elapsed()), started.elapsed(), asked_login);
+        if state == SteamState::Ready && spawned && !settled(helper_since.map(|t| t.elapsed()), started.elapsed()) {
+            state = SteamState::Starting;
+        }
         let next = match state {
             SteamState::Ready | SteamState::GaveUp => {
                 if state == SteamState::GaveUp {
@@ -119,7 +134,7 @@ pub fn ensure_ready(exe: &Path, still_wanted: impl Fn() -> bool, mut stage: impl
                     asked_login = true;
                     // Big Picture's sign-in can be driven with the controller;
                     // the launch screen steps aside for it like for any store window.
-                    if let Err(err) = Command::new(exe).arg("steam://open/bigpicture").spawn() {
+                    if let Err(err) = steam(exe).arg("steam://open/bigpicture").spawn() {
                         log::warn!("opening Big Picture failed: {err}");
                     }
                 }
@@ -137,7 +152,7 @@ pub fn ensure_ready(exe: &Path, still_wanted: impl Fn() -> bool, mut stage: impl
 /// Hands the game to the running Steam. `-silent` keeps Steam's window
 /// away should it have closed in the meantime.
 pub fn applaunch(exe: &Path, appid: u32) -> std::io::Result<()> {
-    Command::new(exe).args(["-silent", "-applaunch", &appid.to_string()]).spawn().map(|_| ())
+    steam(exe).args(["-silent", "-applaunch", &appid.to_string()]).spawn().map(|_| ())
 }
 
 #[cfg(windows)]
@@ -161,9 +176,23 @@ mod imp {
     }
 }
 
+/// A Steam GameMode started cold is ready for `-applaunch`: its web helper
+/// has been up for `COLD_SETTLE`, or the wait is over anyway.
+fn settled(helper_for: Option<Duration>, waited: Duration) -> bool {
+    helper_for.is_some_and(|d| d >= COLD_SETTLE) || waited >= START_TIMEOUT
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cold_steam_gets_time_to_load() {
+        assert!(!settled(None, S));
+        assert!(!settled(Some(2 * S), 3 * S));
+        assert!(settled(Some(COLD_SETTLE), 8 * S));
+        assert!(settled(None, START_TIMEOUT));
+    }
 
     const S: Duration = Duration::from_secs(1);
 

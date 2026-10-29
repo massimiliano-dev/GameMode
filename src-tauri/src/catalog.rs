@@ -426,7 +426,7 @@ pub fn watch_steam_install(app: AppHandle, appid: String) {
 /// Microsoft sign-in and native controller support for xbox.com/play.
 fn open_cloud(app: &AppHandle, url: &str) -> Result<()> {
     if let Some(edge) = edge_path() {
-        std::process::Command::new(edge).args([&format!("--app={url}"), "--start-fullscreen"]).spawn()?;
+        crate::webview2::scrub(std::process::Command::new(edge).args([&format!("--app={url}"), "--start-fullscreen"])).spawn()?;
         crate::window::minimize(app);
         return Ok(());
     }

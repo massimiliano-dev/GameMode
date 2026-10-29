@@ -101,6 +101,8 @@ pub fn command(args: &[String]) -> Result<Command> {
     let exe = verified_exe()?;
     let config = config_dir().context("cartella dei dati non pronta")?;
     let mut cmd = Command::new(exe);
+    // legendary starts the games: they get a clean environment.
+    crate::webview2::scrub(&mut cmd);
     cmd.args(args)
         .env("LEGENDARY_CONFIG_PATH", config)
         .env("PYTHONUTF8", "1")

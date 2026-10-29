@@ -163,6 +163,25 @@ pub fn windows_of(names: &[&str]) -> Vec<isize> {
     }
 }
 
+/// Visible, real-sized top-level windows of the processes whose executable
+/// path passes `wanted`.
+pub fn windows_where(wanted: impl Fn(&std::path::Path) -> bool) -> Vec<isize> {
+    #[cfg(windows)]
+    {
+        let mut cache = std::collections::HashMap::new();
+        win::visible_windows()
+            .into_iter()
+            .filter(|(_, pid)| cache.entry(*pid).or_insert_with(|| process_path(*pid)).as_deref().is_some_and(&wanted))
+            .map(|(hwnd, _)| hwnd)
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = wanted;
+        Vec::new()
+    }
+}
+
 /// Titles of the visible windows of the processes named in `names`
 /// (lowercase exe names).
 pub fn titles_of(names: &[&str]) -> Vec<String> {
