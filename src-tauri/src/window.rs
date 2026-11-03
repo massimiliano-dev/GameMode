@@ -32,6 +32,8 @@ pub fn bring_to_front(app: &AppHandle) {
     if wants_fullscreen(app) {
         let _ = window.set_fullscreen(true);
     }
+    // A game may have left the screen at another resolution.
+    fit_screen(app);
     let _ = window.set_focus();
     #[cfg(windows)]
     if let Ok(hwnd) = window.hwnd() {
@@ -298,6 +300,32 @@ pub fn nothing_in_front() -> bool {
     #[cfg(not(windows))]
     {
         false
+    }
+}
+
+/// A fullscreen GameMode covers its whole monitor again after the display
+/// mode changed (a game switched resolution): without this it keeps the old
+/// size and its screens run off the right and bottom edges. Moves and sizes
+/// only: no focus, no change of order, so a game in front is undisturbed.
+pub fn fit_screen(app: &AppHandle) {
+    let Some(window) = main_window(app) else { return };
+    if !window.is_fullscreen().unwrap_or(false) {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+        let Ok(hwnd) = window.hwnd() else { return };
+        let hwnd = win::hwnd(hwnd.0 as isize);
+        unsafe {
+            let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+            if !GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &mut info).as_bool() {
+                return;
+            }
+            let r = info.rcMonitor;
+            let _ = SetWindowPos(hwnd, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
     }
 }
 

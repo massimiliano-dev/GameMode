@@ -289,6 +289,8 @@ fn on_display_change(app: &AppHandle) {
         if overlay::is_open() {
             overlay::fit_screen(&app);
         }
+        // Also under a running game: only resized, never brought forward.
+        window::fit_screen(&app);
         // Games change the display mode themselves: never fight them.
         if app.state::<AppState>().launcher.current().is_some() {
             return;
