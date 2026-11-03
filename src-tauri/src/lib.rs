@@ -1398,8 +1398,11 @@ pub fn run() {
                 }
             }
             // Safe mode starts as little as possible besides GameMode itself.
-            if !safe && app.state::<AppState>().db.lock().settings.preload_steam {
-                splash::after_startup(launcher::preload_steam);
+            let settings = app.state::<AppState>().db.lock().settings.clone();
+            if !safe && settings.preload_steam {
+                // Steam's overlay goes unless Guide is left to it.
+                let overlay_off = !settings.steam_guide;
+                splash::after_startup(move || launcher::preload_steam(overlay_off));
             }
             overlay::create(&handle);
             media::init(&handle);

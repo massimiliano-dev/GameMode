@@ -227,7 +227,7 @@ export function Settings() {
                 hint={
                   settings.steamGuide
                     ? "Nei giochi Steam il tasto Xbox apre l'overlay di Steam; quello di GameMode si apre con Back+Start"
-                    : "Il tasto Xbox apre l'overlay di GameMode. Se compare anche Steam, disattiva in Steam → Impostazioni → Controller l'opzione del tasto Guida"
+                    : "Il tasto Xbox apre l'overlay di GameMode. L'overlay di Steam viene spento quando GameMode avvia Steam"
                 }
                 onClick={() => void saveSettings({ ...settings, steamGuide: !settings.steamGuide })}
                 control={<Toggle on={settings.steamGuide} />}

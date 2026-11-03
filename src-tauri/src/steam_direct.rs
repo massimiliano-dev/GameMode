@@ -88,7 +88,7 @@ fn steam_state(running: bool, active_user: Option<u32>, helper_for: Option<Durat
 /// the launch is still on (the user may cancel it meanwhile); `stage` gets
 /// what to show on the launch screen (`None`: nothing special). Returns
 /// false when the launch was cancelled. Blocking: call off the main thread.
-pub fn ensure_ready(exe: &Path, still_wanted: impl Fn() -> bool, mut stage: impl FnMut(Option<&'static str>)) -> bool {
+pub fn ensure_ready(exe: &Path, overlay_off: bool, still_wanted: impl Fn() -> bool, mut stage: impl FnMut(Option<&'static str>)) -> bool {
     let mut sys = System::new();
     let started = Instant::now();
     let mut spawned = false;
@@ -109,6 +109,11 @@ pub fn ensure_ready(exe: &Path, still_wanted: impl Fn() -> bool, mut stage: impl
         }
         if !running && !spawned {
             spawned = true;
+            if overlay_off {
+                if let Some(root) = exe.parent() {
+                    turn_overlay_off(root);
+                }
+            }
             if let Err(err) = steam(exe).arg("-silent").spawn() {
                 log::warn!("starting Steam failed: {err}");
                 return true;
@@ -198,6 +203,50 @@ pub fn app_busy(appid: u32) -> Option<bool> {
     imp::app_busy(appid)
 }
 
+/// Turns Steam's in-game overlay off in every account's `localconfig.vdf`:
+/// the global switch and each installed game's own. It grabs Guide, opens
+/// over games and fights GameMode's overlay. Steam only reads the file at
+/// start and rewrites it on exit, so this runs just before GameMode starts
+/// Steam. A copy of the original is kept next to it once.
+pub fn turn_overlay_off(root: &Path) {
+    let appids: Vec<u32> =
+        crate::library::steam::scan_root(root).unwrap_or_default().iter().filter_map(|g| g.steam_appid).collect();
+    let Ok(users) = std::fs::read_dir(root.join("userdata")) else { return };
+    for file in users.flatten().map(|u| u.path().join("config").join("localconfig.vdf")) {
+        let Ok(src) = std::fs::read_to_string(&file) else { continue };
+        let Some(patched) = overlay_off(&src, &appids) else { continue };
+        let backup = file.with_extension("vdf.gamemode-bak");
+        if !backup.exists() && std::fs::copy(&file, &backup).is_err() {
+            continue;
+        }
+        let tmp = file.with_extension("vdf.gamemode-tmp");
+        match std::fs::write(&tmp, patched).and_then(|()| std::fs::rename(&tmp, &file)) {
+            Ok(()) => log::info!("Steam overlay turned off in {}", file.display()),
+            Err(err) => log::warn!("turning the Steam overlay off in {} failed: {err}", file.display()),
+        }
+    }
+}
+
+/// `localconfig.vdf` with the overlay off globally and for `appids`; `None`
+/// when nothing changes or the file isn't one GameMode can rewrite whole
+/// (platform conditionals are dropped by the parser).
+fn overlay_off(src: &str, appids: &[u32]) -> Option<String> {
+    use crate::library::vdf;
+    if src.contains("[$") {
+        return None;
+    }
+    let mut root = vdf::parse(src).ok()?;
+    // Only Steam's own file: never add the block to something else.
+    root.get("UserLocalConfigStore")?;
+    let store = root.obj_mut("UserLocalConfigStore")?;
+    let mut changed = store.obj_mut("system")?.set("EnableGameOverlay", "0");
+    let apps = ["Software", "Valve", "Steam", "apps"].iter().try_fold(&mut *store, |node, key| node.obj_mut(key))?;
+    for appid in appids {
+        changed |= apps.obj_mut(&appid.to_string())?.set("OverlayAppEnable", "0");
+    }
+    changed.then(|| vdf::write(&root))
+}
+
 /// A Steam GameMode started cold is ready for `-applaunch`: its web helper
 /// has been up for `COLD_SETTLE`, or the wait is over anyway.
 fn settled(helper_for: Option<Duration>, waited: Duration) -> bool {
@@ -207,6 +256,24 @@ fn settled(helper_for: Option<Duration>, waited: Duration) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn turns_the_overlay_off_globally_and_per_game() {
+        let src = "\"UserLocalConfigStore\"\n{\n\t\"Software\"\n\t{\n\t\t\"Valve\"\n\t\t{\n\t\t\t\"Steam\"\n\t\t\t{\n\t\t\t\t\"apps\"\n\t\t\t\t{\n\t\t\t\t\t\"570\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"LastPlayed\"\t\t\"1700000000\"\n\t\t\t\t\t\t\"OverlayAppEnable\"\t\t\"1\"\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n";
+        let out = overlay_off(src, &[570, 730]).unwrap();
+        let root = crate::library::vdf::parse(&out).unwrap();
+        let store = root.get("UserLocalConfigStore").unwrap();
+        assert_eq!(store.get("system").unwrap().get_str("EnableGameOverlay"), Some("0"));
+        let apps = store.get("Software").unwrap().get("Valve").unwrap().get("Steam").unwrap().get("apps").unwrap();
+        assert_eq!(apps.get("570").unwrap().get_str("OverlayAppEnable"), Some("0"));
+        assert_eq!(apps.get("570").unwrap().get_str("LastPlayed"), Some("1700000000"), "the rest stays");
+        assert_eq!(apps.get("730").unwrap().get_str("OverlayAppEnable"), Some("0"));
+        // Already off: nothing to write. Not Steam's file, or one the parser can't keep whole: left alone.
+        assert_eq!(overlay_off(&out, &[570, 730]), None);
+        assert_eq!(overlay_off("\"Other\" { }", &[570]), None);
+        assert_eq!(overlay_off("\"UserLocalConfigStore\" { \"x\" \"1\" [$WIN32] }", &[]), None);
+        assert_eq!(overlay_off("not vdf {", &[]), None);
+    }
 
     #[test]
     fn a_cold_steam_gets_time_to_load() {

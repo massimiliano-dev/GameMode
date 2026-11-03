@@ -382,7 +382,8 @@ fn launch_steam(app: &AppHandle, game: &Game, exe: &Path, appid: u32) -> Result<
             let _ = app.emit("game://state", &state);
         }
     };
-    if !crate::steam_direct::ensure_ready(exe, wanted, show) {
+    let overlay_off = !app.state::<AppState>().db.lock().settings.steam_guide;
+    if !crate::steam_direct::ensure_ready(exe, overlay_off, wanted, show) {
         return Ok(());
     }
     if let Err(err) = crate::steam_direct::applaunch(exe, appid) {
@@ -1272,12 +1273,17 @@ pub(crate) fn steam_exe() -> Option<PathBuf> {
 
 /// Starts Steam in the background if it isn't running, so launching a Steam
 /// game later neither waits for Steam nor shows its window.
-pub fn preload_steam() {
+pub fn preload_steam(overlay_off: bool) {
     let Some(exe) = steam_exe() else { return };
     let mut sys = System::new();
     sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
     let running = sys.processes().values().any(|p| p.name().eq_ignore_ascii_case("steam.exe"));
     if !running {
+        if overlay_off {
+            if let Some(root) = exe.parent() {
+                crate::steam_direct::turn_overlay_off(root);
+            }
+        }
         if let Err(err) = crate::webview2::scrub(Command::new(exe).arg("-silent")).spawn() {
             log::warn!("starting Steam failed: {err}");
         }
