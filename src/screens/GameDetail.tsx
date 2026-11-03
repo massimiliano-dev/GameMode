@@ -100,6 +100,21 @@ export function GameDetail({ gameId }: { gameId: string }) {
     ...(legendary
       ? [{ label: "Verifica e ripara", hint: "Controlla i file del gioco e scarica di nuovo quelli danneggiati", onSelect: () => runLegendary("repair") }]
       : []),
+    ...(!isApp && game.store !== "mock"
+      ? [
+          {
+            label: "Aggiorna immagini",
+            hint: "Copertina, sfondo e logo scaricati di nuovo",
+            onSelect: () => {
+              toast(`Cerco le immagini di ${game.name}…`);
+              void api
+                .refreshGameArtwork(game.id)
+                .then((found) => toast(found ? `Immagini di ${game.name} aggiornate` : `Nessuna immagine nuova per ${game.name}`))
+                .catch((e) => toast(String(e), "error"));
+            },
+          },
+        ]
+      : []),
     {
       label: game.hidden ? "Mostra nella libreria" : "Nascondi",
       hint: game.hidden ? undefined : "Lo ritrovi in Impostazioni → Giochi nascosti",

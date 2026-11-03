@@ -819,6 +819,9 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         return;
       case "capture_notice":
         return null;
+      case "refresh_game_artwork":
+        await wait(1200);
+        return true;
       case "open_windows":
         await wait(args.thumbnails ? 500 : 80);
         return mockWindows();

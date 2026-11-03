@@ -999,6 +999,12 @@ fn refresh_artwork(app: AppHandle) {
     artwork::refresh(&app, true);
 }
 
+/// One game's images downloaded again, also when it has them.
+#[tauri::command]
+async fn refresh_game_artwork(app: AppHandle, id: String) -> CmdResult<bool> {
+    artwork::refresh_game(&app, &id).await.map_err(|e| format!("{e:#}"))
+}
+
 #[tauri::command]
 fn refresh_metadata(app: AppHandle) {
     metadata::refresh(&app, true);
@@ -1494,6 +1500,7 @@ pub fn run() {
             get_autostart,
             set_autostart,
             refresh_artwork,
+            refresh_game_artwork,
             check_update,
             install_update,
             save_info,

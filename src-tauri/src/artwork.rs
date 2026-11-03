@@ -104,19 +104,14 @@ pub fn refresh(app: &AppHandle, force: bool) {
             let games: Vec<Game> = data.games.iter().filter(due).cloned().collect();
             (games, data.settings.steamgriddb_key.clone().filter(|k| !k.trim().is_empty()))
         };
-        let fetcher = Arc::new(Fetcher {
-            client: reqwest::Client::builder().timeout(Duration::from_secs(20)).build().unwrap_or_default(),
-            dir: state.data_dir.join("artwork"),
-            steam_root: steam::find_steam_root(),
-            sgdb_key: key,
-        });
+        let fetcher = Arc::new(Fetcher::new(state.data_dir.join("artwork"), key));
         let limit = Arc::new(Semaphore::new(CONCURRENCY));
         let mut tasks = Vec::new();
         for game in games {
             let (fetcher, limit, app) = (fetcher.clone(), limit.clone(), app.clone());
             tasks.push(tauri::async_runtime::spawn(async move {
                 let _permit = limit.acquire().await;
-                let artwork = fetcher.fetch(&game).await;
+                let artwork = fetcher.fetch(&game, false).await;
                 save(&app, &game.id, artwork);
             }));
         }
@@ -125,6 +120,29 @@ pub fn refresh(app: &AppHandle, force: bool) {
         }
         state.artwork_running.store(false, Ordering::SeqCst);
     });
+}
+
+/// Downloads a game's cover, background and logo again, also when it has
+/// them (Steam's local cache may hold a placeholder for a new game: this
+/// goes to the CDN and SteamGridDB instead). An image that can't be found
+/// again keeps the old one. Returns whether anything was found.
+pub async fn refresh_game(app: &AppHandle, id: &str) -> Result<bool> {
+    let state = app.state::<AppState>();
+    let (game, key) = {
+        let data = state.db.lock();
+        let game = data.game(id).cloned().ok_or_else(|| anyhow::anyhow!("Gioco non trovato"))?;
+        (game, data.settings.steamgriddb_key.clone().filter(|k| !k.trim().is_empty()))
+    };
+    let mut fresh = Fetcher::new(state.data_dir.join("artwork"), key).fetch(&game, true).await;
+    let found = fresh.cover.is_some() || fresh.hero.is_some() || fresh.logo.is_some();
+    let mut artwork = game.artwork.clone();
+    for kind in Kind::ALL {
+        if let Some(path) = kind.slot(&mut fresh).take() {
+            *kind.slot(&mut artwork) = Some(path);
+        }
+    }
+    save(app, id, artwork);
+    Ok(found)
 }
 
 fn save(app: &AppHandle, id: &str, artwork: Artwork) {
@@ -148,8 +166,18 @@ struct Fetcher {
 }
 
 impl Fetcher {
-    async fn fetch(&self, game: &Game) -> Artwork {
-        let mut art = game.artwork.clone();
+    fn new(dir: PathBuf, sgdb_key: Option<String>) -> Self {
+        Fetcher {
+            client: reqwest::Client::builder().timeout(Duration::from_secs(20)).build().unwrap_or_default(),
+            dir,
+            steam_root: steam::find_steam_root(),
+            sgdb_key,
+        }
+    }
+
+    /// `fresh`: every image again, none kept, Steam's local cache skipped.
+    async fn fetch(&self, game: &Game, fresh: bool) -> Artwork {
+        let mut art = if fresh { Artwork::default() } else { game.artwork.clone() };
         let dir = self.dir.join(safe_name(&game.id));
         let _ = tokio::fs::create_dir_all(&dir).await;
         let mut sgdb_id: Option<Option<u64>> = None;
@@ -161,7 +189,7 @@ impl Fetcher {
             }
             let mut found = None;
             if let Some(appid) = game.steam_appid {
-                found = self.from_steam(appid, kind, &dir).await;
+                found = self.from_steam(appid, kind, &dir, !fresh).await;
             }
             if found.is_none() && kind == Kind::Cover {
                 if let Some(url) = &game.cover_url {
@@ -191,9 +219,9 @@ impl Fetcher {
         art
     }
 
-    async fn from_steam(&self, appid: u32, kind: Kind, dir: &Path) -> Option<PathBuf> {
+    async fn from_steam(&self, appid: u32, kind: Kind, dir: &Path, local: bool) -> Option<PathBuf> {
         let (file, ext) = (kind.steam_file(), kind.steam_ext());
-        if let Some(root) = &self.steam_root {
+        if let Some(root) = self.steam_root.as_ref().filter(|_| local) {
             let cache = root.join("appcache").join("librarycache");
             for local in [cache.join(appid.to_string()).join(format!("{file}.{ext}")), cache.join(format!("{appid}_{file}.{ext}"))] {
                 let target = dir.join(format!("{}.{ext}", kind.name()));

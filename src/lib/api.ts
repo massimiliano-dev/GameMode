@@ -130,6 +130,8 @@ export const api = {
   getAutostart: () => call<boolean>("get_autostart"),
   setAutostart: (enabled: boolean) => call<void>("set_autostart", { enabled }),
   refreshArtwork: () => call<void>("refresh_artwork"),
+  /** One game's cover, background and logo again; false when nothing was found. */
+  refreshGameArtwork: (id: string) => call<boolean>("refresh_game_artwork", { id }),
   checkUpdate: () => call<UpdateInfo | null>("check_update"),
   installUpdate: () => call<void>("install_update"),
   appVersion: async () => (isTauri ? (await import("@tauri-apps/api/app")).getVersion() : "0.0.0-dev"),
