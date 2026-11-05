@@ -64,7 +64,11 @@ export function TopBar() {
         {session && playing && (
           <span className="session-pill">
             <span className="pulse" />
-            {session.update ? "Aggiornamento" : session.phase === "launching" ? "Avvio" : "In gioco"}: {playing.name}
+            <span className="session-pill-text">
+              {/* The pulsing dot already says "in game": the room goes to the name. */}
+              {session.update ? "Aggiornamento: " : session.phase === "launching" ? "Avvio: " : ""}
+              {playing.name}
+            </span>
           </span>
         )}
         {paused > 0 && (
@@ -83,9 +87,9 @@ function ProfileBadge() {
   const many = useApp((s) => s.profiles.length > 1);
   if (!profile || !many) return null;
   return (
-    <span className="profile-badge">
+    // Avatar only: the bar is full, and the quick menu names every profile.
+    <span className="profile-badge" title={profile.name} aria-label={`Profilo: ${profile.name}`}>
       <Avatar profile={profile} size="sm" />
-      {profile.name}
     </span>
   );
 }
