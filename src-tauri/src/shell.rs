@@ -503,7 +503,16 @@ pub fn keep_desktop_hidden(app: tauri::AppHandle) {
             empty_for = if crate::window::nothing_in_front() { empty_for + 1 } else { 0 };
             if empty_for >= BLACK_SCREEN_SECS {
                 empty_for = 0;
-                crate::window::bring_to_front(&app);
+                // A game's first start (installers, shaders, a mode switch)
+                // can leave nothing in front for a moment: the game gets the
+                // screen back, not GameMode over it.
+                use tauri::Manager;
+                let pids = app.state::<crate::AppState>().launcher.running_pids();
+                if crate::window::focus_process(&pids) {
+                    log::info!("empty screen during a game: giving it back to the game");
+                } else {
+                    crate::window::bring_to_front(&app);
+                }
             }
         }
     });
